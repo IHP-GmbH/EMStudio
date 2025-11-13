@@ -1,0 +1,35 @@
+name: Build EMStudio
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'gcc_64'
+
+      - name: Configure (qmake)
+        run: |
+          mkdir -p build
+          cd build
+          qmake ../EMStudio.pro
+
+      - name: Build
+        run: |
+          cd build
+          make -j"$(nproc)"
+

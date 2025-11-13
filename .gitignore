@@ -1,0 +1,38 @@
+# --- Build directories ---
+build/
+build-*/
+cmake-build-*/
+
+# --- QtCreator / qmake project user files ---
+*.pro.user
+*.pro.user.*
+*.pri.user
+*.qbs.user
+*.qmlproject.user
+*.autosave
+
+# --- Qt generated files (if they ever land in tree – usually in build dir) ---
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# --- Compiler outputs ---
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+*.pdb
+
+# --- Logs / temp ---
+*.log
+*.tmp
+*.cache
+
+# --- Doxygen output (if generated into docs/) ---
+docs/html/
+docs/latex/
+

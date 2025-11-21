@@ -40,6 +40,7 @@ class MainWindow : public QMainWindow
 {
     Q_OBJECT
 
+    enum class ModelType { Palace, OpenEMS, Unknown };
     enum class PalacePhase { None, PythonModel, PalaceSolver };
 
     /*!*******************************************************************************************************************
@@ -102,7 +103,7 @@ private slots:
     void                            on_cbSubLayerNames_stateChanged(int arg1);
     void                            on_btnGenDefaultPython_clicked();
     void                            on_cbxSimTool_currentIndexChanged(int index);
-    void                            on_actionOpen_Palace_Python_triggered();
+    void                            on_actionOpen_Python_Model_triggered();
 
 private:
     void                            saveSettings();
@@ -136,8 +137,11 @@ private:
 
     void                            updateSubLayerNamesCheckboxState();
     void                            rebuildLayerMapping();
+
+    bool                            applyPythonScriptFromEditor();
     void                            applySubLayerNamesToPorts(bool toNames);
 
+    void                            updateSubLayerNamesAutoCheck();
     void                            rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings);
 
     bool                            isStateChanged() const;

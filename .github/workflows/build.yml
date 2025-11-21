@@ -33,3 +33,53 @@ jobs:
           cd build
           make -j"$(nproc)"
 
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: emstudio-linux
+          path: |
+            build/EMStudio
+            build/**/EMStudio
+          if-no-files-found: warn
+
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2019_64'
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          toolset: 14.2
+
+      - name: Configure (qmake)
+        shell: bash
+        run: |
+          mkdir -p build
+          cd build
+          qmake ../EMStudio.pro
+
+      - name: Build
+        shell: bash
+        run: |
+          cd build
+          nmake
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: emstudio-windows
+          path: |
+            build/EMStudio.exe
+            build/**/EMStudio.exe
+          if-no-files-found: warn

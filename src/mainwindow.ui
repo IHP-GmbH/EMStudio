@@ -18,7 +18,7 @@
     <item>
      <widget class="QTabWidget" name="tabSettings">
       <property name="currentIndex">
-       <number>4</number>
+       <number>3</number>
       </property>
       <widget class="QWidget" name="tab">
        <attribute name="title">
@@ -332,7 +332,7 @@
      <x>0</x>
      <y>0</y>
      <width>1070</width>
-     <height>21</height>
+     <height>25</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -340,7 +340,7 @@
      <string>File</string>
     </property>
     <addaction name="actionOpen"/>
-    <addaction name="actionOpen_Palace_Python"/>
+    <addaction name="actionOpen_Python_Model"/>
     <addaction name="separator"/>
     <addaction name="actionSave"/>
     <addaction name="actionSave_As"/>
@@ -455,9 +455,9 @@
     <string>Prefernces...</string>
    </property>
   </action>
-  <action name="actionOpen_Palace_Python">
+  <action name="actionOpen_Python_Model">
    <property name="text">
-    <string>Load Palace Python...</string>
+    <string>Load Python Model...</string>
    </property>
   </action>
   <zorder>dockRunControl</zorder>

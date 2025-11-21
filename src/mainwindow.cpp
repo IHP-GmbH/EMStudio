@@ -23,7 +23,7 @@
 #include "preferences.h"
 #include "ui_mainwindow.h"
 #include "substrateview.h"
-#include "palacepythonparser.h"
+#include "pythonparser.h"
 
 /*!*******************************************************************************************************************
  * \brief Checks whether a string represents an integer value.
@@ -162,6 +162,11 @@ MainWindow::MainWindow(QWidget *parent)
                 if (!m_blockPortChanges) setStateChanged();
             });
 
+    connect(m_ui->editRunPythonScript, &QTextEdit::textChanged,
+            this, [this]() {
+                setStateChanged();
+            });
+
     addDockWidget(Qt::BottomDockWidgetArea, m_ui->dockLog);
 
     m_ui->btnAddPort->setEnabled(false);
@@ -207,8 +212,6 @@ void MainWindow::refreshSimToolOptions()
 
     const bool hasOpenEMS = pathLooksValid(openemsPath);
     const bool hasPalace  = pathLooksValid(palacePath, "bin/palace");
-
-    m_ui->actionOpen_Palace_Python->setVisible(hasPalace);
 
     m_ui->cbxSimTool->clear();
 
@@ -399,12 +402,47 @@ void MainWindow::setupTabMapping()
 
 
 /*!*******************************************************************************************************************
- * \brief Displays a specific tab based on its index by clearing and adding the corresponding widget.
+ * \brief Displays the requested settings tab and handles synchronization with the Python script.
+ *
+ * Replaces the current tab widget in tabSettings with the widget corresponding to \a indexToShow.
+ * When leaving a Python-related tab with a modified script, the user is prompted to either apply
+ * the changes (save and re-parse the script, updating simulation settings) or discard them.
+ * When entering a Python-related tab while the simulation state has unsaved changes, the user is
+ * prompted to save the state so that an up-to-date Python script can be regenerated and shown.
+ *
  * \param indexToShow Index of the tab to display.
  **********************************************************************************************************************/
 void MainWindow::showTab(int indexToShow)
 {
     QTabWidget *tabs = m_ui->tabSettings;
+
+    QString prevTitle;
+    if (tabs->count() > 0)
+        prevTitle = tabs->tabText(0);
+
+    if (tabs->count() > 0 &&
+        prevTitle.toLower().contains("python") &&
+        m_ui->editRunPythonScript->document()->isModified() &&
+        QFileInfo(m_ui->txtRunPythonScript->text()).exists())
+    {
+        QMessageBox msg(this);
+        msg.setIcon(QMessageBox::Question);
+        msg.setWindowTitle(tr("Apply Python changes"));
+        msg.setText(tr("The Python script was modified.\n"
+                       "Do you want to apply these changes to the simulation settings?"));
+        QPushButton *applyBtn   = msg.addButton(tr("&Apply"),   QMessageBox::AcceptRole);
+        QPushButton *discardBtn = msg.addButton(tr("&Discard"), QMessageBox::RejectRole);
+        msg.setDefaultButton(applyBtn);
+
+        msg.exec();
+
+        if (msg.clickedButton() == applyBtn) {
+            if (!applyPythonScriptFromEditor())
+                return; // parsing failed, stay on current tab
+        } else if (msg.clickedButton() == discardBtn) {
+            m_ui->editRunPythonScript->document()->setModified(false);
+        }
+    }
 
     tabs->clear();
 
@@ -415,7 +453,7 @@ void MainWindow::showTab(int indexToShow)
 
         if (isStateChanged() &&
             title.toLower().contains("python") &&
-            QFileInfo().exists(m_ui->txtRunPythonScript->text()))
+            QFileInfo(m_ui->txtRunPythonScript->text()).exists())
         {
             QMessageBox msg(this);
             msg.setIcon(QMessageBox::Warning);
@@ -423,7 +461,7 @@ void MainWindow::showTab(int indexToShow)
             msg.setText(tr("The simulation state has been changed.\n"
                            "To see the updated Python script, please save the state first."));
             QPushButton *saveBtn   = msg.addButton(tr("&Save"),   QMessageBox::AcceptRole);
-            //QPushButton *ignoreBtn = msg.addButton(tr("&Ignore"), QMessageBox::RejectRole);
+            QPushButton *ignoreBtn = msg.addButton(tr("&Ignore"), QMessageBox::RejectRole);
             msg.setDefaultButton(saveBtn);
 
             msg.exec();
@@ -666,6 +704,20 @@ void MainWindow::on_actionSave_triggered()
 
         if (m_runFile.isEmpty())
             return;
+    }
+
+    const QString scriptPath = m_ui->txtRunPythonScript->text().trimmed();
+    if (!scriptPath.isEmpty()) {
+        QFile pyFile(scriptPath);
+        if (pyFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&pyFile);
+            out << m_ui->editRunPythonScript->toPlainText();
+            pyFile.close();
+            m_simSettings["RunPythonScript"] = scriptPath;
+        } else {
+            error(QString("Failed to save Python script to '%1': %2")
+                      .arg(scriptPath, pyFile.errorString()));
+        }
     }
 
     saveRunFile(m_runFile);
@@ -1256,16 +1308,21 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
 
         QStringList bndKeys = {"X-", "X+", "Y-", "Y+", "Z-", "Z+"};
         QStringList bndValues;
-
         QVariantMap bndMap;
         if (m_simSettings.contains("Boundaries"))
             bndMap = m_simSettings["Boundaries"].toMap();
-
         for (const QString &key : bndKeys)
             bndValues << bndMap.value(key, "PEC").toString();
 
+        const QString bndPython = QString("['%1']").arg(bndValues.join("', '"));
+
+        QRegularExpression reSettings(
+            R"(^\s*(\w+)\s*\[\s*['"]Boundaries['"]\s*\]\s*=\s*.*$)",
+            QRegularExpression::MultilineOption);
+        script.replace(reSettings, QString("\\1['Boundaries'] = %1").arg(bndPython));
+
         QRegularExpression reBnd("^Boundaries\\s*=.*$", QRegularExpression::MultilineOption);
-        script.replace(reBnd, QString("Boundaries = [\"%1\"]").arg(bndValues.join("\", \"")));
+        script.replace(reBnd, QString("Boundaries = %1").arg(bndPython));
     }
     else if (simKey == QLatin1String("palace")) {
         for (auto it = m_simSettings.constBegin(); it != m_simSettings.constEnd(); ++it) {
@@ -1301,6 +1358,21 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
             QRegularExpression re(pattern, QRegularExpression::MultilineOption);
 
             script.replace(re, QString("\\1['%1'] = %2").arg(key, strValue));
+        }
+
+        if (m_simSettings.contains("Boundaries")) {
+            QStringList bndKeys = {"X-", "X+", "Y-", "Y+", "Z-", "Z+"};
+            QStringList bndValues;
+            QVariantMap bndMap = m_simSettings["Boundaries"].toMap();
+            for (const QString &key : bndKeys)
+                bndValues << bndMap.value(key, "PEC").toString();
+
+            const QString bndPython = QString("['%1']").arg(bndValues.join("', '"));
+
+            QRegularExpression reSettings(
+                R"(^\s*(\w+)\s*\[\s*['"]Boundaries['"]\s*\]\s*=\s*.*$)",
+                QRegularExpression::MultilineOption);
+            script.replace(reSettings, QString("\\1['Boundaries'] = %1").arg(bndPython));
         }
     }
 
@@ -1377,9 +1449,13 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
             appendParsedPortsToTable(parsed);
     }
 
+    updateSubLayerNamesAutoCheck();
+
     script.replace(portBlock, portCode);
 
+    QSignalBlocker blocker(m_ui->editRunPythonScript);
     m_ui->editRunPythonScript->setPlainText(script);
+    m_ui->editRunPythonScript->document()->setModified(false);
 }
 
 /*!*******************************************************************************************************************
@@ -2566,6 +2642,7 @@ print('Created S-parameter output file at ', snp_name)
     m_ui->editRunPythonScript->document()->setModified(true);
 
     importPortsFromEditor();
+    updateSubLayerNamesAutoCheck();
 
     setStateChanged();
 }
@@ -2619,7 +2696,7 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
  * Shows a file dialog, remembers the last used directory in \c m_preferences,
  * calls PalacePythonParser and (optionally) updates internal simulation settings.
  **********************************************************************************************************************/
-void MainWindow::on_actionOpen_Palace_Python_triggered()
+void MainWindow::on_actionOpen_Python_Model_triggered()
 {
     const QString lastDir  = m_preferences.value("PALACE_MODEL_DIR").toString();
     const QString startDir = lastDir.isEmpty() ? QDir::homePath() : lastDir;
@@ -2637,16 +2714,46 @@ void MainWindow::on_actionOpen_Palace_Python_triggered()
     m_preferences["PALACE_MODEL_DIR"]  = fi.absolutePath();
     m_preferences["PALACE_MODEL_FILE"] = fileName;
 
-    PalacePythonParser::Result res = PalacePythonParser::parseSettings(fileName);
+    QFile file(fileName);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        error(QString("Cannot open file %1").arg(fileName));
+        return;
+    }
+
+    const QString text = QString::fromUtf8(file.readAll());
+    file.close();
+
+    auto detectModelType = [](const QString& text) {
+        if (text.contains("from openEMS import openEMS"))
+            return QStringLiteral("openems");
+
+        QRegularExpression re(R"(\w+\s*\[\s*['"][^'"]+['"]\s*\]\s*=)");
+        if (re.match(text).hasMatch())
+            return QStringLiteral("palace");
+
+        return QStringLiteral("unknown");
+    };
+
+    const QString modelType = detectModelType(text);
+
+    PythonParser::Result res = PythonParser::parseSettings(fileName);
     if (!res.ok)
     {
         error(tr("Failed to parse Palace model file:\n%1").arg(res.error));
         return;
     }
 
-    int idxPalace = m_ui->cbxSimTool->findData(QStringLiteral("palace"));
-    if (idxPalace >= 0 && m_ui->cbxSimTool->isEnabled())
-        m_ui->cbxSimTool->setCurrentIndex(idxPalace);
+    QString simKey;
+    if (modelType == QLatin1String("openems"))
+        simKey = QStringLiteral("openems");
+    else if (modelType == QLatin1String("palace"))
+        simKey = QStringLiteral("palace");
+    else
+        simKey = QStringLiteral("palace");
+
+    int idxSim = m_ui->cbxSimTool->findData(simKey);
+    if (idxSim >= 0 && m_ui->cbxSimTool->isEnabled())
+        m_ui->cbxSimTool->setCurrentIndex(idxSim);
 
     rebuildSimulationSettingsFromPalace(res.settings);
 
@@ -2690,6 +2797,7 @@ void MainWindow::on_actionOpen_Palace_Python_triggered()
 
         m_ui->tblPorts->setRowCount(0);
         importPortsFromEditor();
+        updateSubLayerNamesAutoCheck();
     }
 
     if (!res.simPath.isEmpty())
@@ -2705,7 +2813,6 @@ void MainWindow::on_actionOpen_Palace_Python_triggered()
 
     setStateSaved();
 }
-
 
 /*!*******************************************************************************************************************
  * \brief Rebuilds the "Simulation Settings" property group using values parsed from a Palace Python model.
@@ -2732,10 +2839,70 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         }
     }
 
-    for (auto it = settings.constBegin(); it != settings.constEnd(); ++it)
-    {
+    if (settings.contains(QLatin1String("Boundaries"))) {
+        const QVariant v = settings.value(QLatin1String("Boundaries"));
+
+        QStringList items;
+        const QStringList sides{ "X-", "X+", "Y-", "Y+", "Z-", "Z+" };
+
+        if (v.type() == QVariant::String) {
+            QString expr = v.toString().trimmed();
+            if (expr.startsWith('[') && expr.endsWith(']'))
+                expr = expr.mid(1, expr.size() - 2);
+
+            QRegularExpression itemRe(R"(['"]([^'"]+)['"])");
+            auto itItems = itemRe.globalMatch(expr);
+            while (itItems.hasNext()) {
+                QRegularExpressionMatch m = itItems.next();
+                items << m.captured(1).trimmed();
+            }
+        }
+        else if (v.type() == QVariant::Map) {
+            const QVariantMap m = v.toMap();
+            for (const QString& s : sides)
+                items << m.value(s, QStringLiteral("PEC")).toString();
+        }
+
+        if (items.size() == 6) {
+            QtProperty* boundariesGroup = nullptr;
+            const auto topProps = m_propertyBrowser->properties();
+            for (QtProperty* top : topProps) {
+                if (top->propertyName() == QLatin1String("Boundaries")) {
+                    boundariesGroup = top;
+                    break;
+                }
+            }
+
+            if (boundariesGroup) {
+                const auto subProps = boundariesGroup->subProperties();
+                for (QtProperty* sub : subProps) {
+                    const QString sideName = sub->propertyName();
+                    int idx = sides.indexOf(sideName);
+                    if (idx < 0 || idx >= items.size())
+                        continue;
+
+                    const QString valueStr = items.at(idx);
+                    const QStringList enumNames =
+                        m_variantManager->attributeValue(sub, "enumNames").toStringList();
+                    int enumIndex = enumNames.indexOf(valueStr);
+                    if (enumIndex >= 0)
+                        m_variantManager->setValue(sub, enumIndex);
+                }
+            }
+
+            QVariantMap bndMap;
+            for (int i = 0; i < items.size() && i < sides.size(); ++i)
+                bndMap[sides.at(i)] = items.at(i);
+            m_simSettings["Boundaries"] = bndMap;
+        }
+    }
+
+    for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
         const QString& key = it.key();
         const QVariant& val = it.value();
+
+        if (key == QLatin1String("Boundaries"))
+            continue;
 
         QVariant::Type t = val.type();
         int propType = QVariant::String;
@@ -2781,4 +2948,98 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Saves the current Python script, re-parses it and updates the simulation setup.
+ *
+ * Writes the contents of the embedded Python editor to the file referenced by
+ * txtRunPythonScript, then runs PythonParser on that file and rebuilds the
+ * simulation-related GUI state (simulation settings, GDS/substrate paths,
+ * run directory and internal m_simSettings entries) from the parsed result.
+ *
+ * The editor document is marked unmodified on success so that further tab
+ * changes do not trigger an unnecessary apply prompt.
+ *
+ * \return true on successful save and parse, false otherwise.
+ **********************************************************************************************************************/
+bool MainWindow::applyPythonScriptFromEditor()
+{
+    const QString filePath = m_ui->txtRunPythonScript->text().trimmed();
+    if (filePath.isEmpty()) {
+        error(tr("No Python script file specified."), false);
+        return false;
+    }
 
+    QFile f(filePath);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        error(tr("Failed to save Python script:\n%1").arg(f.errorString()), false);
+        return false;
+    }
+
+    QTextStream out(&f);
+    out << m_ui->editRunPythonScript->toPlainText();
+    f.close();
+
+    PythonParser::Result res = PythonParser::parseSettings(filePath);
+    if (!res.ok) {
+        error(tr("Failed to parse Python model file:\n%1").arg(res.error), false);
+        return false;
+    }
+
+    rebuildSimulationSettingsFromPalace(res.settings);
+
+    QFileInfo fi(filePath);
+    const QDir modelDir(fi.absolutePath());
+
+    if (!res.gdsFilename.isEmpty()) {
+        QString gdsPath = res.gdsFilename;
+        if (QFileInfo(gdsPath).isRelative())
+            gdsPath = modelDir.filePath(gdsPath);
+
+        m_ui->txtGdsFile->setText(gdsPath);
+        m_simSettings["GdsFile"] = gdsPath;
+        m_sysSettings["GdsDir"]  = QFileInfo(gdsPath).absolutePath();
+    }
+
+    if (!res.xmlFilename.isEmpty()) {
+        QString subPath = res.xmlFilename;
+        if (QFileInfo(subPath).isRelative())
+            subPath = modelDir.filePath(subPath);
+
+        m_ui->txtSubstrate->setText(subPath);
+        m_simSettings["SubstrateFile"] = subPath;
+        m_sysSettings["SubstrateDir"]  = QFileInfo(subPath).absolutePath();
+    }
+
+    if (!res.simPath.isEmpty()) {
+        QString runDir = res.simPath;
+        if (QFileInfo(runDir).isRelative())
+            runDir = modelDir.filePath(runDir);
+
+        QDir().mkpath(runDir);
+        m_ui->txtRunDir->setText(runDir);
+        m_simSettings["RunDir"] = runDir;
+    }
+
+    m_simSettings["RunPythonScript"] = filePath;
+    m_ui->editRunPythonScript->document()->setModified(false);
+
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Automatically enables the "SubLayer Names" option when substrate and ports are available.
+ *
+ * This helper checks whether a substrate file is loaded and at least one port
+ * is defined in the ports table. If both conditions are met, the checkbox
+ * controlling the use of substrate layer names (cbSubLayerNames) is enabled
+ * automatically. This improves workflow by ensuring correct layer-name mapping
+ * without requiring manual user action.
+ **********************************************************************************************************************/
+void MainWindow::updateSubLayerNamesAutoCheck()
+{
+    const bool hasSubstrate = !m_ui->txtSubstrate->text().trimmed().isEmpty();
+    const bool hasPorts     = (m_ui->tblPorts->rowCount() > 0);
+
+    if (hasSubstrate && hasPorts)
+        m_ui->cbSubLayerNames->setChecked(true);
+}

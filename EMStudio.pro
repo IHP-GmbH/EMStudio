@@ -30,9 +30,9 @@ SOURCES += \
     src/main.cpp \
     src/mainwindow.cpp \
     src/material.cpp \
-    src/palacepythonparser.cpp \
     src/preferences.cpp \
     src/pythoneditor.cpp \
+    src/pythonparser.cpp \
     src/pythonsyntaxhighlighter.cpp \
     src/substrate.cpp \
     src/substrateview.cpp \
@@ -59,9 +59,9 @@ HEADERS += \
     src/layer.h \
     src/mainwindow.h \
     src/material.h \
-    src/palacepythonparser.h \
     src/preferences.h \
     src/pythoneditor.h \
+    src/pythonparser.h \
     src/pythonsyntaxhighlighter.h \
     src/substrate.h \
     src/substrateview.h

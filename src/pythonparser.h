@@ -1,11 +1,11 @@
-#ifndef PALACEPYTHONPARSER_H
-#define PALACEPYTHONPARSER_H
+#ifndef PYTHONPARSER_H
+#define PYTHONPARSER_H
 
 #include <QMap>
 #include <QVariant>
 #include <QString>
 
-class PalacePythonParser
+class PythonParser
 {
 public:
     struct Result
@@ -25,4 +25,4 @@ public:
     static Result parseSettings(const QString &filePath);
 };
 
-#endif // PALACEPYTHONPARSER_H
+#endif // PYTHONPARSER_H

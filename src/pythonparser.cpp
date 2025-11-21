@@ -1,4 +1,4 @@
-#include "palacepythonparser.h"
+#include "pythonparser.h"
 
 #include <QDir>
 #include <QFile>
@@ -15,7 +15,7 @@
  * The left-hand variable name (e.g. "settings") is ignored on purpose, so that
  * different variable names still work.
  **********************************************************************************************************************/
-PalacePythonParser::Result PalacePythonParser::parseSettings(const QString &filePath)
+PythonParser::Result PythonParser::parseSettings(const QString &filePath)
 {
     Result result;
 

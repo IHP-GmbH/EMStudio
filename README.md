@@ -1,13 +1,10 @@
+# 📘 EMStudio – User Guide & Developer Documentation
+
 <p align="center">
-  <img src="icons/logo.png" alt="EMStudio Logo" width="160"/>
+  <img src="icons/logo.png" alt="EMStudio Logo" width="180"/>
 </p>
 
-<br/>
-
 <h1 align="center">EMStudio</h1>
-
-<br/>
-<br/>
 
 <p align="center">
   Qt-based GUI for electromagnetic (EM) simulations  
@@ -16,65 +13,139 @@
 
 ---
 
-## Overview
+# Overview
 
 **EMStudio** is a Qt-based desktop application for preparing, visualizing, and managing electromagnetic simulations.
 
 It provides an integrated workflow for:
 
-- Loading **GDS** layout data  
-- Defining and editing **substrate stacks** (dielectrics, metals, interfaces)  
-- Visualizing a **2.5D cross-section** of the substrate  
+- Loading GDS layout data  
+- Defining and editing substrate stacks (dielectrics, metals, layers)  
+- Visualizing a 2.5D cross-section  
 - Configuring simulation parameters  
-- Generating configuration files for external EM solvers (e.g. **Palace**)  
-- Editing and validating **Python driver scripts** with syntax highlighting  
-
-The application uses the Qt Property Browser for convenient editing of model parameters and includes custom editors and widgets.
-
----
-
-## Features
-
-- Qt GUI (C++17, Qt Widgets)
-- GDS reader (`gdsreader.cpp`)
-- Substrate and material model (`substrate`, `dielectric`, `material`)
-- 2.5D stack visualization (`substrateview`)
-- Python parser + integrated code editor with syntax highlighter
-- Preferences dialog for application paths and solver settings
-- Generation of Palace/solver configuration (JSON + Python)
-- Custom QtPropertyBrowser-based parameter editor
+- Generating configuration files for EM solvers (OpenEMS, Palace)  
+- Editing Python driver scripts with syntax highlighting  
+- Running simulations and streaming log output
 
 ---
 
-## Requirements
+# Features
 
-- **Qt 5 (or 6)** with Widgets  
-- **C++17** compiler  
-  - Linux: GCC / Clang  
-  - Windows: MSVC 2019/2022 or MinGW  
-- qmake (from your Qt installation)  
-- (Optional) Palace EM solver & Python (for simulation execution)
-
----
-
-## Building EMStudio
-
-### Build with Qt Creator (recommended)
-
-1. Open **Qt Creator**
-2. `File → Open File or Project…` → select `EMStudio.pro`
-3. Select a Kit (e.g. *Desktop Qt 5.15.2 MSVC 64-bit*)
-4. Configure project
-5. Click **Build**
-6. Click **Run**
+- Cross-platform Qt GUI (Linux & Windows)  
+- GDS reader (`gdsreader.cpp`)  
+- Substrate & material model  
+- 2.5D stack visualization (`substrateview`)  
+- Python script editor with syntax highlighting & autocompletion  
+- Python/Palace parser with JSON configuration  
+- QtPropertyBrowser-based parameter editor  
+- Preferences dialog (paths, solver settings, Python interpreter)  
+- Command-line interface for automation  
 
 ---
 
-### Build from command line (Linux)
+# Running EMStudio (Standalone)
+
+You can launch **EMStudio.exe** directly or via terminal:
+
+```bash
+EMStudio.exe [options] [run_file.json]
+```
+
+### Command-line options
+
+- **`-gdsfile <path>`**  
+  Path to GDS file
+
+- **`-topcell <name>`**  
+  Top-level GDS cell
+
+- **`run_file.json` (optional)**  
+  If provided, its settings override CLI arguments.  
+  If omitted, EMStudio automatically loads `<topcell>.json`  
+  from the same folder as the GDS file (if it exists).
+
+### Example
+
+```bash
+EMStudio.exe -gdsfile "C:/Work/design.gds" -topcell "top"
+```
+
+---
+
+# KLayout Integration
+
+EMStudio can be launched directly from **KLayout** through the helper script:
+
+```
+scripts/klEmsDriver.py
+```
+
+## Usage
+
+1. Save `klEmsDriver.py` inside your EMStudio installation directory.  
+2. (Optional) Add EMStudio directory to your system PATH.  
+3. Launch KLayout with:
+
+```bash
+"<path>\klayout_app.exe" -e -rm "<path>\EMStudio\scripts\klEmsDriver.py"
+```
+
+### What happens when executed?
+
+- EMStudio receives the currently opened GDS layout  
+- The top cell name is passed automatically  
+- If `<topcell>.json` exists next to the GDS, EMStudio loads it  
+
+---
+
+# Desktop Shortcut (Windows)
+
+1. Right-click → **New → Shortcut**
+2. Set target:
+
+```text
+"<Path to KLayout>\klayout_app.exe" -e -rm "<Path to EMStudio>\scripts\klEmsDriver.py"
+```
+
+3. Name it e.g. **EMStudio via KLayout**  
+4. *(Optional)* Change the icon: `icons/logo.ico`
+
+---
+
+# Configuration Files
+
+EMStudio uses JSON-based configuration files (`*.json`) containing:
+
+- GDS file path  
+- Top cell  
+- Frequency range  
+- Mesh settings  
+- Substrate definition  
+- Port definitions  
+- Output directory  
+- Python script path  
+
+These files can be created or edited in EMStudio and reused for automated runs.
+
+---
+
+# Building EMStudio
+
+## Build from command line (Linux)
 
 ```bash
 cd /path/to/EMStudio
 qmake EMStudio.pro
 make -j$(nproc)
 ./EMStudio
+```
 
+---
+
+## Build from command line (Windows / MSVC)
+
+```cmd
+qmake EMStudio.pro
+nmake
+release\EMStudio.exe
+```

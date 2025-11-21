@@ -63,14 +63,14 @@ jobs:
           toolset: 14.2
 
       - name: Configure (qmake)
-        shell: bash
+        shell: cmd
         run: |
-          mkdir -p build
+          mkdir build
           cd build
-          qmake ../EMStudio.pro
+          qmake ..\EMStudio.pro
 
       - name: Build
-        shell: bash
+        shell: cmd
         run: |
           cd build
           nmake
@@ -80,6 +80,6 @@ jobs:
         with:
           name: emstudio-windows
           path: |
-            build/EMStudio.exe
-            build/**/EMStudio.exe
+            build\EMStudio.exe
+            build\**\EMStudio.exe
           if-no-files-found: warn

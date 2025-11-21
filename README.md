@@ -146,6 +146,89 @@ make -j$(nproc)
 
 ```cmd
 qmake EMStudio.pro
-nmake
-release\EMStudio.exe
+nmake release\EMStudio.exe
 ```
+
+---
+
+# Example Workflows & Reference Projects
+
+EMStudio is fully compatible with publicly available example projects that demonstrate complete EM simulation flows based on **IHP SG13G2** technology.
+
+These repositories provide real-world examples for both **OpenEMS** and **Palace**, including GDS layouts, stackup files, simulation scripts, and S‑parameter extraction.
+
+---
+
+## 1. OpenEMS Example (IHP SG13G2)
+
+**Repository:**  
+https://github.com/VolkerMuehlhaus/openems_ihp_sg13g2
+
+This project contains:
+
+- SG13G2 example GDS files  
+- SG13G2 technology XML  
+- Python simulation scripts  
+- OpenEMS mesh and solver setup  
+- Post-processing utilities (S-parameters)
+
+### Using with EMStudio
+
+Open the provided Python model:
+
+```
+File → Open Python Model…
+```
+
+EMStudio will:
+
+- Parse `settings[...]`
+- Load GDS + substrate XML
+- Import ports
+- Render the SG13G2 stack & layer mapping
+- Allow editing simulation parameters
+- Regenerate updated Python code + JSON config
+
+---
+
+## 2. GDS‑to‑Palace Example (IHP SG13G2)
+
+**Repository:**  
+https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2
+
+This repository shows a complete **Palace EM simulation flow** including:
+
+- GDS examples  
+- SG13G2 XML substrate  
+- Palace Python driver scripts  
+- S‑parameter generation  
+
+### Using with EMStudio
+
+Load the Palace Python script via:
+
+```
+File → Open Python Model…
+```
+
+EMStudio will:
+
+- Parse all Palace simulation settings  
+- Import GDS + XML files  
+- Load ports and boundaries  
+- Provide full editing of simulation parameters  
+- Export updated Palace-ready Python script  
+
+---
+
+# Summary
+
+These example repositories are ideal for learning EMStudio workflows and validating correct operation.
+
+EMStudio can be used directly with both OpenEMS and Palace models for:
+
+- Full‑wave EM simulation  
+- SG13G2 stack evaluation  
+- Port setup & S‑parameter extraction  
+- Automated script generation  
+- KLayout‑based design environment integration

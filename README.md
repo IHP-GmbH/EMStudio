@@ -232,3 +232,15 @@ EMStudio can be used directly with both OpenEMS and Palace models for:
 - Port setup & S‑parameter extraction  
 - Automated script generation  
 - KLayout‑based design environment integration
+
+## License
+
+EMStudio is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software Foundation,
+either version 3 of the License, or (at your option) any later version.
+
+See the [LICENSE](LICENSE) file for details.
+
+This project also includes third-party components:
+
+- QtPropertyBrowser – from the Qt Solutions package, licensed under BSD-like terms

@@ -1,3 +1,24 @@
+/************************************************************************
+ *  EMStudio – GUI tool for setting up, running and analysing
+ *  electromagnetic simulations with IHP PDKs.
+ *
+ *  Copyright (C) 2023–2025 IHP Authors
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ ************************************************************************/
+
+
 #include <QFile>
 #include <QDebug>
 #include <QProcess>
@@ -272,8 +293,6 @@ bool MainWindow::pathLooksValid(const QString &path, const QString &relativeExe)
 
     const bool looksLinux = path.startsWith('/') || path.startsWith("\\\\wsl$");
     if (looksLinux) {
-        // We can’t reliably QFileInfo::exists() a WSL path from Windows.
-        // If user provided something non-empty, accept it here.
         return true;
     }
 
@@ -468,7 +487,6 @@ void MainWindow::showTab(int indexToShow)
 
             if (msg.clickedButton() == saveBtn) {
                 on_actionSave_triggered();
-                loadPythonScriptToEditor(m_ui->txtRunPythonScript->text());
             }
         }
     }
@@ -545,10 +563,10 @@ void MainWindow::setupSettingsPanel()
     auto addDouble = [&](const QString& name, double value) {
         QtVariantProperty* prop = m_variantManager->addProperty(QVariant::Double, name);
 
-        prop->setAttribute(QLatin1String("decimals"), 12); // key: NOT 2
+        prop->setAttribute(QLatin1String("decimals"), 12);
         prop->setAttribute(QLatin1String("minimum"), -std::numeric_limits<double>::max());
         prop->setAttribute(QLatin1String("maximum"),  std::numeric_limits<double>::max());
-        prop->setAttribute(QLatin1String("singleStep"), 0.0); // optional: no arrow nudge
+        prop->setAttribute(QLatin1String("singleStep"), 0.0);
 
         prop->setValue(value);
         simGroup->addSubProperty(prop);
@@ -684,26 +702,40 @@ void MainWindow::on_actionSave_As_triggered()
 void MainWindow::on_actionSave_triggered()
 {
     if (m_runFile.isEmpty()) {
-        QString defaultDir = QDir::homePath();
-        QString suggestedName = "simulation.json";
+        const QString gdsPath        = m_ui->txtGdsFile->text().trimmed();
+        const QString scriptPath     = m_ui->txtRunPythonScript->text().trimmed();
+        const QString substratePath  = m_ui->txtSubstrate->text().trimmed();
 
-        QString gdsPath = m_ui->txtGdsFile->text().trimmed();
-        if (!gdsPath.isEmpty() && QFileInfo(gdsPath).exists()) {
+        const bool hasGds        = !gdsPath.isEmpty() && QFileInfo(gdsPath).exists();
+        const bool hasScript     = !scriptPath.isEmpty() && QFileInfo(scriptPath).exists();
+        const bool hasSubstrate  = !substratePath.isEmpty() && QFileInfo(substratePath).exists();
+
+        if (hasGds && hasScript && hasSubstrate) {
             QFileInfo gdsInfo(gdsPath);
-            suggestedName = gdsInfo.completeBaseName() + ".json";
-            defaultDir = gdsInfo.absolutePath();
+            QString defaultDir    = gdsInfo.absolutePath();
+            QString suggestedName = gdsInfo.completeBaseName() + ".json";
+            m_runFile             = QDir(defaultDir).filePath(suggestedName);
+        } else {
+            QString defaultDir    = QDir::homePath();
+            QString suggestedName = "simulation.json";
+
+            if (hasGds) {
+                QFileInfo gdsInfo(gdsPath);
+                suggestedName = gdsInfo.completeBaseName() + ".json";
+                defaultDir    = gdsInfo.absolutePath();
+            }
+
+            QString defaultPath = QDir(defaultDir).filePath(suggestedName);
+            m_runFile = QFileDialog::getSaveFileName(
+                this,
+                tr("Save Simulation Run File"),
+                defaultPath,
+                tr("JSON Files (*.json);;All Files (*)")
+                );
+
+            if (m_runFile.isEmpty())
+                return;
         }
-
-        QString defaultPath = QDir(defaultDir).filePath(suggestedName);
-        m_runFile = QFileDialog::getSaveFileName(
-            this,
-            tr("Save Simulation Run File"),
-            defaultPath,
-            tr("JSON Files (*.json);;All Files (*)")
-            );
-
-        if (m_runFile.isEmpty())
-            return;
     }
 
     const QString scriptPath = m_ui->txtRunPythonScript->text().trimmed();
@@ -718,11 +750,14 @@ void MainWindow::on_actionSave_triggered()
             error(QString("Failed to save Python script to '%1': %2")
                       .arg(scriptPath, pyFile.errorString()));
         }
+
+        loadPythonScriptToEditor(m_ui->txtRunPythonScript->text());
     }
 
     saveRunFile(m_runFile);
     setStateSaved();
 }
+
 
 
 /*!*******************************************************************************************************************
@@ -955,7 +990,7 @@ void MainWindow::updateSimulationSettings()
                 box->setCurrentText(value);
             };
 
-            m_blockPortChanges = true; // begin bulk update
+            m_blockPortChanges = true;
 
             for (const QVariant& v : portsList) {
                 const QVariantMap portMap = v.toMap();
@@ -1301,9 +1336,18 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
             else
                 continue;
 
-            QRegularExpression re(QString("^%1\\s*=.*$").arg(QRegularExpression::escape(key)),
-                                  QRegularExpression::MultilineOption);
-            script.replace(re, QString("%1 = %2").arg(key, strValue));
+            QRegularExpression reVar(
+                QString("^\\s*%1\\s*=.*$")
+                    .arg(QRegularExpression::escape(key)),
+                QRegularExpression::MultilineOption);
+            script.replace(reVar, QString("%1 = %2").arg(key, strValue));
+
+            QRegularExpression reDict(
+                QString("^\\s*(\\w+)\\s*\\[\\s*['\"]%1['\"]\\s*\\]\\s*=.*$")
+                    .arg(QRegularExpression::escape(key)),
+                QRegularExpression::MultilineOption);
+            script.replace(reDict,
+                           QString("\\1['%1'] = %2").arg(key, strValue));
         }
 
         QStringList bndKeys = {"X-", "X+", "Y-", "Y+", "Z-", "Z+"};
@@ -1722,7 +1766,7 @@ void MainWindow::runOpenEMS()
         return;
     }
 
-    on_actionSave_triggered(); // keep your behavior
+    on_actionSave_triggered();
 
     QString pythonPath = m_preferences.value("Python Path").toString();
     if (pythonPath.isEmpty())
@@ -2277,7 +2321,6 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
 {
     QVector<PortInfo> out;
 
-    // Match: simulation_ports.add_port( simulation_setup.simulation_port(  [ARGS]  ) )
     QRegularExpression callRe(
         R"(simulation_ports\s*\.\s*add_port\s*\(\s*simulation_setup\s*\.\s*simulation_port\s*\(\s*(.*?)\s*\)\s*\))",
         QRegularExpression::DotMatchesEverythingOption | QRegularExpression::MultilineOption
@@ -2709,6 +2752,8 @@ void MainWindow::on_actionOpen_Python_Model_triggered()
 
     if (fileName.isEmpty())
         return;
+
+    m_ui->editSimulationLog->clear();
 
     const QFileInfo fi(fileName);
     m_preferences["PALACE_MODEL_DIR"]  = fi.absolutePath();

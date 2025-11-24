@@ -1,3 +1,23 @@
+/************************************************************************
+ *  EMStudio – GUI tool for setting up, running and analysing
+ *  electromagnetic simulations with IHP PDKs.
+ *
+ *  Copyright (C) 2023–2025 IHP Authors
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ ************************************************************************/
+
 #include "fileedit.h"
 
 #include <QLabel>
@@ -19,7 +39,7 @@ FileEdit::FileEdit(QWidget *parent, TYPE type)
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
-    theLineEdit = new QLineEditD2(this);    
+    theLineEdit = new QLineEditD2(this);
     theLineEdit->setSizePolicy(QSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred));
 
     if(type == COLOR) {
@@ -50,7 +70,7 @@ FileEdit::FileEdit(QWidget *parent, TYPE type)
                 this, SIGNAL(filePathChanged(const QString &)));
 
     connect(theLineEdit, SIGNAL(mouseDoubleClickSignal(QMouseEvent *)),
-		this, SLOT(mouseDoubleClickSlot(QMouseEvent *)));
+        this, SLOT(mouseDoubleClickSlot(QMouseEvent *)));
 
     connect(button, SIGNAL(clicked()),
                 this, SLOT(buttonClicked()));
@@ -71,7 +91,7 @@ FileEdit::FileEdit(QWidget *parent, TYPE type)
 //*******************************************************************************
 void FileEdit::mouseDoubleClickSlot(QMouseEvent *)
 {
-	buttonClicked();
+    buttonClicked();
 }
 
 //*******************************************************************************

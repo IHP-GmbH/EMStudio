@@ -49,37 +49,35 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Install Qt
+      - name: Install Qt (Qt 5.15.2 MinGW 64-bit)
         uses: jurplel/install-qt-action@v4
         with:
           version: '5.15.2'
           host: 'windows'
           target: 'desktop'
-          arch: 'win64_msvc2019_64'
+          arch: 'win64_mingw81'
+          tools: 'tools_mingw81'
 
-      - name: Setup MSVC environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          toolset: 14.2
+      # MSVC больше не нужен — собираем MinGW'ом
 
       - name: Configure (qmake)
-        shell: cmd
+        shell: bash
         run: |
-          mkdir build
+          mkdir -p build
           cd build
-          qmake ..\EMStudio.pro
+          qmake ../EMStudio.pro
 
-      - name: Build
-        shell: cmd
+      - name: Build (mingw32-make)
+        shell: bash
         run: |
           cd build
-          nmake
+          mingw32-make -j"$(nproc)"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: emstudio-windows
           path: |
-            build\EMStudio.exe
-            build\**\EMStudio.exe
+            build/EMStudio.exe
+            build/**/EMStudio.exe
           if-no-files-found: warn

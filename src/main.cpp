@@ -56,9 +56,6 @@
  * as the GDS file. If such a file is found, it will be passed as the argument to EMStudio instead of using
  * `-gdsfile` and `-topcell` arguments. This allows preconfigured simulation setups to be launched directly.
  *
- * \section author_sec Author
- * Developed by Anton Datsuk (datsuk@ihp-microelectronics.com)
- *
  * \section usage_sec Command-Line Usage
  * \code
  * EMStudio [options] [run_file.json]

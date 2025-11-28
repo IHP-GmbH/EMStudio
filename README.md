@@ -186,11 +186,23 @@ On the ports tab, you need to configure simulation ports. It is expected that po
 
 <img src="./doc/png/ports1.png" alt="ports" width="700">
 
-EMStudio will read the GDSII file and scan for polygon layers 201 and above, which is the recommended layer range to create ports for IHP EM workflows. If these layers are detected, a port configuration will be added for these layers, with Z direction as the default layer and Metal1 to TopMetal2 as the default layer span for the via port. Note that these settings must be checked and updated by the user, there is NO automatic detection if these default values are valid for your model
+EMStudio will read the GDSII file and scan for polygon layers 201 and above, which is the recommended layer range to create ports for IHP EM workflows. If these layers are detected, a port configuration will be added for these layers, with Z direction as the default layer and Metal1 to TopMetal2 as the default layer span for the via port. Note that these settings must be checked and updated by the user, there is NO automatic detection if these default values are valid for your model!
 
-In-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area.
+When creating ports entries from scratch, there is a checkbox "Use Substrate Layer Names" of the left bottom side of the Window. This will tell EMStudio to use layer names from the XML stackup file for the layer dropdown boxes.
 
+In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area.
 
+## Simulate
+
+On the Simulate tab, you define where the resulting simulation model code (*.py) will be stored, and you can also start simulation from here. 
+
+Note that this simulation model output is different from the Python script  that you selected on the Python tab - that file was loaded as a template only, and should not be overwritten with the newly created model.
+
+<img src="./doc/png/simulate1.png" alt="simulate" width="700">
+
+When you start simulation, the simulation model script will be executed, using the Python interpreter that you defined using Setup > Preferences.
+
+<img src="./doc/png/simulate2.png" alt="simulate" width="700">
 
 
 ---

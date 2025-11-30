@@ -71,23 +71,13 @@ jobs:
           cd build
           mingw32-make -j"$(nproc)"
 
-      - name: Deploy Qt runtime
+      - name: Deploy Qt runtime (windeployqt)
         shell: cmd
         run: |
           cd build
           mkdir dist
-          copy EMStudio.exe dist\
+          copy release\EMStudio.exe dist\
           windeployqt --release --dir .\dist .\dist\EMStudio.exe
-
-      - name: Install Inno Setup
-        shell: pwsh
-        run: |
-          choco install innosetup --yes
-
-      - name: Build Windows installer
-        shell: pwsh
-        run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\EMStudio.iss
 
       - name: Package Windows portable bundle
         shell: pwsh
@@ -95,11 +85,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path build\artifacts | Out-Null
           Compress-Archive -Path build\dist\* -DestinationPath build\artifacts\EMStudio-windows-portable.zip -Force
 
-      - name: Upload Windows artifacts
+      - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: emstudio-windows
-          path: |
-            installer\Output\EMStudio-Setup.exe
-            build\artifacts\EMStudio-windows-portable.zip
+          name: emstudio-windows-portable
+          path: build/artifacts/EMStudio-windows-portable.zip
           if-no-files-found: error

@@ -58,6 +58,10 @@ jobs:
           arch: 'win64_mingw81'
           tools: 'tools_mingw81'
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes
+
       - name: Configure (qmake)
         shell: bash
         run: |
@@ -82,18 +86,16 @@ jobs:
           )
           mkdir dist
           copy release\EMStudio.exe dist\
-          xcopy "%QT_PLUGIN_PATH%" dist\plugins\ /E /I /Y
-          windeployqt --release --no-plugins --dir dist dist\EMStudio.exe
+          windeployqt --release --dir dist dist\EMStudio.exe
 
-      - name: Package Windows portable bundle
+      - name: Build Windows installer (Inno Setup)
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path build\artifacts | Out-Null
-          Compress-Archive -Path build\dist\* -DestinationPath build\artifacts\EMStudio-windows-portable.zip -Force
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\EMStudio.iss" /O"build\installer"
 
-      - name: Upload Windows artifact
+      - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: emstudio-windows-portable
-          path: build/artifacts/EMStudio-windows-portable.zip
+          name: emstudio-windows-installer
+          path: build/installer/EMStudio-Setup.exe
           if-no-files-found: error

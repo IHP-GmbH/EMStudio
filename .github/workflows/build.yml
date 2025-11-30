@@ -86,7 +86,7 @@ jobs:
           )
           mkdir dist
           copy release\EMStudio.exe dist\
-          windeployqt --release --dir dist dist\EMStudio.exe
+          windeployqt --dir dist dist\EMStudio.exe
 
       - name: Build Windows installer (Inno Setup)
         shell: pwsh

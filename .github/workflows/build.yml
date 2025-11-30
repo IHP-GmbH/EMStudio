@@ -63,7 +63,7 @@ jobs:
         run: |
           mkdir -p build
           cd build
-          qmake ../EMStudio.pro
+          qmake CONFIG+=release ../EMStudio.pro
 
       - name: Build (mingw32-make)
         shell: bash
@@ -75,9 +75,16 @@ jobs:
         shell: cmd
         run: |
           cd build
+          if not exist release\EMStudio.exe (
+            echo release\EMStudio.exe not found
+            dir
+            exit /b 1
+          )
           mkdir dist
           copy release\EMStudio.exe dist\
-          windeployqt --release --dir .\dist .\dist\EMStudio.exe
+          set QT_PLUGIN_PATH=%Qt5_Dir%\plugins
+          set QT_QPA_PLATFORM_PLUGIN_PATH=%Qt5_Dir%\plugins\platforms
+          windeployqt --release --dir dist dist\EMStudio.exe
 
       - name: Package Windows portable bundle
         shell: pwsh

@@ -58,8 +58,6 @@ jobs:
           arch: 'win64_mingw81'
           tools: 'tools_mingw81'
 
-      # MSVC больше не нужен — собираем MinGW'ом
-
       - name: Configure (qmake)
         shell: bash
         run: |
@@ -73,11 +71,35 @@ jobs:
           cd build
           mingw32-make -j"$(nproc)"
 
-      - name: Upload Windows artifact
+      - name: Deploy Qt runtime
+        shell: cmd
+        run: |
+          cd build
+          mkdir dist
+          copy EMStudio.exe dist\
+          windeployqt --release --dir .\dist .\dist\EMStudio.exe
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --yes
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\EMStudio.iss
+
+      - name: Package Windows portable bundle
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path build\artifacts | Out-Null
+          Compress-Archive -Path build\dist\* -DestinationPath build\artifacts\EMStudio-windows-portable.zip -Force
+
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: emstudio-windows
           path: |
-            build/EMStudio.exe
-            build/**/EMStudio.exe
-          if-no-files-found: warn
+            installer\Output\EMStudio-Setup.exe
+            build\artifacts\EMStudio-windows-portable.zip
+          if-no-files-found: error

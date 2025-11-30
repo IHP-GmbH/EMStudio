@@ -480,7 +480,7 @@ void MainWindow::showTab(int indexToShow)
             msg.setText(tr("The simulation state has been changed.\n"
                            "To see the updated Python script, please save the state first."));
             QPushButton *saveBtn   = msg.addButton(tr("&Save"),   QMessageBox::AcceptRole);
-            QPushButton *ignoreBtn = msg.addButton(tr("&Ignore"), QMessageBox::RejectRole);
+            msg.addButton(tr("&Ignore"), QMessageBox::RejectRole);
             msg.setDefaultButton(saveBtn);
 
             msg.exec();

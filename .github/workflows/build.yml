@@ -75,10 +75,15 @@ jobs:
         shell: cmd
         run: |
           cd build
+          if not exist release\EMStudio.exe (
+            echo release\EMStudio.exe not found
+            dir
+            exit /b 1
+          )
           mkdir dist
           copy release\EMStudio.exe dist\
-          xcopy "%Qt5_DIR%\plugins" dist\plugins\ /E /I /Y
-          windeployqt --release --dir dist dist\EMStudio.exe
+          xcopy "%QT_PLUGIN_PATH%" dist\plugins\ /E /I /Y
+          windeployqt --release --no-plugins --dir dist dist\EMStudio.exe
 
       - name: Package Windows portable bundle
         shell: pwsh

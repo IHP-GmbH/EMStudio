@@ -65,49 +65,105 @@ void Preferences::on_btnCancel_clicked()
     close();
 }
 
-/*!*******************************************************************************************************************
- * \brief Sets up the preferences property browser, creating editable fields for environment variables like Python path
- *        and OPENEMS installation path.
- **********************************************************************************************************************/
 void Preferences::setupPreferencesPanel()
 {
     m_propertyBrowser = new QtTreePropertyBrowser(this);
-    m_variantManager = new VariantManager(m_propertyBrowser);
+    m_variantManager  = new VariantManager(m_propertyBrowser);
 
     m_propertyBrowser->setResizeMode(QtTreePropertyBrowser::ResizeToContents);
     m_propertyBrowser->setPropertiesWithoutValueMarked(true);
     m_propertyBrowser->setHeaderVisible(false);
 
-    QVBoxLayout* layout = new QVBoxLayout(m_ui->wgtPreferences);
+    QVBoxLayout *layout = new QVBoxLayout(m_ui->wgtPreferences);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_propertyBrowser);
 
-    QtVariantEditorFactory* factory = new VariantFactory();
+    QtVariantEditorFactory *factory = new VariantFactory();
     m_propertyBrowser->setFactoryForManager(m_variantManager, factory);
 
-    QtVariantProperty* envGroup = m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), "Environment");
+    QtVariantProperty *openemsGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("OpenEMS"));
 
-    QtVariantProperty* pythonPathProp = m_variantManager->addProperty(VariantManager::filePathTypeId(), "Python Path");
+    QtVariantProperty *pythonPathProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), "Python Path");
     pythonPathProp->setWhatsThis("file");
     pythonPathProp->setValue(m_preferences.value("Python Path", ""));
-    envGroup->addSubProperty(pythonPathProp);
+    openemsGroup->addSubProperty(pythonPathProp);
 
-    QtVariantProperty* pythonWslPathProp = m_variantManager->addProperty(VariantManager::filePathTypeId(), "PALACE_WSL_PYTHON");
+    QtVariantProperty *openemsPathProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), "OPENEMS_INSTALL_PATH");
+    openemsPathProp->setWhatsThis("folder");
+    openemsPathProp->setValue(m_preferences.value("OPENEMS_INSTALL_PATH", ""));
+    openemsGroup->addSubProperty(openemsPathProp);
+
+    QtVariantProperty *palaceGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("Palace"));
+
+    QtVariantProperty *pythonWslPathProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), "PALACE_WSL_PYTHON");
     pythonWslPathProp->setWhatsThis("file");
     pythonWslPathProp->setValue(m_preferences.value("PALACE_WSL_PYTHON", ""));
-    envGroup->addSubProperty(pythonWslPathProp);
+    palaceGroup->addSubProperty(pythonWslPathProp);
 
-    QtVariantProperty* openemsPathProp = m_variantManager->addProperty(VariantManager::filePathTypeId(), "OPENEMS_INSTALL_PATH");
-    openemsPathProp->setValue(m_preferences.value("OPENEMS_INSTALL_PATH", ""));
-    openemsPathProp->setWhatsThis("folder");
-    envGroup->addSubProperty(openemsPathProp);
+    m_palaceRunModeProp =
+        m_variantManager->addProperty(QtVariantPropertyManager::enumTypeId(), "PALACE_RUN_MODE");
 
-    QtVariantProperty* palacePathProp = m_variantManager->addProperty(VariantManager::filePathTypeId(), "PALACE_INSTALL_PATH");
-    palacePathProp->setValue(m_preferences.value("PALACE_INSTALL_PATH", ""));
-    palacePathProp->setWhatsThis("folder");
-    envGroup->addSubProperty(palacePathProp);
+    QStringList modes;
+    modes << tr("Executable") << tr("Script");
+    m_palaceRunModeProp->setAttribute("enumNames", modes);
+    m_palaceRunModeProp->setValue(m_preferences.value("PALACE_RUN_MODE", 0));
+    palaceGroup->addSubProperty(m_palaceRunModeProp);
 
-    m_propertyBrowser->addProperty(envGroup);
+    m_propertyBrowser->addProperty(openemsGroup);
+    m_propertyBrowser->addProperty(palaceGroup);
+
+    m_palaceInstallPathProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), "PALACE_INSTALL_PATH");
+    m_palaceInstallPathProp->setWhatsThis("folder");
+    m_palaceInstallPathProp->setValue(m_preferences.value("PALACE_INSTALL_PATH", ""));
+    palaceGroup->addSubProperty(m_palaceInstallPathProp);
+
+    m_palaceRunScriptProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), "PALACE_RUN_SCRIPT");
+    m_palaceRunScriptProp->setWhatsThis("file");
+    m_palaceRunScriptProp->setValue(m_preferences.value("PALACE_RUN_SCRIPT", ""));
+    palaceGroup->addSubProperty(m_palaceRunScriptProp);
+
+    connect(m_variantManager, &QtVariantPropertyManager::valueChanged,
+            this, &Preferences::onVariantValueChanged);
+
+    onVariantValueChanged(m_palaceRunModeProp, m_palaceRunModeProp->value());
+}
+
+/*!*******************************************************************************************************************
+ * \brief Updates the internal preferences map when a property value changes
+ *        and maintains the mutual exclusivity between Palace install path
+ *        and Palace run script.
+ *
+ * This slot is connected to QtVariantPropertyManager::valueChanged and keeps
+ * the QMap-based preferences in sync with the property browser. When either
+ * PALACE_INSTALL_PATH or PALACE_RUN_SCRIPT is edited, it enables one of them
+ * and disables the other depending on which value is currently set.
+ **********************************************************************************************************************/
+void Preferences::onVariantValueChanged(QtProperty *property, const QVariant &value)
+{
+    if (!property)
+        return;
+
+    const QString name = property->propertyName();
+
+    m_preferences.insert(name, value);
+
+    if (name == QLatin1String("PALACE_RUN_MODE")) {
+        const int mode = value.toInt();
+        const bool useExecutable = (mode == 0);
+
+        if (m_palaceInstallPathProp)
+            m_palaceInstallPathProp->setEnabled(useExecutable);
+
+        if (m_palaceRunScriptProp)
+            m_palaceRunScriptProp->setEnabled(!useExecutable);
+    }
 }
 
 /*!*******************************************************************************************************************

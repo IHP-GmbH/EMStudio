@@ -32,6 +32,7 @@
 #include <QCloseEvent>
 #include <QJsonDocument>
 #include <QSignalBlocker>
+#include <QStandardPaths>
 #include <QProcessEnvironment>
 
 #include "extension/variantmanager.h"
@@ -1902,8 +1903,81 @@ void MainWindow::runPalace()
         return;
     }
 
-    QString runDirWin = m_simSettings.value("RunDir").toString().trimmed();
-    if (runDirWin.isEmpty()) {
+    const int runMode = m_preferences.value("PALACE_RUN_MODE", 0).toInt();
+
+    if (runMode == 1) {  // Script mode
+        const QString launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
+        if (launcherWin.isEmpty() || !QFileInfo::exists(launcherWin)) {
+            error("PALACE_RUN_SCRIPT is not configured or does not exist.", true);
+            return;
+        }
+
+        QFileInfo fi(launcherWin);
+        if (!fi.isExecutable()) {
+            error("PALACE_RUN_SCRIPT must point to an executable file.", true);
+            return;
+        }
+
+        m_ui->editSimulationLog->clear();
+        m_ui->editSimulationLog->insertPlainText("Starting Palace via external launcher script...\n");
+        m_ui->editSimulationLog->insertPlainText(
+            QString("[Launcher: %1]\n").arg(QDir::toNativeSeparators(launcherWin)));
+        m_ui->editSimulationLog->insertPlainText(
+            QString("[Model: %1]\n").arg(QDir::toNativeSeparators(modelWin)));
+
+        m_simProcess  = new QProcess(this);
+        m_palacePhase = PalacePhase::None;
+
+        connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [=]() {
+            const QByteArray data = m_simProcess->readAllStandardOutput();
+            if (!data.isEmpty()) {
+                const QString text = QString::fromUtf8(data);
+                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+                m_ui->editSimulationLog->insertPlainText(text);
+                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+            }
+        });
+
+        connect(m_simProcess, &QProcess::readyReadStandardError, this, [=]() {
+            const QByteArray data = m_simProcess->readAllStandardError();
+            if (!data.isEmpty()) {
+                const QString text = QString::fromUtf8(data);
+                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+                m_ui->editSimulationLog->insertPlainText(text);
+                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+            }
+        });
+
+        connect(m_simProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this,
+                [=](int exitCode, QProcess::ExitStatus) {
+                    const QString msg =
+                        QString("\n[Palace launcher finished with exit code %1]\n").arg(exitCode);
+                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+                    m_ui->editSimulationLog->insertPlainText(msg);
+                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+
+                    m_simProcess->deleteLater();
+                    m_simProcess  = nullptr;
+                    m_palacePhase = PalacePhase::None;
+                });
+
+        QStringList args;
+        args << QDir::toNativeSeparators(modelWin);
+
+        m_simProcess->start(QDir::toNativeSeparators(launcherWin), args);
+        if (!m_simProcess->waitForStarted(3000)) {
+            error("Failed to start Palace launcher script.", false);
+            m_simProcess->deleteLater();
+            m_simProcess  = nullptr;
+            m_palacePhase = PalacePhase::None;
+        }
+
+        return;
+    }
+
+    QString runDir = m_simSettings.value("RunDir").toString().trimmed();
+    if (runDir.isEmpty()) {
         QFileInfo fi(modelWin);
         const QString baseName = fi.completeBaseName();
         if (baseName.isEmpty()) {
@@ -1912,15 +1986,21 @@ void MainWindow::runPalace()
         }
 
         QDir baseDir(fi.absolutePath());
-        runDirWin = baseDir.filePath(QStringLiteral("palace_model/%1_data").arg(baseName));
+        runDir = baseDir.filePath(QStringLiteral("palace_model/%1_data").arg(baseName));
 
-        m_simSettings["RunDir"] = runDirWin;
-        m_ui->txtRunDir->setText(runDirWin);
+        m_simSettings["RunDir"] = runDir;
+        m_ui->txtRunDir->setText(runDir);
     }
 
     QString palaceRoot = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
     if (palaceRoot.isEmpty()) {
         error("PALACE_INSTALL_PATH is not configured in Preferences.", true);
+        return;
+    }
+
+#ifdef Q_OS_WIN
+    if (QStandardPaths::findExecutable("wsl").isEmpty()) {
+        error("WSL is not available on this system. Install WSL or use Palace launcher mode.", true);
         return;
     }
 
@@ -1932,6 +2012,11 @@ void MainWindow::runPalace()
 
     const QString modelDirLinux = toWslPath(QFileInfo(modelWin).absolutePath());
     const QString modelLinux    = toWslPath(modelWin);
+#else
+    const QString palaceExeLinux = QDir(palaceRoot).filePath("bin/palace");
+    const QString modelDirLinux  = QFileInfo(modelWin).absolutePath();
+    const QString modelLinux     = modelWin;
+#endif
 
     QString pythonCmd = m_preferences.value("PALACE_WSL_PYTHON").toString().trimmed();
     if (pythonCmd.isEmpty())
@@ -1940,22 +2025,34 @@ void MainWindow::runPalace()
     m_palacePythonOutput.clear();
 
     m_ui->editSimulationLog->clear();
+#ifdef Q_OS_WIN
     m_ui->editSimulationLog->insertPlainText(
         QString("Starting Palace Python preprocessing in WSL (%1)...\n").arg(distro));
+#else
+    m_ui->editSimulationLog->insertPlainText("Starting Palace Python preprocessing (native)...\n");
+#endif
     m_ui->editSimulationLog->insertPlainText(
-        QString("[Using WSL Python: %1]\n").arg(pythonCmd));
+        QString("[Using Python: %1]\n").arg(pythonCmd));
     m_ui->editSimulationLog->insertPlainText(
-        QString("[Initial Palace run directory guess: %1]\n").arg(runDirWin));
+        QString("[Initial Palace run directory guess: %1]\n").arg(runDir));
 
+    m_simProcess  = new QProcess(this);
+    m_palacePhase = PalacePhase::PythonModel;
+
+#ifdef Q_OS_WIN
     QStringList argsPython;
     argsPython << "-d" << distro
                << "--"
                << "bash" << "-lc"
                << QString("cd \"%1\" && %2 \"%3\"")
                       .arg(modelDirLinux, pythonCmd, modelLinux);
-
-    m_simProcess  = new QProcess(this);
-    m_palacePhase = PalacePhase::PythonModel;
+    m_simProcess->start("wsl", argsPython);
+#else
+    m_simProcess->setWorkingDirectory(modelDirLinux);
+    QStringList argsPython;
+    argsPython << modelLinux;
+    m_simProcess->start(pythonCmd, argsPython);
+#endif
 
     connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [=]() {
         const QByteArray data = m_simProcess->readAllStandardOutput();
@@ -1996,7 +2093,7 @@ void MainWindow::runPalace()
                         return;
                     }
 
-                    QString detectedRunDirWin;
+                    QString detectedRunDir;
                     {
                         QRegularExpression re(
                             R"(Simulation data directory:\s*([^\s]+))");
@@ -2004,27 +2101,30 @@ void MainWindow::runPalace()
                         if (m.hasMatch()) {
                             const QString simDirLinux = m.captured(1).trimmed();
 
+#ifdef Q_OS_WIN
                             auto wslToWin = [](const QString& p) -> QString {
                                 if (p.startsWith("/mnt/") && p.size() > 6) {
                                     const QChar drive = p.at(5).toUpper();
-                                    QString rest = p.mid(6); // after "/mnt/x"
+                                    QString rest = p.mid(6);
                                     QString win = QString("%1:/%2").arg(drive).arg(rest);
                                     return win;
                                 }
                                 return p;
                             };
-
-                            detectedRunDirWin = wslToWin(simDirLinux);
+                            detectedRunDir = wslToWin(simDirLinux);
+#else
+                            detectedRunDir = simDirLinux;
+#endif
 
                             m_ui->editSimulationLog->moveCursor(QTextCursor::End);
                             m_ui->editSimulationLog->insertPlainText(
                                 QString("[Detected Palace simulation dir: %1]\n")
-                                    .arg(detectedRunDirWin));
+                                    .arg(detectedRunDir));
                             m_ui->editSimulationLog->moveCursor(QTextCursor::End);
 
-                            if (!detectedRunDirWin.isEmpty()) {
-                                m_simSettings["RunDir"] = detectedRunDirWin;
-                                m_ui->txtRunDir->setText(detectedRunDirWin);
+                            if (!detectedRunDir.isEmpty()) {
+                                m_simSettings["RunDir"] = detectedRunDir;
+                                m_ui->txtRunDir->setText(detectedRunDir);
                             }
                         }
                     }
@@ -2034,9 +2134,9 @@ void MainWindow::runPalace()
                         "\n[Palace Python preprocessing finished successfully, searching for config...]\n");
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
 
-                    QString searchDir = detectedRunDirWin.isEmpty()
+                    QString searchDir = detectedRunDir.isEmpty()
                                             ? m_simSettings.value("RunDir").toString().trimmed()
-                                            : detectedRunDirWin;
+                                            : detectedRunDir;
 
                     QDir dir(searchDir);
                     dir.setFilter(QDir::Files | QDir::Readable | QDir::NoSymLinks);
@@ -2054,22 +2154,30 @@ void MainWindow::runPalace()
                         return;
                     }
 
-                    const QString configWin   = files.first().absoluteFilePath();
-                    const QString configLinux = toWslPath(configWin);
+                    const QString configPath = files.first().absoluteFilePath();
+
+#ifdef Q_OS_WIN
+                    const QString configLinux = toWslPath(configPath);
+#else
+                    const QString configLinux = configPath;
+#endif
 
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
                     m_ui->editSimulationLog->insertPlainText(
-                        QString("[Using Palace config: %1]\n").arg(configWin));
+                        QString("[Using Palace config: %1]\n").arg(configPath));
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
 
                     const QString configDirLinux  = QFileInfo(configLinux).path();
                     const QString configBaseLinux = QFileInfo(configLinux).fileName();
 
                     QString palaceRoot2 = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
+#ifdef Q_OS_WIN
                     if (!palaceRoot2.startsWith('/'))
                         palaceRoot2 = toWslPath(palaceRoot2);
+#endif
                     const QString palaceExeLinux2 = QDir(palaceRoot2).filePath("bin/palace");
 
+#ifdef Q_OS_WIN
                     QString cmd = QString(
                                       "cd \"%1\" && "
                                       "\"%2\" --launcher-args --oversubscribe "
@@ -2085,13 +2193,28 @@ void MainWindow::runPalace()
 
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
                     m_ui->editSimulationLog->insertPlainText(
-                        "\n[Starting Palace solver...]\n");
+                        "\n[Starting Palace solver in WSL...]\n");
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
 
                     m_palacePhase = PalacePhase::PalaceSolver;
                     m_simProcess->start("wsl", argsPalace);
+#else
+                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+                    m_ui->editSimulationLog->insertPlainText(
+                        "\n[Starting Palace solver (native)...]\n");
+                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+
+                    m_palacePhase = PalacePhase::PalaceSolver;
+                    m_simProcess->setWorkingDirectory(configDirLinux);
+                    m_simProcess->start(palaceExeLinux2, QStringList() << configBaseLinux);
+#endif
+
                     if (!m_simProcess->waitForStarted(3000)) {
+#ifdef Q_OS_WIN
                         error("Failed to start Palace solver under WSL.", false);
+#else
+                        error("Failed to start Palace solver.", false);
+#endif
                         m_simProcess->deleteLater();
                         m_simProcess  = nullptr;
                         m_palacePhase = PalacePhase::None;
@@ -2112,9 +2235,12 @@ void MainWindow::runPalace()
                 }
             });
 
-    m_simProcess->start("wsl", argsPython);
     if (!m_simProcess->waitForStarted(3000)) {
+#ifdef Q_OS_WIN
         error("Failed to start Palace Python preprocessing under WSL.", false);
+#else
+        error("Failed to start Palace Python preprocessing.", false);
+#endif
         m_simProcess->deleteLater();
         m_simProcess  = nullptr;
         m_palacePhase = PalacePhase::None;

@@ -24,6 +24,7 @@
 #include <QDialog>
 
 class QtProperty;
+class QtVariantProperty;
 class QtTreePropertyBrowser;
 class QtVariantEditorFactory;
 class QtVariantPropertyManager;
@@ -56,6 +57,7 @@ public:
 private slots:
     void                            on_btnCancel_clicked();
     void                            on_btnApply_clicked();
+    void                            onVariantValueChanged(QtProperty *property, const QVariant &value);
 
 private:
     void                            setupPreferencesPanel();
@@ -65,6 +67,9 @@ private:
 
     QtVariantPropertyManager        *m_variantManager = nullptr;
     QtTreePropertyBrowser           *m_propertyBrowser = nullptr;
+    QtVariantProperty               *m_palaceRunModeProp     = nullptr;
+    QtVariantProperty               *m_palaceRunScriptProp   = nullptr;
+    QtVariantProperty               *m_palaceInstallPathProp = nullptr;
 
     QMap<QString, QVariant>         &m_preferences;
 };

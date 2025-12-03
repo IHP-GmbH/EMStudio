@@ -206,6 +206,11 @@ MainWindow::MainWindow(QWidget *parent)
     QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_ui->editSimulationLog->setFont(mono);
 
+    //hide python code button and text line
+    m_ui->lblRunPythonScript->setVisible(false);
+    m_ui->btnRunPythonScript->setVisible(false);
+    m_ui->txtRunPythonScript->setVisible(false);
+
     setStateSaved();
 }
 
@@ -314,7 +319,7 @@ bool MainWindow::pathLooksValid(const QString &path, const QString &relativeExe)
  * \brief Converts a Windows path (e.g. "C:\foo\bar") to a WSL path ("/mnt/c/foo/bar").
  *        If the path already looks Linux-like, returns it unchanged.
  **********************************************************************************************************************/
-QString MainWindow::toWslPath(const QString &winPath)
+QString MainWindow::toWslPath(const QString &winPath) const
 {
     if (winPath.startsWith('/')) return winPath;
     if (winPath.startsWith("\\\\wsl$")) return winPath;
@@ -330,6 +335,40 @@ QString MainWindow::toWslPath(const QString &winPath)
     return p;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Converts a WSL-style Linux path to a native host path.
+ *
+ * On Windows, paths inside Python models may use WSL syntax such as
+ * "/mnt/c/Users/...". This helper converts such paths back to Windows-native
+ * form ("C:/Users/...") so the GUI and simulation settings operate on host
+ * filesystem paths. On non-Windows systems, the input string is returned
+ * unchanged.
+ *
+ * \param path The path string to convert.
+ * \return A host-native filesystem path. On Windows, "/mnt/<drive>/<rest>"
+ *         is mapped to "<DRIVE>:/<rest>". On other platforms, the original
+ *         string is returned.
+ **********************************************************************************************************************/
+QString MainWindow::fromWslPath(const QString &path) const
+{
+#ifdef Q_OS_WIN
+    QRegularExpression re(R"(^/mnt/([a-zA-Z])/(.*)$)");
+    auto m = re.match(path.trimmed());
+    if (!m.hasMatch())
+        return path; // not a WSL path, return as-is
+
+    const QString drive = m.captured(1).toUpper();
+    QString rest = m.captured(2);
+
+    QString winPath = drive + ":\\" + rest;
+    return QDir::toNativeSeparators(winPath);
+#else
+    Q_UNUSED(path);
+    return path;
+#endif
+}
+
+
 
 /*!*******************************************************************************************************************
  * \brief This event handler is called when a close event is triggered. It checks for unsaved changes,
@@ -342,24 +381,16 @@ void MainWindow::closeEvent(QCloseEvent *event)
         QMessageBox::StandardButton reply = QMessageBox::question(
             this,
             tr("Unsaved Changes"),
-            tr("The run file has been modified. Do you want to save your changes?"),
+            tr("The python script has been modified. Do you want to save your changes?"),
             QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel
             );
 
         if (reply == QMessageBox::Yes) {
-            if (m_runFile.isEmpty()) {
-                QString filePath = QFileDialog::getSaveFileName(this, tr("Save Run File"), QString(), tr("Run Files (*.json);;All Files (*)"));
-                if (!filePath.isEmpty()) {
-                    saveRunFile(filePath);
-                    setStateSaved();
-                } else {
-                    event->ignore();
-                    return;
-                }
-            } else {
-                saveRunFile(m_runFile);
-                setStateSaved();
+            if (!applyPythonScriptFromEditor()) {
+                event->ignore();
+                return;
             }
+            setStateSaved();
         } else if (reply == QMessageBox::Cancel) {
             event->ignore();
             return;
@@ -683,212 +714,71 @@ void MainWindow::on_actionExit_triggered()
  * \brief Triggered when the "Save As" action is invoked.
  *
  * Opens a file dialog to let the user choose a new file name and location
- * for saving the current simulation configuration. Internally calls
- * on_actionSave_triggered() after the file is selected.
+ * for saving the current Python model. The chosen path is stored in the UI
+ * and preferences, and then applyPythonScriptFromEditor() is called to
+ * write the editor contents and update simulation settings.
+ **********************************************************************************************************************/
+/*!*******************************************************************************************************************
+ * \brief Triggered when the "Save As" action is invoked.
+ *
+ * Opens a file dialog to let the user choose a new file name and location
+ * for the current Python model. The chosen path is stored in
+ * txtRunPythonScript and PALACE_MODEL_FILE, and then the model is saved
+ * via applyPythonScriptFromEditor().
  **********************************************************************************************************************/
 void MainWindow::on_actionSave_As_triggered()
 {
+    const QString prefPath    = m_preferences.value("PALACE_MODEL_FILE").toString().trimmed();
+    const QString currentPath = m_ui->txtRunPythonScript->text().trimmed();
+
+    QString startDir;
+    QString suggestedName;
+
+    if (!prefPath.isEmpty()) {
+        QFileInfo pfi(prefPath);
+        startDir      = pfi.absolutePath();
+        suggestedName = pfi.fileName();
+    } else if (!currentPath.isEmpty()) {
+        QFileInfo cfi(currentPath);
+        startDir      = cfi.absolutePath();
+        suggestedName = cfi.fileName();
+    } else {
+        startDir      = QDir::homePath();
+        suggestedName = QStringLiteral("model.py");
+    }
+
+    const QString defaultPath = QDir(startDir).filePath(suggestedName);
+
+    const QString newPath = QFileDialog::getSaveFileName(
+        this,
+        tr("Save Python Model As"),
+        defaultPath,
+        tr("Python Files (*.py);;All Files (*)")
+        );
+
+    if (newPath.isEmpty())
+        return;
+
+    m_ui->txtRunPythonScript->setText(QDir::toNativeSeparators(newPath));
+    m_preferences["PALACE_MODEL_FILE"] = newPath;
+
     on_actionSave_triggered();
 }
-
 
 /*!*******************************************************************************************************************
  * \brief Triggered when the "Save" action is invoked.
  *
- * If no run file is currently associated with the session, this method opens
- * a "Save File" dialog and suggests a default JSON filename derived from the
- * currently selected GDS file (if available). Otherwise, it saves the
- * simulation configuration to the existing run file.
+ * Saves the current Python model from the editor. If no Python model file is
+ * yet associated, a "Save File" dialog is shown. After saving, the model is
+ * re-parsed and internal simulation settings (GDS, substrate, run dir, etc.)
+ * are updated accordingly.
  **********************************************************************************************************************/
 void MainWindow::on_actionSave_triggered()
 {
-    if (m_runFile.isEmpty()) {
-        const QString gdsPath        = m_ui->txtGdsFile->text().trimmed();
-        const QString scriptPath     = m_ui->txtRunPythonScript->text().trimmed();
-        const QString substratePath  = m_ui->txtSubstrate->text().trimmed();
-
-        const bool hasGds        = !gdsPath.isEmpty() && QFileInfo(gdsPath).exists();
-        const bool hasScript     = !scriptPath.isEmpty() && QFileInfo(scriptPath).exists();
-        const bool hasSubstrate  = !substratePath.isEmpty() && QFileInfo(substratePath).exists();
-
-        if (hasGds && hasScript && hasSubstrate) {
-            QFileInfo gdsInfo(gdsPath);
-            QString defaultDir    = gdsInfo.absolutePath();
-            QString suggestedName = gdsInfo.completeBaseName() + ".json";
-            m_runFile             = QDir(defaultDir).filePath(suggestedName);
-        } else {
-            QString defaultDir    = QDir::homePath();
-            QString suggestedName = "simulation.json";
-
-            if (hasGds) {
-                QFileInfo gdsInfo(gdsPath);
-                suggestedName = gdsInfo.completeBaseName() + ".json";
-                defaultDir    = gdsInfo.absolutePath();
-            }
-
-            QString defaultPath = QDir(defaultDir).filePath(suggestedName);
-            m_runFile = QFileDialog::getSaveFileName(
-                this,
-                tr("Save Simulation Run File"),
-                defaultPath,
-                tr("JSON Files (*.json);;All Files (*)")
-                );
-
-            if (m_runFile.isEmpty())
-                return;
-        }
-    }
-
-    const QString scriptPath = m_ui->txtRunPythonScript->text().trimmed();
-    if (!scriptPath.isEmpty()) {
-        QFile pyFile(scriptPath);
-        if (pyFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QTextStream out(&pyFile);
-            out << m_ui->editRunPythonScript->toPlainText();
-            pyFile.close();
-            m_simSettings["RunPythonScript"] = scriptPath;
-        } else {
-            error(QString("Failed to save Python script to '%1': %2")
-                      .arg(scriptPath, pyFile.errorString()));
-        }
-
-        loadPythonScriptToEditor(m_ui->txtRunPythonScript->text());
-    }
-
-    saveRunFile(m_runFile);
-    setStateSaved();
-}
-
-
-
-/*!*******************************************************************************************************************
- * \brief Saves the simulation configuration and port definitions into a JSON file.
- * \param filePath Path to the file where the run configuration will be saved.
- **********************************************************************************************************************/
-void MainWindow::saveRunFile(const QString& filePath)
-{
-    for (QtProperty* topProp : m_propertyBrowser->properties()) {
-        QString topName = topProp->propertyName();
-
-        if (topName == "Boundaries") {
-            QVariantMap bndMap;
-            for (QtProperty* sub : topProp->subProperties()) {
-                QString side = sub->propertyName();
-                int idx = m_variantManager->value(sub).toInt();
-                QStringList enumNames = m_variantManager->attributeValue(sub, "enumNames").toStringList();
-                QString text = enumNames.value(idx);
-                bndMap[side] = text;
-            }
-            m_simSettings["Boundaries"] = bndMap;
-        } else if (topName == "Simulation Settings") {
-            for (QtProperty* prop : topProp->subProperties()) {
-                QString name = prop->propertyName();
-                QVariant value = m_variantManager->value(prop);
-                m_simSettings[name] = value;
-            }
-        }
-    }
-
-    QJsonArray portsArray;
-    int rowCount = m_ui->tblPorts->rowCount();
-    int colCount = m_ui->tblPorts->columnCount();
-
-    for (int row = 0; row < rowCount; ++row) {
-        QJsonObject port;
-        for (int col = 0; col < colCount; ++col) {
-            QString header = m_ui->tblPorts->horizontalHeaderItem(col)->text();
-
-            QWidget* widget = m_ui->tblPorts->cellWidget(row, col);
-            if (QComboBox* combo = qobject_cast<QComboBox*>(widget)) {
-                port[header] = combo->currentText();
-            } else {
-                QTableWidgetItem* item = m_ui->tblPorts->item(row, col);
-                port[header] = item ? item->text() : "";
-            }
-        }
-        portsArray.append(port);
-    }
-
-    QJsonObject root;
-
-    if (m_simSettings.contains("Boundaries")) {
-        QVariant val = m_simSettings["Boundaries"];
-        if (val.type() == QVariant::Map) {
-            QJsonObject bndObj = QJsonObject::fromVariantMap(val.toMap());
-            root["Boundaries"] = bndObj;
-        }
-    }
-
-    for (auto it = m_simSettings.constBegin(); it != m_simSettings.constEnd(); ++it) {
-        if (it.key() == "Boundaries")
-            continue;
-        root[it.key()] = QJsonValue::fromVariant(it.value());
-    }
-
-    root["Ports"] = portsArray;
-
-    QFile file(filePath);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        QJsonDocument doc(root);
-        file.write(doc.toJson(QJsonDocument::Indented));
-        file.close();
-
-        info(QString("Saved run file to '%1'").arg(filePath), true);
-        m_runFile = filePath;
-        setStateSaved();
-    } else {
-        error(QString("Failed to save run file to '%1'").arg(filePath), true);
-    }
-}
-
-/*!*******************************************************************************************************************
- * \brief Loads a previously saved simulation configuration from a JSON run file.
- * \param filePath Path to the JSON file to load.
- **********************************************************************************************************************/
-void MainWindow::loadRunFile(const QString& filePath)
-{
-    QFile file(filePath);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        error(QString("Failed to open run file '%1'").arg(filePath), false);
+    if (!applyPythonScriptFromEditor())
         return;
-    }
 
-    QByteArray data = file.readAll();
-    file.close();
-
-    QJsonParseError parseError;
-    QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
-    if (parseError.error != QJsonParseError::NoError) {
-        error(QString("JSON parse error in run file: %1").arg(parseError.errorString()), false);
-        return;
-    }
-
-    if (!doc.isObject()) {
-        error("Invalid format: JSON root is not an object", false);
-        return;
-    }
-
-    QJsonObject root = doc.object();
-    m_simSettings.clear();
-
-    for (auto it = root.begin(); it != root.end(); ++it) {
-        if (it.key() == "Boundaries" && it.value().isObject()) {
-            QJsonObject bounds = it.value().toObject();
-            QVariantMap bndMap;
-            for (auto b = bounds.begin(); b != bounds.end(); ++b) {
-                bndMap[b.key()] = b.value().toString();
-            }
-            m_simSettings["Boundaries"] = bndMap;
-        } else {
-            m_simSettings[it.key()] = it.value().toVariant();
-        }
-    }
-
-    m_runFile = filePath;
-    info(QString("Loaded run file from '%1'").arg(filePath), false);
-
-    updateSimulationSettings();
-
+    saveSettings();
     setStateSaved();
 }
 
@@ -1421,15 +1311,45 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         }
     }
 
+    auto makeScriptPath = [&](const QString &nativePath) -> QString {
+        QString p = nativePath;
+
+#ifdef Q_OS_WIN
+        const QString simKey = currentSimToolKey().toLower();
+
+        // Only convert to WSL path when:
+        //  - we are running Palace
+        //  - Palace is executed inside WSL (wsl.exe is present)
+        if (simKey == QLatin1String("palace")) {
+            if (!QStandardPaths::findExecutable(QStringLiteral("wsl")).isEmpty()) {
+                p = toWslPath(p);
+            }
+        }
+#else
+        Q_UNUSED(nativePath);
+#endif
+
+        return p;
+    };
+
     if (m_simSettings.contains("GdsFile")) {
-        QRegularExpression re("^gds_filename\\s*=.*$", QRegularExpression::MultilineOption);
-        script.replace(re, QString("gds_filename = \"%1\"")
-                               .arg(m_simSettings["GdsFile"].toString()));
+        QString gdsPath = m_simSettings.value("GdsFile").toString();
+        gdsPath = makeScriptPath(gdsPath);
+
+        QRegularExpression re("^gds_filename\\s*=.*$",
+                              QRegularExpression::MultilineOption);
+        script.replace(re,
+                       QStringLiteral("gds_filename = \"%1\"").arg(gdsPath));
     }
+
     if (m_simSettings.contains("SubstrateFile")) {
-        QRegularExpression re("^XML_filename\\s*=.*$", QRegularExpression::MultilineOption);
-        script.replace(re, QString("XML_filename = \"%1\"")
-                               .arg(m_simSettings["SubstrateFile"].toString()));
+        QString xmlPath = m_simSettings.value("SubstrateFile").toString();
+        xmlPath = makeScriptPath(xmlPath);
+
+        QRegularExpression re("^XML_filename\\s*=.*$",
+                              QRegularExpression::MultilineOption);
+        script.replace(re,
+                       QStringLiteral("XML_filename = \"%1\"").arg(xmlPath));
     }
 
     QRegularExpression portBlock(
@@ -1645,7 +1565,7 @@ void MainWindow::on_txtSubstrate_textChanged(const QString &arg1)
  **********************************************************************************************************************/
 void MainWindow::setStateChanged()
 {
-    QFileInfo fi(m_runFile);
+    QFileInfo fi(m_ui->txtRunPythonScript->text());
     QString name = fi.absoluteFilePath();
     if (name.isEmpty())
         name = "EMStudio*";
@@ -1660,7 +1580,7 @@ void MainWindow::setStateChanged()
  **********************************************************************************************************************/
 void MainWindow::setStateSaved()
 {
-    QFileInfo fi(m_runFile);
+    QFileInfo fi(m_ui->txtRunPythonScript->text());
     QString name = fi.absoluteFilePath();
     if (name.isEmpty())
         name = "EMStudio";
@@ -1735,6 +1655,8 @@ void MainWindow::on_btnRun_clicked()
         error("No simulation tool selected/configured.");
         return;
     }
+
+    m_ui->txtLog->clear();
 
     if (key == "openems") {
         runOpenEMS();
@@ -1890,6 +1812,8 @@ void MainWindow::runPalace()
         info("Simulation is already running.", true);
         return;
     }
+
+    on_actionSave_triggered();
 
     const QString simKey = currentSimToolKey().toLower();
     if (simKey != QLatin1String("palace")) {
@@ -2286,34 +2210,6 @@ void MainWindow::setTopCell(const QString &cellName)
 }
 
 /*!*******************************************************************************************************************
- * \brief Opens a JSON run file and populates UI settings if valid. Remembers last directory.
- **********************************************************************************************************************/
-void MainWindow::on_actionOpen_triggered()
-{
-    QString defaultDir = QDir::homePath();
-    if (m_sysSettings.contains("RunFileDir")) {
-        const QString d = m_sysSettings.value("RunFileDir").toString();
-        if (QDir(d).exists()) defaultDir = d;
-    } else if (!m_runFile.isEmpty()) {
-        defaultDir = QFileInfo(m_runFile).absolutePath();
-    }
-
-    const QString filePath = QFileDialog::getOpenFileName(
-        this,
-        tr("Open Run File"),
-        defaultDir,
-        tr("Run Files (*.json);;All Files (*)")
-        );
-    if (filePath.isEmpty())
-        return;
-
-    m_sysSettings["RunFileDir"] = QFileInfo(filePath).absolutePath();
-
-    loadRunFile(filePath);
-    setStateSaved();
-}
-
-/*!*******************************************************************************************************************
  * \brief Rebuilds the in-memory mapping between GDS layer numbers and substrate layer names.
  *
  * Reads the substrate XML file currently set in the UI and fills \c m_gdsToSubName
@@ -2623,16 +2519,61 @@ void MainWindow::importPortsFromEditor()
  **********************************************************************************************************************/
 void MainWindow::on_btnGenDefaultPython_clicked()
 {
-    const QString defaultScript = QString::fromUtf8(
+    const QString simKey = currentSimToolKey().toLower();
+
+    QString defaultScript;
+    if (simKey == QLatin1String("openems")) {
+        defaultScript = createDefaultOpenemsScript();
+    } else if (simKey == QLatin1String("palace")) {
+        defaultScript = createDefaultPalaceScript();
+    } else {
+        // Fallback: you can choose one, or warn.
+        defaultScript = createDefaultOpenemsScript();
+    }
+
+    if (defaultScript.isEmpty())
+        return;
+
+    const bool hasExisting = !m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty();
+    if (hasExisting) {
+        const auto ret = QMessageBox::question(
+            this,
+            tr("Replace Existing Script"),
+            tr("The Python script editor already contains code.\n\n"
+               "Do you want to replace it with the default template?"),
+            QMessageBox::Yes | QMessageBox::No,
+            QMessageBox::No
+            );
+        if (ret != QMessageBox::Yes)
+            return;
+    }
+
+    m_ui->editRunPythonScript->clear();
+    m_ui->editRunPythonScript->setPlainText(defaultScript);
+    m_ui->editRunPythonScript->moveCursor(QTextCursor::Start);
+    m_ui->editRunPythonScript->document()->setModified(true);
+
+    importPortsFromEditor();
+    updateSubLayerNamesAutoCheck();
+
+    setStateChanged();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Fills the embedded Python editor with the default OpenEMS template.
+ *
+ * Replaces the current contents of the Python editor with a generic OpenEMS
+ * model template, optionally asking for confirmation if the editor is not
+ * empty. Also refreshes port definitions and related UI state.
+ **********************************************************************************************************************/
+QString MainWindow::createDefaultOpenemsScript() const
+{
+    return QString::fromUtf8(
         R"PY(import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'modules')))
 
-import modules.util_stackup_reader as stackup_reader
-import modules.util_gds_reader as gds_reader
-import modules.util_utilities as utilities
-import modules.util_simulation_setup as simulation_setup
-import modules.util_meshlines as util_meshlines
+from gds2openEMS import *
 
 from openEMS import openEMS
 import numpy as np
@@ -2789,32 +2730,148 @@ utilities.write_snp(s_params, f, snp_name)
 
 print('Created S-parameter output file at ', snp_name)
 )PY");
-
-    const bool hasExisting = !m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty();
-    if (hasExisting) {
-        const auto ret = QMessageBox::question(
-            this,
-            tr("Replace Existing Script"),
-            tr("The Python script editor already contains code.\n\n"
-               "Do you want to replace it with the default template?"),
-            QMessageBox::Yes | QMessageBox::No,
-            QMessageBox::No
-            );
-        if (ret != QMessageBox::Yes)
-            return;
-    }
-
-    m_ui->editRunPythonScript->clear();
-    m_ui->editRunPythonScript->setPlainText(defaultScript);
-    m_ui->editRunPythonScript->moveCursor(QTextCursor::Start);
-
-    m_ui->editRunPythonScript->document()->setModified(true);
-
-    importPortsFromEditor();
-    updateSubLayerNamesAutoCheck();
-
-    setStateChanged();
 }
+
+/*!*******************************************************************************************************************
+ * \brief Fills the embedded Python editor with the default Palace / Gmsh template.
+ *
+ * Replaces the current contents of the Python editor with a generic Palace
+ * model template (GDS → Palace flow), optionally asking for confirmation if
+ * the editor is not empty. Also refreshes port definitions and related UI
+ * state.
+ **********************************************************************************************************************/
+QString MainWindow::createDefaultPalaceScript() const
+{
+    return QString::fromUtf8(
+        R"PY(# MODEL FOR GMSH WITH PALACE
+
+import os
+import sys
+import subprocess
+
+# sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'gds2palace')))
+from gds2palace import *
+
+# Model comments
+#
+# Ports: Model uses a via port that is defined between Metal1 and TopMetal2 (not using in-plane port here)
+
+
+# ======================== workflow settings ================================
+
+# start solver after creating the model?
+start_simulation = False
+run_command = ['./run_sim']
+
+# ===================== input files and path settings =======================
+
+gds_filename = "line_simple_viaport.gds"   # geometries
+gds_cellname = ""       # optional name of cell, empty string to load always top cell
+
+XML_filename = "SG13G2_nosub.xml"          # stackup
+
+# preprocess GDSII for safe handling of cutouts/holes?
+preprocess_gds = False
+
+# merge via polygons with distance less than .. microns, set to 0 to disable via merging.
+merge_polygon_size = 0
+
+# get path for this simulation file
+script_path = utilities.get_script_path(__file__)
+
+# use script filename as model basename
+model_basename = utilities.get_basename(__file__)
+
+# set and create directory for simulation output
+sim_path = utilities.create_sim_path (script_path,model_basename)
+print('Simulation data directory: ', sim_path)
+
+# change path to models script path
+modelDir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(modelDir)
+
+# ======================== simulation settings ================================
+
+settings = {}
+
+settings['unit']   = 1e-6  # geometry is in microns
+settings['margin'] = 50    # distance in microns from GDSII geometry boundary to simulation boundary
+
+settings['fstart']  = 0e9
+settings['fstop']   = 100e9
+settings['fstep']   = 2.5e9
+# optional: list of discrete frequencies [] -> "Point" frequency sample in Palace config
+settings['fpoint']   = []
+# optional: list of discrete frequencies where Palace stores field dump for visualization in Paraview
+settings['fdump']   = []
+
+# optional: boundary condition ABC, PEC or PMC at X-,X+,Y-mY+,Z-,Z+ Default is absorbing boundary.
+settings['boundary']=['ABC','ABC','ABC','ABC','ABC','ABC']
+
+settings['refined_cellsize'] = 2  # mesh cell size in conductor region
+settings['cells_per_wavelength'] = 10   # how many mesh cells per wavelength, must be 10 or more
+
+settings['meshsize_max'] = 70  # microns, override cells_per_wavelength
+settings['adaptive_mesh_iterations'] = 0
+
+# Ports from GDSII Data, polygon geometry from specified special layer
+# Excitations can be switched off by voltage=0, those S-parameter will be incomplete then
+
+simulation_ports = simulation_setup.all_simulation_ports()
+# instead of in-plane port specified with target_layername, we here use via port specified with from_layername and to_layername
+simulation_ports.add_port(simulation_setup.simulation_port(portnumber=1, voltage=1, port_Z0=50, source_layernum=201, from_layername='Metal1', to_layername='TopMetal2', direction='z'))
+simulation_ports.add_port(simulation_setup.simulation_port(portnumber=2, voltage=1, port_Z0=50, source_layernum=202, from_layername='Metal1', to_layername='TopMetal2', direction='z'))
+
+
+# ======================== simulation ================================
+
+# get technology stackup data
+materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate (XML_filename)
+
+# get list of layers from technology
+layernumbers = metals_list.getlayernumbers()
+layernumbers.extend(simulation_ports.portlayers)
+
+# read geometries from GDSII, only purpose 0
+allpolygons = gds_reader.read_gds(gds_filename,
+                                  layernumbers,
+                                  purposelist=[0],
+                                  metals_list=metals_list,
+                                  preprocess=preprocess_gds,
+                                  merge_polygon_size=merge_polygon_size,
+                                  cellname=gds_cellname)
+
+
+########### create model ###########
+
+settings['simulation_ports'] = simulation_ports
+settings['materials_list'] = materials_list
+settings['dielectrics_list'] = dielectrics_list
+settings['metals_list'] = metals_list
+settings['layernumbers'] = layernumbers
+settings['allpolygons'] = allpolygons
+settings['sim_path'] = sim_path
+settings['model_basename'] = model_basename
+
+
+# list of ports that are excited (set voltage to zero in port excitation to skip an excitation!)
+excite_ports = simulation_ports.all_active_excitations()
+config_name, data_dir = simulation_setup.create_palace (excite_ports, settings)
+
+
+# for convenience, write run script to model directory
+utilities.create_run_script(sim_path)
+
+
+if start_simulation:
+    try:
+        os.chdir(sim_path)
+        subprocess.run(run_command, shell=True)
+    except:
+        print(f"Unable to run Palace using command ",run_command)
+)PY");
+}
+
 
 /*!*******************************************************************************************************************
  * \brief Connects a QComboBox within the Ports table to mark the simulation state as changed when edited.
@@ -2858,12 +2915,12 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
     m_preferences["SIMULATION_TOOL_KEY"]   = key.toLower();;
 }
 
-
 /*!*******************************************************************************************************************
- * \brief Opens a Palace Python model file and parses its settings.
+ * \brief Opens a Palace/OpenEMS Python model via a file dialog.
  *
- * Shows a file dialog, remembers the last used directory in \c m_preferences,
- * calls PalacePythonParser and (optionally) updates internal simulation settings.
+ * Displays a file selection dialog, remembers the last used directory in
+ * \c m_preferences under "PALACE_MODEL_DIR", and if the user selects a file,
+ * forwards the file path to loadPythonModel() for actual parsing and loading.
  **********************************************************************************************************************/
 void MainWindow::on_actionOpen_Python_Model_triggered()
 {
@@ -2876,6 +2933,26 @@ void MainWindow::on_actionOpen_Python_Model_triggered()
         startDir,
         tr("Python files (*.py);;All files (*.*)"));
 
+    if (fileName.isEmpty())
+        return;
+
+    loadPythonModel(fileName);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Loads a Palace/OpenEMS Python model from the given file path.
+ *
+ * Reads the Python script, detects the model type, parses Palace settings,
+ * updates simulation parameters, GDS and substrate paths, port table,
+ * run directory, and loads the script into the Python editor.
+ *
+ * This function performs the full model import without opening any dialogs.
+ * Used by the Open Python Model action, recent files, and startup restore.
+ *
+ * \param fileName Absolute path to the Python model file (.py) to load.
+ **********************************************************************************************************************/
+void MainWindow::loadPythonModel(const QString &fileName)
+{
     if (fileName.isEmpty())
         return;
 
@@ -2932,7 +3009,7 @@ void MainWindow::on_actionOpen_Python_Model_triggered()
 
     if (!res.gdsFilename.isEmpty())
     {
-        QString gdsPath = res.gdsFilename;
+        QString gdsPath = fromWslPath(res.gdsFilename);
         if (QFileInfo(gdsPath).isRelative())
             gdsPath = modelDir.filePath(gdsPath);
 
@@ -2943,7 +3020,7 @@ void MainWindow::on_actionOpen_Python_Model_triggered()
 
     if (!res.xmlFilename.isEmpty())
     {
-        QString subPath = res.xmlFilename;
+        QString subPath = fromWslPath(res.xmlFilename);
         if (QFileInfo(subPath).isRelative())
             subPath = modelDir.filePath(subPath);
 
@@ -2954,22 +3031,19 @@ void MainWindow::on_actionOpen_Python_Model_triggered()
 
     updateSubLayerNamesCheckboxState();
 
-    QFile scriptFile(fileName);
-    if (scriptFile.open(QIODevice::ReadOnly | QIODevice::Text))
+    // Use already-read script text instead of reopening the file
     {
-        const QString script = QString::fromUtf8(scriptFile.readAll());
-        scriptFile.close();
-
-        m_ui->editRunPythonScript->setPlainText(script);
+        QSignalBlocker blocker(m_ui->editRunPythonScript);
+        m_ui->editRunPythonScript->setPlainText(text);
         m_ui->editRunPythonScript->document()->setModified(false);
-
-        m_ui->txtRunPythonScript->setText(fileName);
-        m_simSettings["RunPythonScript"] = fileName;
-
-        m_ui->tblPorts->setRowCount(0);
-        importPortsFromEditor();
-        updateSubLayerNamesAutoCheck();
     }
+
+    m_ui->txtRunPythonScript->setText(fileName);
+    m_simSettings["RunPythonScript"] = fileName;
+
+    m_ui->tblPorts->setRowCount(0);
+    importPortsFromEditor();
+    updateSubLayerNamesAutoCheck();
 
     if (!res.simPath.isEmpty())
     {
@@ -3101,6 +3175,13 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
             break;
         }
 
+        // filter out internal code settings
+        if(propType == QVariant::String) {
+            if(key == finalValue) {
+                continue;
+            }
+        }
+
         QtVariantProperty* prop = m_variantManager->addProperty(propType, key);
         if (!prop)
             continue;
@@ -3134,7 +3215,22 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
  **********************************************************************************************************************/
 bool MainWindow::applyPythonScriptFromEditor()
 {
-    const QString filePath = m_ui->txtRunPythonScript->text().trimmed();
+    QString filePath = m_ui->txtRunPythonScript->text().trimmed();
+
+    if (filePath.isEmpty()) {
+        filePath = QFileDialog::getSaveFileName(
+            this,
+            tr("Save Python Model"),
+            QDir::homePath(),
+            tr("Python Files (*.py)")
+            );
+
+        if (filePath.isEmpty())
+            return false;
+
+        m_ui->txtRunPythonScript->setText(QDir::toNativeSeparators(filePath));
+    }
+
     if (filePath.isEmpty()) {
         error(tr("No Python script file specified."), false);
         return false;
@@ -3150,6 +3246,8 @@ bool MainWindow::applyPythonScriptFromEditor()
     out << m_ui->editRunPythonScript->toPlainText();
     f.close();
 
+    m_preferences["PALACE_MODEL_FILE"] = filePath;
+
     PythonParser::Result res = PythonParser::parseSettings(filePath);
     if (!res.ok) {
         error(tr("Failed to parse Python model file:\n%1").arg(res.error), false);
@@ -3162,7 +3260,7 @@ bool MainWindow::applyPythonScriptFromEditor()
     const QDir modelDir(fi.absolutePath());
 
     if (!res.gdsFilename.isEmpty()) {
-        QString gdsPath = res.gdsFilename;
+        QString gdsPath = fromWslPath(res.gdsFilename);
         if (QFileInfo(gdsPath).isRelative())
             gdsPath = modelDir.filePath(gdsPath);
 
@@ -3172,7 +3270,7 @@ bool MainWindow::applyPythonScriptFromEditor()
     }
 
     if (!res.xmlFilename.isEmpty()) {
-        QString subPath = res.xmlFilename;
+        QString subPath = fromWslPath(res.xmlFilename);
         if (QFileInfo(subPath).isRelative())
             subPath = modelDir.filePath(subPath);
 
@@ -3193,6 +3291,8 @@ bool MainWindow::applyPythonScriptFromEditor()
 
     m_simSettings["RunPythonScript"] = filePath;
     m_ui->editRunPythonScript->document()->setModified(false);
+
+    setLineEditPalette(m_ui->txtRunPythonScript, filePath);
 
     return true;
 }

@@ -125,9 +125,9 @@ int main(int argc, char *argv[])
 
     MainWindow w;
 
-    QString runFile;
     QString gdsFile;
     QString topCell;
+    QString pythonFile;
 
     const QStringList args = QCoreApplication::arguments();
     for (int i = 1; i < args.size(); ++i) {
@@ -140,8 +140,8 @@ int main(int argc, char *argv[])
             gdsFile = args[++i];  // Consume next argument as value
         } else if (arg == "-topcell" && i + 1 < args.size()) {
             topCell = args[++i];  // Consume next argument as value
-        } else if (arg.endsWith(".json", Qt::CaseInsensitive)) {
-            runFile = arg;
+        } else if (arg.endsWith(".py", Qt::CaseInsensitive)) {
+            pythonFile = arg;
         } else {
             qWarning() << "Unknown or malformed argument:" << arg;
             printHelp();
@@ -149,9 +149,9 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (!runFile.isEmpty()) {
-        if (QFileInfo::exists(runFile)) {
-            w.loadRunFile(runFile);
+    if (!pythonFile.isEmpty()) {
+        if (QFileInfo::exists(pythonFile)) {
+            w.loadPythonModel(pythonFile);
         }
     }
 

@@ -84,7 +84,7 @@ public:
 
     void                            setTopCell(const QString &cellName);
     void                            setGdsFile(const QString &filePath);
-    void                            loadRunFile(const QString& filePath);
+    void                            loadPythonModel(const QString &fileName);
 
 private slots:
     void                            closeEvent(QCloseEvent *event);
@@ -119,7 +119,6 @@ private slots:
     void                            on_btnRun_clicked();
     void                            on_btnStop_clicked();
 
-    void                            on_actionOpen_triggered();
     void                            on_cbSubLayerNames_stateChanged(int arg1);
     void                            on_btnGenDefaultPython_clicked();
     void                            on_cbxSimTool_currentIndexChanged(int index);
@@ -135,12 +134,8 @@ private:
     void                            setupSettingsPanel();
     void                            showTab(int indexToShow);
     void                            updateSimulationSettings();
-
     void                            importPortsFromEditor();
-
     void                            hookPortCombo(QComboBox* box);
-
-    void                            saveRunFile(const QString& filePath);
     void                            drawSubstrate(const QString &filePath);
 
     QStringList                     extractGdsCellNames(const QString &filePath);
@@ -167,7 +162,11 @@ private:
     bool                            isStateChanged() const;
 
     QString                         currentSimToolKey() const;
-    QString                         toWslPath(const QString &winPath);
+    QString                         toWslPath(const QString &winPath) const;
+    QString                         fromWslPath(const QString &wslPath) const;
+
+    QString                         createDefaultOpenemsScript() const;
+    QString                         createDefaultPalaceScript() const;
 
     void                            runOpenEMS();
     void                            runPalace();
@@ -185,7 +184,6 @@ private:
     QStringList                     m_tabTitles;
     QMap<QString, int>              m_tabMap;
 
-    QString                         m_runFile;
     QString                         m_palacePythonOutput;
 
     QStringList                     m_cells;

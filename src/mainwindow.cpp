@@ -193,12 +193,12 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_ui->btnAddPort->setEnabled(false);
 
-    setupSettingsPanel();
-
     setupTabMapping();
     showTab(m_tabMap.value("Main", 0));
 
     loadSettings();
+    setupSettingsPanel();
+
     updateSubLayerNamesCheckboxState();
 
     refreshSimToolOptions();
@@ -592,7 +592,7 @@ void MainWindow::setupSettingsPanel()
     QtVariantProperty* simGroup = m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), "Simulation Settings");
     m_simSettingsGroup = simGroup;
 
-    auto addDouble = [&](const QString& name, double value) {
+    /*auto addDouble = [&](const QString& name, double value) {
         QtVariantProperty* prop = m_variantManager->addProperty(QVariant::Double, name);
 
         prop->setAttribute(QLatin1String("decimals"), 12);
@@ -623,20 +623,52 @@ void MainWindow::setupSettingsPanel()
     addDouble("fstart", 0.0);
     addDouble("fstop", 110e9);
     addInt("numfreq", 401);
-    addDouble("refined_cellsize", 1.0);
+    addDouble("refined_cellsize", 1.0); */
 
-    QtVariantProperty* boundariesGroup = m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), "Boundaries");
+    const QString simTool = m_preferences.value("SIMULATION_TOOL_KEY", QLatin1String("OpenEMS")).toString();
 
-    QStringList boundaryOptions = { "PEC", "PMC", "MUR", "PML_8" };
-    QStringList boundaryNames = { "X-", "X+", "Y-", "Y+", "Z-", "Z+" };
-    QStringList boundaryDefaults = { "PEC", "PEC", "PEC", "PEC", "PEC", "PEC" };
+    QStringList boundaryOptions;
+
+    if (simTool.compare(QLatin1String("OpenEMS"), Qt::CaseInsensitive) == 0) {
+        boundaryOptions.clear();
+        boundaryOptions
+            << QStringLiteral("PEC")
+            << QStringLiteral("PMC")
+            << QStringLiteral("MUR")
+            << QStringLiteral("PML_8");
+    } else if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0) {
+        boundaryOptions.clear();
+        boundaryOptions
+            << QStringLiteral("PEC")
+            << QStringLiteral("PMC")
+            << QStringLiteral("Absorbing")
+            << QStringLiteral("Impedance")
+            << QStringLiteral("Conductivity");
+    } else {
+        boundaryOptions.clear();
+        boundaryOptions
+            << QStringLiteral("PEC")
+            << QStringLiteral("PMC");
+    }
+
+    QtVariantProperty *boundariesGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), QLatin1String("Boundaries"));
+
+    QStringList boundaryNames    = { QStringLiteral("X-"), QStringLiteral("X+"),
+                                 QStringLiteral("Y-"), QStringLiteral("Y+"),
+                                 QStringLiteral("Z-"), QStringLiteral("Z+") };
+    QStringList boundaryDefaults = { QStringLiteral("PEC"), QStringLiteral("PEC"),
+                                    QStringLiteral("PEC"), QStringLiteral("PEC"),
+                                    QStringLiteral("PEC"), QStringLiteral("PEC") };
 
     for (int i = 0; i < boundaryNames.size(); ++i) {
-        QtVariantProperty* bndProp = m_variantManager->addProperty(QtVariantPropertyManager::enumTypeId(), boundaryNames[i]);
-        bndProp->setAttribute("enumNames", boundaryOptions);
-        bndProp->setValue(boundaryOptions.indexOf(boundaryDefaults[i]));
+        QtVariantProperty *bndProp =
+            m_variantManager->addProperty(QtVariantPropertyManager::enumTypeId(), boundaryNames.at(i));
+        bndProp->setAttribute(QStringLiteral("enumNames"), boundaryOptions);
+        bndProp->setValue(boundaryOptions.indexOf(boundaryDefaults.at(i)));
         boundariesGroup->addSubProperty(bndProp);
     }
+
 
     m_propertyBrowser->addProperty(simGroup);
     m_propertyBrowser->addProperty(boundariesGroup);
@@ -2566,10 +2598,22 @@ void MainWindow::on_btnGenDefaultPython_clicked()
  * model template, optionally asking for confirmation if the editor is not
  * empty. Also refreshes port definitions and related UI state.
  **********************************************************************************************************************/
-QString MainWindow::createDefaultOpenemsScript() const
+QString MainWindow::createDefaultOpenemsScript()
 {
-    return QString::fromUtf8(
-        R"PY(import os
+    QString gdsFile = m_ui->txtGdsFile->text().trimmed();
+    if (gdsFile.isEmpty())
+        gdsFile = QStringLiteral("line_simple_viaport.gds");
+    else
+        gdsFile = QDir::fromNativeSeparators(gdsFile);
+
+    QString xmlFile = m_ui->txtSubstrate->text().trimmed();
+    if (xmlFile.isEmpty())
+        xmlFile = QStringLiteral("SG13G2_nosub.xml");
+    else
+        xmlFile = QDir::fromNativeSeparators(xmlFile);
+
+    const QString script = QString::fromUtf8(
+                               R"PY(import os
 import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'modules')))
 
@@ -2596,8 +2640,8 @@ postprocess_only = False
 
 # ===================== input files and path settings =======================
 
-gds_filename = "line_simple_viaport.gds"   # geometries
-XML_filename = "SG13G2_nosub.xml"          # stackup
+gds_filename = "%1"   # geometries
+XML_filename = "%2"          # stackup
 
 # preprocess GDSII for safe handling of cutouts/holes?
 preprocess_gds = False
@@ -2729,7 +2773,13 @@ snp_name = os.path.join(sim_path, model_basename + '.s' + str(num_ports) + 'p')
 utilities.write_snp(s_params, f, snp_name)
 
 print('Created S-parameter output file at ', snp_name)
-)PY");
+)PY").arg(gdsFile, xmlFile);
+
+    PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
+    if (parseResult.ok)
+        rebuildSimulationSettingsFromPalace(parseResult.settings);
+
+    return script;
 }
 
 /*!*******************************************************************************************************************
@@ -2740,10 +2790,22 @@ print('Created S-parameter output file at ', snp_name)
  * the editor is not empty. Also refreshes port definitions and related UI
  * state.
  **********************************************************************************************************************/
-QString MainWindow::createDefaultPalaceScript() const
+QString MainWindow::createDefaultPalaceScript()
 {
-    return QString::fromUtf8(
-        R"PY(# MODEL FOR GMSH WITH PALACE
+    QString gdsFile = m_ui->txtGdsFile->text().trimmed();
+    if (gdsFile.isEmpty())
+        gdsFile = QStringLiteral("line_simple_viaport.gds");
+    else
+        gdsFile = toWslPath(QDir::fromNativeSeparators(gdsFile));
+
+    QString xmlFile = m_ui->txtSubstrate->text().trimmed();
+    if (xmlFile.isEmpty())
+        xmlFile = QStringLiteral("SG13G2_nosub.xml");
+    else
+        xmlFile = toWslPath(QDir::fromNativeSeparators(xmlFile));
+
+    const QString script = QString::fromUtf8(
+                               R"PY(# MODEL FOR GMSH WITH PALACE
 
 import os
 import sys
@@ -2765,10 +2827,10 @@ run_command = ['./run_sim']
 
 # ===================== input files and path settings =======================
 
-gds_filename = "line_simple_viaport.gds"   # geometries
+gds_filename = "%1"   # geometries
 gds_cellname = ""       # optional name of cell, empty string to load always top cell
 
-XML_filename = "SG13G2_nosub.xml"          # stackup
+XML_filename = "%2"          # stackup
 
 # preprocess GDSII for safe handling of cutouts/holes?
 preprocess_gds = False
@@ -2869,9 +2931,14 @@ if start_simulation:
         subprocess.run(run_command, shell=True)
     except:
         print(f"Unable to run Palace using command ",run_command)
-)PY");
-}
+)PY").arg(gdsFile, xmlFile);
 
+    PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
+    if (parseResult.ok)
+        rebuildSimulationSettingsFromPalace(parseResult.settings);
+
+    return script;
+}
 
 /*!*******************************************************************************************************************
  * \brief Connects a QComboBox within the Ports table to mark the simulation state as changed when edited.
@@ -2912,7 +2979,7 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
         return;
 
     m_preferences["SIMULATION_TOOL_INDEX"] = index;
-    m_preferences["SIMULATION_TOOL_KEY"]   = key.toLower();;
+    m_preferences["SIMULATION_TOOL_KEY"]   = key.toLower();
 }
 
 /*!*******************************************************************************************************************
@@ -3084,11 +3151,24 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         }
     }
 
-    if (settings.contains(QLatin1String("Boundaries"))) {
-        const QVariant v = settings.value(QLatin1String("Boundaries"));
+    const QString simTool = m_ui->cbxSimTool->currentText().trimmed();
 
+    const QString boundariesKey = [&settings]() -> QString {
+        for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
+            if (it.key().compare(QLatin1String("Boundaries"), Qt::CaseInsensitive) == 0 ||
+                it.key().compare(QLatin1String("Boundary"),   Qt::CaseInsensitive) == 0) {
+                return it.key();
+            }
+        }
+        return QString();
+    }();
+
+    if (!boundariesKey.isEmpty()) {
+        const QVariant v = settings.value(boundariesKey);
         QStringList items;
-        const QStringList sides{ "X-", "X+", "Y-", "Y+", "Z-", "Z+" };
+        const QStringList sides{ QStringLiteral("X-"), QStringLiteral("X+"),
+                                QStringLiteral("Y-"), QStringLiteral("Y+"),
+                                QStringLiteral("Z-"), QStringLiteral("Z+") };
 
         if (v.type() == QVariant::String) {
             QString expr = v.toString().trimmed();
@@ -3126,10 +3206,26 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
                     if (idx < 0 || idx >= items.size())
                         continue;
 
-                    const QString valueStr = items.at(idx);
+                    QString valueStr = items.at(idx);
+                    QString mappedValue = valueStr;
+
+                    if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0) {
+                        if (mappedValue.compare(QLatin1String("MUR"), Qt::CaseInsensitive) == 0 ||
+                            mappedValue.compare(QLatin1String("PML_8"), Qt::CaseInsensitive) == 0 ||
+                            mappedValue.compare(QLatin1String("ABC"), Qt::CaseInsensitive) == 0) {
+                            mappedValue = QStringLiteral("Absorbing");
+                        }
+                    } else if (simTool.compare(QLatin1String("OpenEMS"), Qt::CaseInsensitive) == 0) {
+                        if (mappedValue.compare(QLatin1String("Absorbing"), Qt::CaseInsensitive) == 0) {
+                            mappedValue = QStringLiteral("MUR");
+                        }
+                    }
+
+                    items[idx] = mappedValue;
+
                     const QStringList enumNames =
-                        m_variantManager->attributeValue(sub, "enumNames").toStringList();
-                    int enumIndex = enumNames.indexOf(valueStr);
+                        m_variantManager->attributeValue(sub, QLatin1String("enumNames")).toStringList();
+                    int enumIndex = enumNames.indexOf(mappedValue);
                     if (enumIndex >= 0)
                         m_variantManager->setValue(sub, enumIndex);
                 }
@@ -3138,7 +3234,7 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
             QVariantMap bndMap;
             for (int i = 0; i < items.size() && i < sides.size(); ++i)
                 bndMap[sides.at(i)] = items.at(i);
-            m_simSettings["Boundaries"] = bndMap;
+            m_simSettings[QStringLiteral("Boundaries")] = bndMap;
         }
     }
 
@@ -3146,8 +3242,11 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         const QString& key = it.key();
         const QVariant& val = it.value();
 
-        if (key == QLatin1String("Boundaries"))
+        if (key.compare(QLatin1String("Boundaries"), Qt::CaseInsensitive) == 0 ||
+            key.compare(QLatin1String("Boundary"),   Qt::CaseInsensitive) == 0)
+        {
             continue;
+        }
 
         QVariant::Type t = val.type();
         int propType = QVariant::String;
@@ -3175,9 +3274,8 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
             break;
         }
 
-        // filter out internal code settings
-        if(propType == QVariant::String) {
-            if(key == finalValue) {
+        if (propType == QVariant::String) {
+            if (key == finalValue) {
                 continue;
             }
         }

@@ -46,7 +46,7 @@ Preferences::Preferences(QMap<QString, QVariant> &preferences, QWidget *parent)
 {
     m_ui->setupUi(this);
     setupPreferencesPanel();
-    setWindowTitle("Prefernces");
+    setWindowTitle("Preferences");
 }
 
 /*!*******************************************************************************************************************

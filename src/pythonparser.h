@@ -43,6 +43,9 @@ public:
     };
 
     static Result parseSettings(const QString &filePath);
+    static Result parseSettingsFromText(const QString &content,
+                                        const QString &scriptDir = QString(),
+                                        const QString &baseName  = QString());
 };
 
 #endif // PYTHONPARSER_H

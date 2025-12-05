@@ -25,28 +25,28 @@
 
 #include <QRegularExpression>
 
-/*!*******************************************************************************************************************
- * \brief Try to parse "settings-like" key/value pairs from Palace Python model file.
- *
- * Looks for lines of the form
- *     something['key'] = value
- * or  something["key"] = value
- *
- * The left-hand variable name (e.g. "settings") is ignored on purpose, so that
- * different variable names still work.
- **********************************************************************************************************************/
-PythonParser::Result PythonParser::parseSettings(const QString &filePath)
+namespace
 {
-    Result result;
-
-    QFile f(filePath);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
-    {
-        result.error = QStringLiteral("Cannot open file %1").arg(filePath);
-        return result;
-    }
-
-    const QString content = QString::fromUtf8(f.readAll());
+/*!*******************************************************************************************************************
+ * \brief Internal implementation for parsing "settings-like" key/value pairs from Python script text.
+ *
+ * Shared core used by both parseSettings() and parseSettingsFromText().
+ * Optional \a scriptDir and \a baseName are used to construct \c simPath.
+ * \a contextForErrors is used only to enrich error messages (e.g. with a file path).
+ *
+ * \param content          Full Python script text to be parsed.
+ * \param scriptDir        Directory where the script is conceptually located (may be empty).
+ * \param baseName         Script base name without extension (may be empty).
+ * \param contextForErrors Context string for error messages (e.g. file path, may be empty).
+ *
+ * \return Parsed settings and auxiliary information.
+ **********************************************************************************************************************/
+PythonParser::Result parseSettingsImpl(const QString &content,
+                                       const QString &scriptDir,
+                                       const QString &baseName,
+                                       const QString &contextForErrors)
+{
+    PythonParser::Result result;
 
     QRegularExpression re(
         R"(^\s*(\w+)\s*\[\s*['"]([^'"]+)['"]\s*\]\s*=\s*(.+)$)",
@@ -154,16 +154,70 @@ PythonParser::Result PythonParser::parseSettings(const QString &filePath)
             result.xmlFilename = valueExpr;
     }
 
-    QFileInfo fi(filePath);
-    const QString scriptDir = fi.absolutePath();
-    const QString baseName  = fi.completeBaseName();
     if (!scriptDir.isEmpty() && !baseName.isEmpty())
         result.simPath = QDir(scriptDir).filePath(baseName);
 
     if (result.settings.isEmpty())
-        result.error = QStringLiteral("No settings-like assignments found in %1").arg(filePath);
+    {
+        if (!contextForErrors.isEmpty())
+            result.error = QStringLiteral("No settings-like assignments found in %1").arg(contextForErrors);
+        else
+            result.error = QStringLiteral("No settings-like assignments found in input text.");
+    }
     else
+    {
         result.ok = true;
+    }
 
     return result;
+}
+}
+
+/*!*******************************************************************************************************************
+ * \brief Try to parse "settings-like" key/value pairs from Palace Python model file.
+ *
+ * Looks for lines of the form
+ *     something['key'] = value
+ * or  something["key"] = value
+ *
+ * The left-hand variable name (e.g. "settings") is ignored on purpose, so that
+ * different variable names still work.
+ **********************************************************************************************************************/
+PythonParser::Result PythonParser::parseSettings(const QString &filePath)
+{
+    QFile f(filePath);
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+    {
+        Result result;
+        result.error = QStringLiteral("Cannot open file %1").arg(filePath);
+        return result;
+    }
+
+    const QString content = QString::fromUtf8(f.readAll());
+
+    QFileInfo fi(filePath);
+    const QString scriptDir = fi.absolutePath();
+    const QString baseName  = fi.completeBaseName();
+
+    return parseSettingsImpl(content, scriptDir, baseName, filePath);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Parse "settings-like" key/value pairs from an in-memory Python script.
+ *
+ * This overload works on a plain text buffer instead of reading from a file.
+ * Optional \a scriptDir and \a baseName are used only to construct \c simPath
+ * in the result, if provided.
+ *
+ * \param content   Full Python script text to be parsed.
+ * \param scriptDir Directory where the script is conceptually located (may be empty).
+ * \param baseName  Script base name without extension (may be empty).
+ *
+ * \return Parsed settings and auxiliary information.
+ **********************************************************************************************************************/
+PythonParser::Result PythonParser::parseSettingsFromText(const QString &content,
+                                                         const QString &scriptDir,
+                                                         const QString &baseName)
+{
+    return parseSettingsImpl(content, scriptDir, baseName, QString());
 }

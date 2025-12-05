@@ -165,8 +165,8 @@ private:
     QString                         toWslPath(const QString &winPath) const;
     QString                         fromWslPath(const QString &wslPath) const;
 
-    QString                         createDefaultOpenemsScript() const;
-    QString                         createDefaultPalaceScript() const;
+    QString                         createDefaultOpenemsScript();
+    QString                         createDefaultPalaceScript();
 
     void                            runOpenEMS();
     void                            runPalace();

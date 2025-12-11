@@ -18,20 +18,22 @@
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
-
-#include "pythoneditor.h"
 #include "finddialog.h"
+#include "pythoneditor.h"
 #include "pythonsyntaxhighlighter.h"
 
-#include <QApplication>
-#include <QAbstractItemView>
+#include <QPalette>
 #include <QKeyEvent>
+#include <QShortcut>
 #include <QScrollBar>
 #include <QTextCursor>
 #include <QVBoxLayout>
-#include <QShortcut>
+#include <QWheelEvent>
+#include <QApplication>
+#include <QAbstractItemView>
 #include <QRegularExpression>
-#include <QPalette>
+
+static constexpr qreal ZOOM_STEP = 1.10;
 
 /*!*******************************************************************************************************************
  * \brief Constructs the PythonEditor widget with syntax highlighting and autocompletion.
@@ -426,3 +428,93 @@ void PythonEditor::applyHighlights(const QList<QTextEdit::ExtraSelection> &sel)
 
     setExtraSelections(combined);
 }
+
+/*!***************************************************************************************************************
+* \brief Handles mouse wheel events to implement Ctrl+wheel zooming.
+*
+* When the Ctrl modifier is pressed, the editor zooms the font in or out instead of scrolling.
+* Without Ctrl, the default QTextEdit wheel behavior is used.
+*
+* \param event Pointer to the QWheelEvent describing the wheel action.
+****************************************************************************************************************/
+void PythonEditor::wheelEvent(QWheelEvent *e)
+{
+    if (e->modifiers() & Qt::ControlModifier) {
+        if (e->angleDelta().y() > 0)
+            zoomInText();
+        else
+            zoomOutText();
+
+        e->accept();
+        return;
+    }
+
+    QTextEdit::wheelEvent(e);
+}
+
+/*!***************************************************************************************************************
+* \brief Increases the editor font size by a single zoom step.
+*
+* Called internally when the user scrolls the mouse wheel upwards while holding Ctrl.
+****************************************************************************************************************/
+void PythonEditor::zoomInText()
+{
+    QFont f = font();
+    f.setPointSizeF(f.pointSizeF() * ZOOM_STEP);
+    setFont(f);
+    emit sigFontSizeChanged(f.pointSizeF());
+}
+
+/*!***************************************************************************************************************
+* \brief Decreases the editor font size by a single zoom step.
+*
+* Called internally when the user scrolls the mouse wheel downwards while holding Ctrl.
+****************************************************************************************************************/
+void PythonEditor::zoomOutText()
+{
+    QFont f = font();
+    f.setPointSizeF(f.pointSizeF() / ZOOM_STEP);
+    setFont(f);
+    emit sigFontSizeChanged(f.pointSizeF());
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the font size of the Python editor.
+ *
+ * This function applies a new point size to the editor font without triggering any zoom
+ * delta logic. It is intended for initialization (e.g., restoring a saved zoom level from
+ * m_sysSettings) rather than user-driven zooming.
+ *
+ * \param pt  New font point size to apply. Must be a positive floating-point value.
+ **********************************************************************************************************************/
+void PythonEditor::setEditorFontSize(qreal pt)
+{
+    QFont f = font();
+    f.setPointSizeF(pt);
+    setFont(f);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Replaces the entire editor content as a single undoable operation.
+ *
+ * This function replaces the full document text using a QTextCursor edit block so that
+ * the previous content can be restored with a single Ctrl+Z step. It is intended for
+ * programmatic updates (e.g. regenerating the model script from GUI state) where the
+ * user may still want to undo the change.
+ *
+ * \param text  New full document text.
+ **********************************************************************************************************************/
+void PythonEditor::setPlainTextUndoable(const QString &text)
+{
+    QTextDocument *doc = document();
+    if (!doc)
+        return;
+
+    QTextCursor c(doc);
+    c.beginEditBlock();
+    c.select(QTextCursor::Document);
+    c.insertText(text);
+    c.endEditBlock();
+}
+
+

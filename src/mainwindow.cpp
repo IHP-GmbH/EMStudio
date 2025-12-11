@@ -25,6 +25,7 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QJsonArray>
+#include <QScrollBar>
 #include <QJsonValue>
 #include <QFileDialog>
 #include <QJsonObject>
@@ -198,6 +199,17 @@ MainWindow::MainWindow(QWidget *parent)
 
     loadSettings();
     setupSettingsPanel();
+
+    connect(m_ui->editRunPythonScript, &PythonEditor::sigFontSizeChanged,
+            this, [=](qreal newSize){
+                m_sysSettings["PYTHON_EDITOR_FONT_SIZE"] = newSize;
+            });
+
+    if (m_sysSettings.contains("PYTHON_EDITOR_FONT_SIZE")) {
+        qreal size = m_sysSettings["PYTHON_EDITOR_FONT_SIZE"].toDouble();
+        if (size > 4.0 && size < 80.0)
+            m_ui->editRunPythonScript->setEditorFontSize(size);
+    }
 
     updateSubLayerNamesCheckboxState();
 
@@ -489,7 +501,11 @@ void MainWindow::showTab(int indexToShow)
 
         if (msg.clickedButton() == applyBtn) {
             if (!applyPythonScriptFromEditor())
-                return; // parsing failed, stay on current tab
+                return;
+
+            saveSettings();
+            setStateSaved();
+            m_ui->editRunPythonScript->document()->setModified(false);
         } else if (msg.clickedButton() == discardBtn) {
             m_ui->editRunPythonScript->document()->setModified(false);
         }
@@ -781,7 +797,7 @@ void MainWindow::on_actionSave_As_triggered()
 
     const QString defaultPath = QDir(startDir).filePath(suggestedName);
 
-    const QString newPath = QFileDialog::getSaveFileName(
+    QString newPath = QFileDialog::getSaveFileName(
         this,
         tr("Save Python Model As"),
         defaultPath,
@@ -790,6 +806,10 @@ void MainWindow::on_actionSave_As_triggered()
 
     if (newPath.isEmpty())
         return;
+
+    QFileInfo fiNew(newPath);
+    if (fiNew.suffix().isEmpty())
+        newPath += QStringLiteral(".py");
 
     m_ui->txtRunPythonScript->setText(QDir::toNativeSeparators(newPath));
     m_preferences["PALACE_MODEL_FILE"] = newPath;
@@ -800,13 +820,43 @@ void MainWindow::on_actionSave_As_triggered()
 /*!*******************************************************************************************************************
  * \brief Triggered when the "Save" action is invoked.
  *
- * Saves the current Python model from the editor. If no Python model file is
- * yet associated, a "Save File" dialog is shown. After saving, the model is
- * re-parsed and internal simulation settings (GDS, substrate, run dir, etc.)
- * are updated accordingly.
+ * Behaviour depends on where Ctrl+S was pressed:
+ *
+ * - If the focus is inside the Python editor (editRunPythonScript or any of its children),
+ *   the Python script is considered the source of truth:
+ *      Python editor  -> parsed into m_simSettings / GUI.
+ *
+ * - If the focus is outside the Python editor (GUI widgets, tables, line edits, etc.),
+ *   the GUI is considered the source of truth for the script:
+ *      GUI state      -> regenerated Python script (if state changed and editor is not modified)
+ *                     -> parsed back into m_simSettings.
+ *
+ * In both cases, after a successful applyPythonScriptFromEditor(), settings are saved and
+ * the window is marked as "saved" (no '*').
  **********************************************************************************************************************/
 void MainWindow::on_actionSave_triggered()
 {
+    // Check where the keyboard focus currently is.
+    bool pythonEditorActive = false;
+    if (QWidget *fw = QApplication::focusWidget()) {
+        pythonEditorActive =
+            (fw == m_ui->editRunPythonScript) ||
+            m_ui->editRunPythonScript->isAncestorOf(fw);
+    }
+
+    // If we are NOT in the Python editor, GUI is the "master":
+    // regenerate the script from the current GUI state, but only if
+    // the simulation state is marked as changed AND the editor itself
+    // was not manually modified.
+    if (!pythonEditorActive) {
+        if (!m_ui->editRunPythonScript->document()->isModified()) {
+            const QString scriptPath = m_ui->txtRunPythonScript->text().trimmed();
+            if (!scriptPath.isEmpty() && QFileInfo(scriptPath).exists()) {
+                loadPythonScriptToEditor(scriptPath);
+            }
+        }
+    }
+
     if (!applyPythonScriptFromEditor())
         return;
 
@@ -887,10 +937,16 @@ void MainWindow::updateSimulationSettings()
     m_ui->tblPorts->setRowCount(0);
 
     if (m_simSettings.contains("Ports")) {
+
+        // очищаем таблицу ТОЛЬКО если Ports есть
+        m_ui->tblPorts->setRowCount(0);
+
         rebuildLayerMapping();
 
-        QList<int> gdsNums; gdsNums.reserve(m_layers.size());
-        for (const auto& layer : m_layers) gdsNums.push_back(layer.first);
+        QList<int> gdsNums;
+        gdsNums.reserve(m_layers.size());
+        for (const auto& layer : m_layers)
+            gdsNums.push_back(layer.first);
         std::sort(gdsNums.begin(), gdsNums.end());
 
         QStringList subNames = m_subLayers;
@@ -909,7 +965,8 @@ void MainWindow::updateSimulationSettings()
             auto setCurrentSafe = [](QComboBox* box, const QString& value){
                 if (!box || value.isEmpty()) return;
                 QSignalBlocker blocker(box);
-                if (box->findText(value) < 0) box->addItem(value);
+                if (box->findText(value) < 0)
+                    box->addItem(value);
                 box->setCurrentText(value);
             };
 
@@ -929,6 +986,10 @@ void MainWindow::updateSimulationSettings()
                 auto* fromLayerBox   = new QComboBox();
                 auto* toLayerBox     = new QComboBox();
                 auto* directionBox   = new QComboBox();
+
+                sourceLayerBox->addItem(QString());
+                fromLayerBox->addItem(QString());
+                toLayerBox->addItem(QString());
 
                 for (int n : gdsNums) {
                     const QString s = QString::number(n);
@@ -958,15 +1019,18 @@ void MainWindow::updateSimulationSettings()
                     directionBox->setCurrentText(dir);
                 }
 
+                // Place widgets
                 m_ui->tblPorts->setCellWidget(row, 3, sourceLayerBox);
                 m_ui->tblPorts->setCellWidget(row, 4, fromLayerBox);
                 m_ui->tblPorts->setCellWidget(row, 5, toLayerBox);
                 m_ui->tblPorts->setCellWidget(row, 6, directionBox);
 
+                // Rebuild combos with mapping
                 rebuildComboWithMapping(sourceLayerBox, m_gdsToSubName, m_subNameToGds, namesMode);
                 rebuildComboWithMapping(fromLayerBox,   m_gdsToSubName, m_subNameToGds, namesMode);
                 rebuildComboWithMapping(toLayerBox,     m_gdsToSubName, m_subNameToGds, namesMode);
 
+                // Hooks
                 hookPortCombo(sourceLayerBox);
                 hookPortCombo(fromLayerBox);
                 hookPortCombo(toLayerBox);
@@ -976,7 +1040,6 @@ void MainWindow::updateSimulationSettings()
             m_blockPortChanges = false;
         }
     }
-
 
     if (m_ui->cbSubLayerNames->isEnabled() && m_ui->cbSubLayerNames->isChecked())
         applySubLayerNamesToPorts(true);
@@ -1389,6 +1452,16 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         QRegularExpression::MultilineOption
         );
 
+    if (m_ui->tblPorts->rowCount() == 0) {
+        rebuildLayerMapping();
+
+        const auto parsed = parsePortsFromScript(script);
+        if (!parsed.isEmpty())
+            appendParsedPortsToTable(parsed);
+    }
+
+    updateSubLayerNamesAutoCheck();
+
     QString portCode = "simulation_ports = simulation_setup.all_simulation_ports()\n";
 
     auto toLayerName = [&](const QString& s) -> QString {
@@ -1418,41 +1491,100 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         const QString srcVal  = srcBox  ? srcBox->currentText().trimmed()  : QString();
         const QString fromVal = fromBox ? fromBox->currentText().trimmed() : QString();
         const QString toVal   = toBox   ? toBox->currentText().trimmed()   : QString();
-        const QString dirVal  = dirBox  ? dirBox->currentText().trimmed()  : QString("z");
+        QString       dirVal  = dirBox  ? dirBox->currentText().trimmed()  : QString();
 
-        bool srcIsInt = false;
-        const int srcNum = srcVal.toInt(&srcIsInt);
+        if (dirVal.isEmpty())
+            dirVal = QStringLiteral("z");
+
+        QStringList argsList;
+
+        if (!num.isEmpty())
+            argsList << QStringLiteral("portnumber=%1").arg(num);
+        if (!volt.isEmpty())
+            argsList << QStringLiteral("voltage=%1").arg(volt);
+        if (!z0.isEmpty())
+            argsList << QStringLiteral("port_Z0=%1").arg(z0);
+
+        if (!srcVal.isEmpty()) {
+            bool srcIsInt = false;
+            const int srcNum = srcVal.toInt(&srcIsInt);
+
+            if (srcIsInt) {
+                argsList << QStringLiteral("source_layernum=%1").arg(srcNum);
+            } else {
+                argsList << QStringLiteral("source_layername=%1").arg(pyQuote(srcVal));
+            }
+        }
 
         const QString fromName = toLayerName(fromVal);
-        const QString toName   = toLayerName(toVal);
+        if (!fromName.isEmpty()) {
+            argsList << QStringLiteral("from_layername=%1").arg(pyQuote(fromName));
+        }
 
-        const QString srcField = srcIsInt
-                                     ? QString("source_layernum=%1").arg(srcNum)
-                                     : QString("source_layername=%1").arg(pyQuote(srcVal));
+        const QString toName = toLayerName(toVal);
+        if (!toName.isEmpty()) {
+            argsList << QStringLiteral("to_layername=%1").arg(pyQuote(toName));
+        }
 
-        portCode += QString(
-                        "simulation_ports.add_port(simulation_setup.simulation_port("
-                        "portnumber=%1, voltage=%2, port_Z0=%3, %4, "
-                        "from_layername=%5, to_layername=%6, direction=%7))\n")
-                        .arg(num, volt, z0, srcField,
-                             pyQuote(fromName), pyQuote(toName), pyQuote(dirVal));
+        argsList << QStringLiteral("direction=%1").arg(pyQuote(dirVal));
+
+        const QString argsJoined = argsList.join(QStringLiteral(", "));
+        portCode += QStringLiteral(
+                        "simulation_ports.add_port("
+                        "simulation_setup.simulation_port(%1))\n")
+                        .arg(argsJoined);
     }
 
-    if (m_ui->tblPorts->rowCount() == 0) {
-        rebuildLayerMapping();
+    QRegularExpressionMatch portMatch = portBlock.match(script);
 
-        const auto parsed = parsePortsFromScript(script);
-        if (!parsed.isEmpty())
-            appendParsedPortsToTable(parsed);
+    if (portMatch.hasMatch()) {
+        script.replace(portBlock, portCode);
+    } else if (m_ui->tblPorts->rowCount() > 0) {
+        QRegularExpression simMarker(
+            R"(#[^\n]*simulation\s*={3,})",
+            QRegularExpression::MultilineOption
+            );
+        QRegularExpressionMatch simMatch = simMarker.match(script);
+
+        const QString injected = QStringLiteral("\n\n") + portCode + QStringLiteral("\n");
+
+        if (simMatch.hasMatch()) {
+            const int insertPos = simMatch.capturedStart();
+            script.insert(insertPos, injected);
+        } else {
+            script.append(injected);
+        }
     }
 
-    updateSubLayerNamesAutoCheck();
+    QTextCursor oldCursor = m_ui->editRunPythonScript->textCursor();
+    int oldPos    = oldCursor.position();
+    int oldAnchor = oldCursor.anchor();
 
-    script.replace(portBlock, portCode);
+    QScrollBar *vScroll = m_ui->editRunPythonScript->verticalScrollBar();
+    QScrollBar *hScroll = m_ui->editRunPythonScript->horizontalScrollBar();
+    int oldV = vScroll ? vScroll->value() : 0;
+    int oldH = hScroll ? hScroll->value() : 0;
 
     QSignalBlocker blocker(m_ui->editRunPythonScript);
-    m_ui->editRunPythonScript->setPlainText(script);
+    m_ui->editRunPythonScript->setPlainTextUndoable(script);
     m_ui->editRunPythonScript->document()->setModified(false);
+
+    QTextDocument *doc = m_ui->editRunPythonScript->document();
+    const int len = doc->characterCount();
+    if (len > 0) {
+        oldPos    = qBound(0, oldPos,    len - 1);
+        oldAnchor = qBound(0, oldAnchor, len - 1);
+
+        QTextCursor newCursor(doc);
+        newCursor.setPosition(oldAnchor);
+        newCursor.setPosition(oldPos, QTextCursor::KeepAnchor);
+        m_ui->editRunPythonScript->setTextCursor(newCursor);
+    }
+
+    if (vScroll)
+        vScroll->setValue(qMin(oldV, vScroll->maximum()));
+    if (hScroll)
+        hScroll->setValue(qMin(oldH, hScroll->maximum()));
 }
 
 /*!*******************************************************************************************************************
@@ -1480,6 +1612,10 @@ void MainWindow::on_btnAddPort_clicked()
     auto* fromLayerBox   = new QComboBox();
     auto* toLayerBox     = new QComboBox();
     auto* directionBox   = new QComboBox();
+
+    sourceLayerBox->addItem(QString());
+    fromLayerBox->addItem(QString());
+    toLayerBox->addItem(QString());
 
     for (int n : gdsNums) {
         const QString s = QString::number(n);
@@ -1587,10 +1723,21 @@ void MainWindow::on_txtSubstrate_textEdited(const QString &arg1)
 void MainWindow::on_txtSubstrate_textChanged(const QString &arg1)
 {
     setLineEditPalette(m_ui->txtSubstrate, arg1);
-    drawSubstrate(arg1);
+
+    const QFileInfo fi(arg1);
+    if (fi.exists()) {
+        m_simSettings["SubstrateFile"] = arg1;
+        m_sysSettings["SubstrateDir"]  = fi.absolutePath();
+
+        m_subLayers = readSubstrateLayers(arg1);
+
+        drawSubstrate(arg1);
+    }
+
     setStateChanged();
     updateSubLayerNamesCheckboxState();
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Marks the simulation state as changed, updates script title and reloads Python script if file exists.
@@ -1682,7 +1829,35 @@ void MainWindow::on_actionPrefernces_triggered()
  **********************************************************************************************************************/
 void MainWindow::on_btnRun_clicked()
 {
-    const QString key = currentSimToolKey();
+    const QString comboKey = currentSimToolKey();
+
+    const QString scriptText = m_ui->editRunPythonScript->toPlainText();
+
+    QString modelType = QStringLiteral("unknown");
+    if (!scriptText.trimmed().isEmpty()) {
+        auto detectModelType = [](const QString& text) -> QString {
+            if (text.contains(QStringLiteral("from openEMS import openEMS")))
+                return QStringLiteral("openems");
+
+            QRegularExpression re(R"(\w+\s*\[\s*['"][^'"]+['"]\s*\]\s*=)");
+            if (re.match(text).hasMatch())
+                return QStringLiteral("palace");
+
+            return QStringLiteral("unknown");
+        };
+
+        modelType = detectModelType(scriptText);
+    }
+
+    QString key;
+    if (modelType == QLatin1String("openems") ||
+        modelType == QLatin1String("palace"))
+    {
+        key = modelType;
+    } else {
+        key = comboKey;
+    }
+
     if (key.isEmpty()) {
         error("No simulation tool selected/configured.");
         return;
@@ -1690,9 +1865,9 @@ void MainWindow::on_btnRun_clicked()
 
     m_ui->txtLog->clear();
 
-    if (key == "openems") {
+    if (key == QLatin1String("openems")) {
         runOpenEMS();
-    } else if (key == "palace") {
+    } else if (key == QLatin1String("palace")) {
         runPalace();
     } else {
         error(QString("Unsupported simulation tool: %1").arg(key));
@@ -1860,76 +2035,21 @@ void MainWindow::runPalace()
     }
 
     const int runMode = m_preferences.value("PALACE_RUN_MODE", 0).toInt();
+    QString launcherWin;
 
-    if (runMode == 1) {  // Script mode
-        const QString launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
+    // Validate launcher script if we are in script mode
+    if (runMode == 1) {
+        launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
         if (launcherWin.isEmpty() || !QFileInfo::exists(launcherWin)) {
             error("PALACE_RUN_SCRIPT is not configured or does not exist.", true);
             return;
         }
 
-        QFileInfo fi(launcherWin);
-        if (!fi.isExecutable()) {
+        QFileInfo fiLaunch(launcherWin);
+        if (!fiLaunch.isExecutable()) {
             error("PALACE_RUN_SCRIPT must point to an executable file.", true);
             return;
         }
-
-        m_ui->editSimulationLog->clear();
-        m_ui->editSimulationLog->insertPlainText("Starting Palace via external launcher script...\n");
-        m_ui->editSimulationLog->insertPlainText(
-            QString("[Launcher: %1]\n").arg(QDir::toNativeSeparators(launcherWin)));
-        m_ui->editSimulationLog->insertPlainText(
-            QString("[Model: %1]\n").arg(QDir::toNativeSeparators(modelWin)));
-
-        m_simProcess  = new QProcess(this);
-        m_palacePhase = PalacePhase::None;
-
-        connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [=]() {
-            const QByteArray data = m_simProcess->readAllStandardOutput();
-            if (!data.isEmpty()) {
-                const QString text = QString::fromUtf8(data);
-                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                m_ui->editSimulationLog->insertPlainText(text);
-                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-            }
-        });
-
-        connect(m_simProcess, &QProcess::readyReadStandardError, this, [=]() {
-            const QByteArray data = m_simProcess->readAllStandardError();
-            if (!data.isEmpty()) {
-                const QString text = QString::fromUtf8(data);
-                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                m_ui->editSimulationLog->insertPlainText(text);
-                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-            }
-        });
-
-        connect(m_simProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-                this,
-                [=](int exitCode, QProcess::ExitStatus) {
-                    const QString msg =
-                        QString("\n[Palace launcher finished with exit code %1]\n").arg(exitCode);
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                    m_ui->editSimulationLog->insertPlainText(msg);
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-
-                    m_simProcess->deleteLater();
-                    m_simProcess  = nullptr;
-                    m_palacePhase = PalacePhase::None;
-                });
-
-        QStringList args;
-        args << QDir::toNativeSeparators(modelWin);
-
-        m_simProcess->start(QDir::toNativeSeparators(launcherWin), args);
-        if (!m_simProcess->waitForStarted(3000)) {
-            error("Failed to start Palace launcher script.", false);
-            m_simProcess->deleteLater();
-            m_simProcess  = nullptr;
-            m_palacePhase = PalacePhase::None;
-        }
-
-        return;
     }
 
     QString runDir = m_simSettings.value("RunDir").toString().trimmed();
@@ -1982,15 +2102,30 @@ void MainWindow::runPalace()
 
     m_ui->editSimulationLog->clear();
 #ifdef Q_OS_WIN
-    m_ui->editSimulationLog->insertPlainText(
-        QString("Starting Palace Python preprocessing in WSL (%1)...\n").arg(distro));
+    if (runMode == 1)
+        m_ui->editSimulationLog->insertPlainText(
+            QString("Starting Palace Python preprocessing in WSL (%1) [launcher mode]...\n")
+                .arg(distro));
+    else
+        m_ui->editSimulationLog->insertPlainText(
+            QString("Starting Palace Python preprocessing in WSL (%1)...\n").arg(distro));
 #else
-    m_ui->editSimulationLog->insertPlainText("Starting Palace Python preprocessing (native)...\n");
+    if (runMode == 1)
+        m_ui->editSimulationLog->insertPlainText(
+            "Starting Palace Python preprocessing (launcher mode)...\n");
+    else
+        m_ui->editSimulationLog->insertPlainText(
+            "Starting Palace Python preprocessing (native)...\n");
 #endif
     m_ui->editSimulationLog->insertPlainText(
         QString("[Using Python: %1]\n").arg(pythonCmd));
     m_ui->editSimulationLog->insertPlainText(
         QString("[Initial Palace run directory guess: %1]\n").arg(runDir));
+    if (runMode == 1) {
+        m_ui->editSimulationLog->insertPlainText(
+            QString("[Launcher script: %1]\n")
+                .arg(QDir::toNativeSeparators(launcherWin)));
+    }
 
     m_simProcess  = new QProcess(this);
     m_palacePhase = PalacePhase::PythonModel;
@@ -2123,6 +2258,34 @@ void MainWindow::runPalace()
                         QString("[Using Palace config: %1]\n").arg(configPath));
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
 
+                    if (runMode == 1) {
+                        // Script mode: call external launcher with the config file
+                        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+                        m_ui->editSimulationLog->insertPlainText(
+                            "\n[Starting Palace via external launcher script...]\n");
+                        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+
+                        m_palacePhase = PalacePhase::PalaceSolver;
+
+                        QString workDir = searchDir;
+                        if (workDir.isEmpty())
+                            workDir = QFileInfo(configPath).absolutePath();
+                        m_simProcess->setWorkingDirectory(workDir);
+
+                        QStringList scriptArgs;
+                        scriptArgs << QDir::toNativeSeparators(configPath);
+
+                        m_simProcess->start(QDir::toNativeSeparators(launcherWin), scriptArgs);
+                        if (!m_simProcess->waitForStarted(3000)) {
+                            error("Failed to start Palace launcher script.", false);
+                            m_simProcess->deleteLater();
+                            m_simProcess  = nullptr;
+                            m_palacePhase = PalacePhase::None;
+                        }
+                        return;
+                    }
+
+                    // Normal WSL/native Palace solver mode
                     const QString configDirLinux  = QFileInfo(configLinux).path();
                     const QString configBaseLinux = QFileInfo(configLinux).fileName();
 
@@ -2180,7 +2343,11 @@ void MainWindow::runPalace()
 
                 if (m_palacePhase == PalacePhase::PalaceSolver) {
                     const QString msg =
-                        QString("\n[Palace solver finished with exit code %1]\n").arg(exitCode);
+                        (runMode == 1)
+                            ? QString("\n[Palace launcher finished with exit code %1]\n")
+                                  .arg(exitCode)
+                            : QString("\n[Palace solver finished with exit code %1]\n")
+                                  .arg(exitCode);
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
                     m_ui->editSimulationLog->insertPlainText(msg);
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
@@ -2473,6 +2640,10 @@ void MainWindow::appendParsedPortsToTable(const QVector<PortInfo>& ports)
         auto* fromLayerBox   = new QComboBox();
         auto* toLayerBox     = new QComboBox();
         auto* directionBox   = new QComboBox();
+
+        sourceLayerBox->addItem(QString());
+        fromLayerBox->addItem(QString());
+        toLayerBox->addItem(QString());
 
         for (int n : gdsNums) {
             const QString s = QString::number(n);
@@ -2959,7 +3130,6 @@ void MainWindow::hookPortCombo(QComboBox* box)
             [this](const QString&){ if (!m_blockPortChanges) setStateChanged(); });
 }
 
-
 /*!*******************************************************************************************************************
  * \brief Handles selection changes in the "Simulation Tool" combo box.
  *
@@ -3316,15 +3486,22 @@ bool MainWindow::applyPythonScriptFromEditor()
     QString filePath = m_ui->txtRunPythonScript->text().trimmed();
 
     if (filePath.isEmpty()) {
+        const QString defaultPath =
+            QDir(QDir::homePath()).filePath(QStringLiteral("model.py"));
+
         filePath = QFileDialog::getSaveFileName(
             this,
             tr("Save Python Model"),
-            QDir::homePath(),
-            tr("Python Files (*.py)")
+            defaultPath,
+            tr("Python Files (*.py);;All Files (*)")
             );
 
         if (filePath.isEmpty())
             return false;
+
+        QFileInfo fi(filePath);
+        if (fi.suffix().isEmpty())
+            filePath += QStringLiteral(".py");
 
         m_ui->txtRunPythonScript->setText(QDir::toNativeSeparators(filePath));
     }
@@ -3391,6 +3568,8 @@ bool MainWindow::applyPythonScriptFromEditor()
     m_ui->editRunPythonScript->document()->setModified(false);
 
     setLineEditPalette(m_ui->txtRunPythonScript, filePath);
+
+    updateSimulationSettings();
 
     return true;
 }

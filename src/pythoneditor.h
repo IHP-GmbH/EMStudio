@@ -52,6 +52,11 @@ public:
     explicit                            PythonEditor(QWidget *parent = nullptr);
     void                                setCompleter(QCompleter *completer);
     QCompleter                          *completer() const;
+    void                                setEditorFontSize(qreal pt);
+    void                                setPlainTextUndoable(const QString &text);
+
+signals:
+    void                                sigFontSizeChanged(qreal newSize);
 
 public slots:
     void                                openFindDialog();
@@ -64,10 +69,14 @@ private slots:
     void                                updateVariableList();
 
 protected:
+    void                                wheelEvent(QWheelEvent *e) override;
     void                                keyPressEvent(QKeyEvent *e) override;
     void                                focusInEvent(QFocusEvent *e) override;
 
 private:
+    void                                zoomInText();
+    void                                zoomOutText();
+
     QString                             textUnderCursor() const;
     bool                                doFind(const QString &pat, bool forward, bool matchCase, bool wholeWords, bool useRegex, bool wrap = true);
     void                                applyHighlights(const QList<QTextEdit::ExtraSelection> &sel);

@@ -199,7 +199,7 @@ The substrate tab is where you select the XML stackup file to be used for simula
 
 ## Python
 
-On the Python tab, you can see the Python model code that is used to run openEMS or Palace workflows. When you start EMStudio, you will see an empty editor window. You can now generate a default model code (Button "Generate Default") or you can load an existing model code (Button "..."). 
+On the Python tab, you can see the Python model code that is used to run openEMS or Palace workflows. When you start EMStudio, you will see an empty editor window. You can now generate a default model code (Button "Generate Default") or you can load an existing model code (Menu: File > Load Python Model ...). 
 
 The model code will be synchronized automatically with settings on the "Main" tab, where you can editor your simulation settings. Synchronization works both ways, you can apply changes in the editor on the "Python" tab or in the Settings grid on the "Main" tab.
 

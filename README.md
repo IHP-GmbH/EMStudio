@@ -135,10 +135,19 @@ these folders in your PYTHONPATH environment variable. For gds2palace, you can a
 
 When you start EMStudio, you first need to configure some path settings using **Setup > Preferences** from the main menu. 
 
+
+## Configuration 
+
+<img src="./doc/png/preferences1.png" alt="preferences" width="700">
+
+
 - **Python Path**  
   Path to the Python interpreter used for the **openEMS** workflow. 
   If you installed openEMS and the IHP workflow files into 
-  a venv named "openEMS" located in "~\venv\openEMS", the python interpreter would be "~/venv/openEMS/bin/python"
+  a venv named "openEMS" located in your home directory "~\venv\openEMS", the python interpreter would be "~/venv/openEMS/bin/python"
+
+- **OPENEMS_INSTALL_PATH**  
+  This is where you installed openEMS. If you built openEMS according to the defaults, this is "~/opt/openEMS" in your user home directory.
 
 - **PALACE_WSL_PYTHON**  
   Path to the Python interpreter used for the **Palace** workflow.
@@ -146,18 +155,34 @@ When you start EMStudio, you first need to configure some path settings using **
   a venv named "palace" located in "~\venv\palace", the python interpreter would be "~/venv/palace/bin/python".
   If you don't want to use Palace, you can leave this empty.
 
-- **OPENEMS_INSTALL_PATH**  
-  This is where you installed openEMS. If you built openEMS according to the defaults, this is "~/opt/openEMS" in your user home directory.
+- **PALACE_RUN_MODE**  
+  This setting is used to define how Palace is started after creating the model files (config.json and *.msh). 
+  "Executable" is used if Palace is installed into the normal file system, e.g. using spack installation. 
+  "Script" is used if you want/need more control over starting Palace, e.g. because you installed it in an apptainer container, or if you want to send jobs to remote machines. An example run script is shown in the gds2palace repository [here](https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/tree/main/scripts).
 
 - **PALACE_INSTALL_PATH**  
-  TBD
+  This is where you have installed Palace when using the "Executable" run mode.
   If you don't want to use Palace, you can leave this empty.
+
+  <img src="./doc/png/path_executable1.png" alt="exepath" width="700">
+
+  In this case, Palace will be started with the maximum number of cores available on your system. 
+
+- **PALACE_RUN_SCRIPT**  
+  This is the script used to start Palace when using the "Script" run mode.
+  If you don't want to use Palace, you can leave this empty.
+
+  
 
 ## Main
 
 The main tab is where you configure the layout input file (*.gds) and the main simulation settings. 
 
 <img src="./doc/png/main1.png" alt="main" width="700">
+
+When you start from scratch, the settings grid is almost empty. You can now load a project template using **File > Load Python Model ...** or you can go to the **Python** tab, choose the **simulator** that you want to use and then press **Generate Default**.
+
+<img src="./doc/png/generate1.png" alt="generate" width="700">
 
 For the meaning of settings, please refer to the documentation of the IHP openEMS workflow:
 https://github.com/VolkerMuehlhaus/openems_ihp_sg13g2/blob/main/doc/Using_OpenEMS_Python_with_IHP_SG13G2_v2.pdf

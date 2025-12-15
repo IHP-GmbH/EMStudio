@@ -2245,7 +2245,14 @@ void MainWindow::runPalace()
                         return;
                     }
 
-                    const QString configPath = files.first().absoluteFilePath();
+                    QString configPath = files.first().absoluteFilePath();
+                    foreach(const QFileInfo &fileInfo, files) {
+                        if(fileInfo.completeBaseName().toLower() == "config" &&
+                           fileInfo.completeSuffix().toLower() == "json" ) {
+                            configPath = fileInfo.absoluteFilePath();
+                            break;
+                        }
+                    }
 
 #ifdef Q_OS_WIN
                     const QString configLinux = toWslPath(configPath);
@@ -3418,36 +3425,82 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
             continue;
         }
 
-        QVariant::Type t = val.type();
-        int propType = QVariant::String;
-        QVariant finalValue = val;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+        const QMetaType::Type t = static_cast<QMetaType::Type>(val.typeId());
+        const bool isString = (t == QMetaType::QString);
+        const bool isBool   = (t == QMetaType::Bool);
+        const bool isIntish = (t == QMetaType::Int) || (t == QMetaType::UInt) ||
+                              (t == QMetaType::LongLong) || (t == QMetaType::ULongLong);
+        const bool isDouble = (t == QMetaType::Double);
+#else
+        const QVariant::Type t = val.type();
+        const bool isString = (t == QVariant::String);
+        const bool isBool   = (t == QVariant::Bool);
+        const bool isIntish = (t == QVariant::Int) || (t == QVariant::UInt) ||
+                              (t == QVariant::LongLong) || (t == QVariant::ULongLong);
+        const bool isDouble = (t == QVariant::Double);
+#endif
 
-        switch (t) {
-        case QVariant::Bool:
-            propType   = QVariant::Bool;
+        int propType = QVariant::String;
+        QVariant finalValue;
+        int decimals = 12;
+        double step = 0.0;
+
+        if (isBool) {
+            propType = QVariant::Bool;
             finalValue = val.toBool();
-            break;
-        case QVariant::Int:
-        case QVariant::LongLong:
-        case QVariant::UInt:
-        case QVariant::ULongLong:
-            propType   = QVariant::Int;
-            finalValue = val.toInt();
-            break;
-        case QVariant::Double:
-            propType   = QVariant::Double;
+        }
+        else if (isString) {
+            const QString s = val.toString().trimmed();
+            if (s.isEmpty()) {
+                propType = QVariant::String;
+                finalValue = s;
+            } else {
+                bool ok = false;
+                const double d = QLocale::c().toDouble(s, &ok);
+                if (ok) {
+                    propType = QVariant::Double;
+                    finalValue = d;
+
+                    // If string has no '.' and no 'e/E' -> treat like integer
+                    const bool stringLooksInt =
+                        !s.contains(QLatin1Char('.')) &&
+                        !s.contains(QLatin1Char('e'), Qt::CaseInsensitive);
+
+                    if (stringLooksInt) {
+                        decimals = 0;
+                        step = 1.0;
+                    } else {
+                        decimals = 12;
+                        step = 0.0;
+                    }
+                } else {
+                    propType = QVariant::String;
+                    finalValue = s;
+                }
+            }
+        }
+        else if (isIntish || isDouble) {
+            // Force ALL numeric types to Double so SciDoubleSpinBox is used
+            propType = QVariant::Double;
             finalValue = val.toDouble();
-            break;
-        default:
-            propType   = QVariant::String;
+
+            if (isIntish) {
+                decimals = 0;
+                step = 1.0;
+            } else {
+                decimals = 12;
+                step = 0.0;
+            }
+        }
+        else {
+            propType = QVariant::String;
             finalValue = val.toString();
-            break;
         }
 
         if (propType == QVariant::String) {
-            if (key == finalValue) {
+            if (key == finalValue.toString())
                 continue;
-            }
         }
 
         QtVariantProperty* prop = m_variantManager->addProperty(propType, key);
@@ -3455,12 +3508,10 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
             continue;
 
         if (propType == QVariant::Double) {
-            prop->setAttribute(QLatin1String("decimals"), 12);
-            prop->setAttribute(QLatin1String("minimum"),
-                               -std::numeric_limits<double>::max());
-            prop->setAttribute(QLatin1String("maximum"),
-                               std::numeric_limits<double>::max());
-            prop->setAttribute(QLatin1String("singleStep"), 0.0);
+            prop->setAttribute(QLatin1String("decimals"), decimals);
+            prop->setAttribute(QLatin1String("minimum"), -std::numeric_limits<double>::max());
+            prop->setAttribute(QLatin1String("maximum"),  std::numeric_limits<double>::max());
+            prop->setAttribute(QLatin1String("singleStep"), step);
         }
 
         prop->setValue(finalValue);

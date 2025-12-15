@@ -1,17 +1,17 @@
 /****************************************************************************
-** 
+**
 ** Copyright (c) 2009 Nokia Corporation and/or its subsidiary(-ies).
 ** All rights reserved.
 ** Contact: Nokia Corporation (qt-info@nokia.com)
-** 
+**
 ** This file is part of a Qt Solutions component.
 **
-** Commercial Usage  
+** Commercial Usage
 ** Licensees holding valid Qt Commercial licenses may use this file in
 ** accordance with the Qt Solutions Commercial License Agreement provided
 ** with the Software or, alternatively, in accordance with the terms
 ** contained in a written agreement between you and Nokia.
-** 
+**
 ** GNU Lesser General Public License Usage
 ** Alternatively, this file may be used under the terms of the GNU Lesser
 ** General Public License version 2.1 as published by the Free Software
@@ -19,35 +19,36 @@
 ** packaging of this file.  Please review the following information to
 ** ensure the GNU Lesser General Public License version 2.1 requirements
 ** will be met: http://www.gnu.org/licenses/old-licenses/lgpl-2.1.html.
-** 
+**
 ** In addition, as a special exception, Nokia gives you certain
 ** additional rights. These rights are described in the Nokia Qt LGPL
 ** Exception version 1.1, included in the file LGPL_EXCEPTION.txt in this
 ** package.
-** 
-** GNU General Public License Usage 
+**
+** GNU General Public License Usage
 ** Alternatively, this file may be used under the terms of the GNU
 ** General Public License version 3.0 as published by the Free Software
 ** Foundation and appearing in the file LICENSE.GPL included in the
 ** packaging of this file.  Please review the following information to
 ** ensure the GNU General Public License version 3.0 requirements will be
 ** met: http://www.gnu.org/copyleft/gpl.html.
-** 
+**
 ** Please note Third Party Software included with Qt Solutions may impose
 ** additional restrictions and it is the user's responsibility to ensure
 ** that they have met the licensing requirements of the GPL, LGPL, or Qt
 ** Solutions Commercial license and the relevant license of the Third
 ** Party Software they are using.
-** 
+**
 ** If you are unsure which license is appropriate for your use, please
 ** contact Nokia at qt-info@nokia.com.
-** 
+**
 ****************************************************************************/
 
 
 #include "qteditorfactory.h"
 #include "qtpropertybrowserutils_p.h"
 #include <QSpinBox>
+#include <QDebug>
 #include <QScrollBar>
 #include <QComboBox>
 #include <QAbstractItemView>
@@ -79,6 +80,37 @@
 #if QT_VERSION >= 0x040400
 QT_BEGIN_NAMESPACE
 #endif
+
+class ScientificDoubleSpinBox : public QDoubleSpinBox{
+
+public:
+    explicit ScientificDoubleSpinBox(QWidget *parent = nullptr)
+        : QDoubleSpinBox(parent)
+    {
+        // Make parsing predictable (no commas, etc.)
+        setLocale(QLocale::c());
+
+        // Accept scientific input like 50e9
+        auto *v = new QDoubleValidator(this);
+        v->setNotation(QDoubleValidator::ScientificNotation);
+        v->setLocale(QLocale::c());
+        if (lineEdit())
+            lineEdit()->setValidator(v);
+    }
+
+protected:
+    QString textFromValue(double v) const override
+    {
+        return QLocale::c().toString(v, 'g', 15);
+    }
+
+    double valueFromText(const QString &text) const override
+    {
+        bool ok = false;
+        const double v = QLocale::c().toDouble(text, &ok);
+        return ok ? v : 0.0;
+    }
+};
 
 // Set a hard coded left margin to account for the indentation
 // of the tree view icon when switching to an editor
@@ -115,7 +147,7 @@ public:
 template <class Editor>
 Editor *EditorFactoryPrivate<Editor>::createEditor(QtProperty *property, QWidget *parent)
 {
-    Editor *editor = new Editor(parent);    
+    Editor *editor = new Editor(parent);
     initializeEditor(property, editor);
     return editor;
 }
@@ -738,7 +770,7 @@ void QtCheckBoxFactory::disconnectPropertyManager(QtBoolPropertyManager *manager
 
 // QtDoubleSpinBoxFactory
 
-class QtDoubleSpinBoxFactoryPrivate : public EditorFactoryPrivate<QDoubleSpinBox>
+class QtDoubleSpinBoxFactoryPrivate : public EditorFactoryPrivate<ScientificDoubleSpinBox>
 {
     QtDoubleSpinBoxFactory *q_ptr;
     Q_DECLARE_PUBLIC(QtDoubleSpinBoxFactory)
@@ -753,10 +785,10 @@ public:
 
 void QtDoubleSpinBoxFactoryPrivate::slotPropertyChanged(QtProperty *property, double value)
 {
-    QList<QDoubleSpinBox *> editors = m_createdEditors[property];
-    QListIterator<QDoubleSpinBox *> itEditor(m_createdEditors[property]);
+    QList<ScientificDoubleSpinBox *> editors = m_createdEditors[property];
+    QListIterator<ScientificDoubleSpinBox *> itEditor(m_createdEditors[property]);
     while (itEditor.hasNext()) {
-        QDoubleSpinBox *editor = itEditor.next();
+        ScientificDoubleSpinBox *editor = itEditor.next();
         if (editor->value() != value) {
             editor->blockSignals(true);
             editor->setValue(value);
@@ -775,10 +807,10 @@ void QtDoubleSpinBoxFactoryPrivate::slotRangeChanged(QtProperty *property,
     if (!manager)
         return;
 
-    QList<QDoubleSpinBox *> editors = m_createdEditors[property];
-    QListIterator<QDoubleSpinBox *> itEditor(editors);
+    QList<ScientificDoubleSpinBox *> editors = m_createdEditors[property];
+    QListIterator<ScientificDoubleSpinBox *> itEditor(editors);
     while (itEditor.hasNext()) {
-        QDoubleSpinBox *editor = itEditor.next();
+        ScientificDoubleSpinBox *editor = itEditor.next();
         editor->blockSignals(true);
         editor->setRange(min, max);
         editor->setValue(manager->value(property));
@@ -795,10 +827,10 @@ void QtDoubleSpinBoxFactoryPrivate::slotSingleStepChanged(QtProperty *property, 
     if (!manager)
         return;
 
-    QList<QDoubleSpinBox *> editors = m_createdEditors[property];
-    QListIterator<QDoubleSpinBox *> itEditor(editors);
+    QList<ScientificDoubleSpinBox *> editors = m_createdEditors[property];
+    QListIterator<ScientificDoubleSpinBox *> itEditor(editors);
     while (itEditor.hasNext()) {
-        QDoubleSpinBox *editor = itEditor.next();
+        ScientificDoubleSpinBox *editor = itEditor.next();
         editor->blockSignals(true);
         editor->setSingleStep(step);
         editor->blockSignals(false);
@@ -814,10 +846,10 @@ void QtDoubleSpinBoxFactoryPrivate::slotDecimalsChanged(QtProperty *property, in
     if (!manager)
         return;
 
-    QList<QDoubleSpinBox *> editors = m_createdEditors[property];
-    QListIterator<QDoubleSpinBox *> itEditor(editors);
+    QList<ScientificDoubleSpinBox *> editors = m_createdEditors[property];
+    QListIterator<ScientificDoubleSpinBox *> itEditor(editors);
     while (itEditor.hasNext()) {
-        QDoubleSpinBox *editor = itEditor.next();
+        ScientificDoubleSpinBox *editor = itEditor.next();
         editor->blockSignals(true);
         editor->setDecimals(prec);
         editor->setValue(manager->value(property));
@@ -828,8 +860,8 @@ void QtDoubleSpinBoxFactoryPrivate::slotDecimalsChanged(QtProperty *property, in
 void QtDoubleSpinBoxFactoryPrivate::slotSetValue(double value)
 {
     QObject *object = q_ptr->sender();
-    const QMap<QDoubleSpinBox *, QtProperty *>::ConstIterator itcend = m_editorToProperty.constEnd();
-    for (QMap<QDoubleSpinBox *, QtProperty *>::ConstIterator itEditor = m_editorToProperty.constBegin(); itEditor != itcend; ++itEditor) {
+    const QMap<ScientificDoubleSpinBox *, QtProperty *>::ConstIterator itcend = m_editorToProperty.constEnd();
+    for (QMap<ScientificDoubleSpinBox *, QtProperty *>::ConstIterator itEditor = m_editorToProperty.constBegin(); itEditor != itcend; ++itEditor) {
         if (itEditor.key() == object) {
             QtProperty *property = itEditor.value();
             QtDoublePropertyManager *manager = q_ptr->propertyManager(property);
@@ -894,7 +926,7 @@ void QtDoubleSpinBoxFactory::connectPropertyManager(QtDoublePropertyManager *man
 QWidget *QtDoubleSpinBoxFactory::createEditor(QtDoublePropertyManager *manager,
         QtProperty *property, QWidget *parent)
 {
-    QDoubleSpinBox *editor = d_ptr->createEditor(property, parent);
+    ScientificDoubleSpinBox *editor = d_ptr->createEditor(property, parent);
     editor->setSingleStep(manager->singleStep(property));
     editor->setDecimals(manager->decimals(property));
     editor->setRange(manager->minimum(property), manager->maximum(property));
@@ -904,6 +936,14 @@ QWidget *QtDoubleSpinBoxFactory::createEditor(QtDoublePropertyManager *manager,
     connect(editor, SIGNAL(valueChanged(double)), this, SLOT(slotSetValue(double)));
     connect(editor, SIGNAL(destroyed(QObject *)),
                 this, SLOT(slotEditorDestroyed(QObject *)));
+
+    connect(editor, qOverload<double>(&QDoubleSpinBox::valueChanged),
+            this, [editor](double v){
+                qDebug() << "valueChanged ->" << v
+                         << "range" << editor->minimum() << editor->maximum()
+                         << "text"  << editor->text();
+            });
+
     return editor;
 }
 
@@ -1593,7 +1633,7 @@ QtCharEdit::QtCharEdit(QWidget *parent)
     QHBoxLayout *layout = new QHBoxLayout(this);
     layout->addWidget(m_lineEdit);
     layout->setContentsMargins(0, 0, 0, 0);
-    m_lineEdit->installEventFilter(this);    
+    m_lineEdit->installEventFilter(this);
     m_lineEdit->setReadOnly(true);
     m_lineEdit->setFocusProxy(this);
     setFocusPolicy(m_lineEdit->focusPolicy());

@@ -28,6 +28,7 @@
 #include "QtPropertyBrowser/SciDoubleSpinBox.h"
 
 class FileEdit;
+class QtDoubleSpinBoxFactory;
 
 class VariantFactory : public QtVariantEditorFactory
 {

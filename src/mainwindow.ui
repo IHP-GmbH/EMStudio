@@ -443,7 +443,7 @@
   </action>
   <action name="actionPrefernces">
    <property name="text">
-    <string>Prefernces...</string>
+    <string>Preferences...</string>
    </property>
   </action>
   <action name="actionOpen_Python_Model">

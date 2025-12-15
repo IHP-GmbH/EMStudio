@@ -21,6 +21,8 @@
 **
 ****************************************************************************/
 
+#include <cmath>
+
 #include "variantmanager.h"
 
 #include <QLocale>
@@ -88,26 +90,55 @@ QVariant VariantManager::attributeValue(const QtProperty *property, const QStrin
     return QtVariantPropertyManager::attributeValue(property, attribute);
 }
 
+static inline QString formatScientificCompact(double v, int mantissaSigDigits = 2)
+{
+    if (v == 0.0)
+        return QStringLiteral("0");
+
+    const double av = std::abs(v);
+    const int exp10 = int(std::floor(std::log10(av)));
+    const double mantissa = v / std::pow(10.0, exp10);
+
+    // 'g' => compact mantissa, no trailing zeros
+    QString m = QLocale::c().toString(mantissa, 'g', mantissaSigDigits);
+
+    // Build exponent like e+10 / e-6
+    const QString e = QStringLiteral("e%1%2")
+                          .arg(exp10 >= 0 ? QLatin1Char('+') : QLatin1Char('-'))
+                          .arg(std::abs(exp10));
+
+    return m + e;
+}
+
 QString VariantManager::valueText(const QtProperty *property) const
 {
     if (propertyType(property) == QVariant::Double) {
         const double v = QtVariantPropertyManager::value(property).toDouble();
+        const double av = std::abs(v);
+
+        const bool useSci = (av != 0.0) && (av >= 1e6 || av < 1e-3);
+
+        if (useSci) {
+            return formatScientificCompact(v, /*mantissaSigDigits=*/2);
+        }
 
         int decimals = QtVariantPropertyManager::attributeValue(
                            property, QLatin1String("decimals")).toInt();
         decimals = std::max(decimals, 12);
 
-        return QLocale::c().toString(v, 'g', decimals);
+        QString s = QLocale::c().toString(v, 'f', decimals);
+
+        while (s.contains('.') && s.endsWith('0')) s.chop(1);
+        if (s.endsWith('.')) s.chop(1);
+        return s;
     }
 
-    if (propertyType(property) == filePathTypeId()) {
-        const QString path = value(property).toString();
-        return path;
-    }
+    if (propertyType(property) == filePathTypeId())
+        return value(property).toString();
 
-    // Fallback to default behavior for all other types
     return QtVariantPropertyManager::valueText(property);
 }
+
 
 void VariantManager::setValue(QtProperty *property, const QVariant &val)
 {

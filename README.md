@@ -112,6 +112,126 @@ scripts/klEmsDriver.py
 
 ---
 
+# Workflow overview
+
+**EMStudio** is a Qt-based desktop application for preparing, visualizing, and managing electromagnetic simulations.
+
+EMStudio can be started stand-alone, or from the klayout layout editor.
+
+After simulation settings and port configuration are configured, 
+EMStudio can save a simulation model to disk, and also start simulation. The simulation model requires the **solver workflow folder**
+('modules' for openEMS, 'gds2palace' for Palace) and the **stackup file** (*.XML)
+to be present in your target directory. This means you usually want to have 
+**one** folder for each solver type (openEMS or Palace) where simulation model scripts are located together with the solver modules folder and the substrate files.
+
+Note that the solver workflow folders are only the "bridge" to openEMS and Palace EM solvers, and you need to have these 
+EM solvers installed, as described in the solver documentation. This is no different from using the normal Python script based IHP EM workflows.
+
+Note for advanced users: If you want to create simulation models in different directories, 
+and don't want to copy & paste the "modules" or "gds2palace" to each of these folders, you can also include 
+these folders in your PYTHONPATH environment variable. For gds2palace, you can also install that using "pip install gds2palace" and update using "pip install gds2palace --upgrade".
+
+# User Interface 
+
+When you start EMStudio, you first need to configure some path settings using **Setup > Preferences** from the main menu. 
+
+
+## Configuration 
+
+<img src="./doc/png/preferences1.png" alt="preferences" width="700">
+
+
+- **Python Path**  
+  Path to the Python interpreter used for the **openEMS** workflow. 
+  If you installed openEMS and the IHP workflow files into 
+  a venv named "openEMS" located in your home directory "~\venv\openEMS", the python interpreter would be "~/venv/openEMS/bin/python"
+
+- **OPENEMS_INSTALL_PATH**  
+  This is where you installed openEMS. If you built openEMS according to the defaults, this is "~/opt/openEMS" in your user home directory.
+
+- **PALACE_WSL_PYTHON**  
+  Path to the Python interpreter used for the **Palace** workflow.
+  If you installed the gds2palace workflow files into 
+  a venv named "palace" located in "~\venv\palace", the python interpreter would be "~/venv/palace/bin/python".
+  If you don't want to use Palace, you can leave this empty.
+
+- **PALACE_RUN_MODE**  
+  This setting is used to define how Palace is started after creating the model files (config.json and *.msh). 
+  "Executable" is used if Palace is installed into the normal file system, e.g. using spack installation. 
+  "Script" is used if you want/need more control over starting Palace, e.g. because you installed it in an apptainer container, or if you want to send jobs to remote machines. An example run script is shown in the gds2palace repository [here](https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/tree/main/scripts).
+
+- **PALACE_INSTALL_PATH**  
+  This is where you have installed Palace when using the "Executable" run mode.
+  If you don't want to use Palace, you can leave this empty.
+
+  <img src="./doc/png/path_executable1.png" alt="exepath" width="700">
+
+  In this case, Palace will be started with the maximum number of cores available on your system. 
+
+- **PALACE_RUN_SCRIPT**  
+  This is the script used to start Palace when using the "Script" run mode.
+  If you don't want to use Palace, you can leave this empty.
+
+  
+
+## Main
+
+The main tab is where you configure the layout input file (*.gds) and the main simulation settings. 
+
+<img src="./doc/png/main1.png" alt="main" width="700">
+
+When you start from scratch, the settings grid is almost empty. You can now load a project template using **File > Load Python Model ...** or you can go to the **Python** tab, choose the **simulator** that you want to use and then press **Generate Default**.
+
+<img src="./doc/png/generate1.png" alt="generate" width="700">
+
+For the meaning of settings, please refer to the documentation of the IHP openEMS workflow:
+https://github.com/VolkerMuehlhaus/openems_ihp_sg13g2/blob/main/doc/Using_OpenEMS_Python_with_IHP_SG13G2_v2.pdf
+and IHP Palace workflow gds2palace:
+https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/blob/main/doc/gds2palace_workflow_October_2025.pdf 
+
+After loading the GDSII file, EMStudio uses that information in the background to prepare some other configuration tabs, so please use the tabs in "top down" order as shown in the "Run Control" window.
+
+## Substrate
+
+The substrate tab is where you select the XML stackup file to be used for simulation. EMStudio shows a cross section of the substrate file, and in the background, it prepares the Ports configuration tab using the layer names found in the stackup.
+
+<img src="./doc/png/substrate1.png" alt="substrate" width="700">
+
+## Python
+
+On the Python tab, you can see the Python model code that is used to run openEMS or Palace workflows. When you start EMStudio, you will see an empty editor window. You can now generate a default model code (Button "Generate Default") or you can load an existing model code (Menu: File > Load Python Model ...). 
+
+The model code will be synchronized automatically with settings on the "Main" tab, where you can editor your simulation settings. Synchronization works both ways, you can apply changes in the editor on the "Python" tab or in the Settings grid on the "Main" tab.
+
+<img src="./doc/png/python1.png" alt="python" width="700">
+
+## Ports 
+
+On the ports tab, you need to configure simulation ports. It is expected that ports are included in the GDSII file on special layers, one layer per port, as described in the documentation of the IHP EM workflows. The EM workflows support in-plane ports (in xy plane) and vertical via ports (z direction). The direction of current flow in the port must be set by the user: X,Y,Z or -X,-Y,-Z for reverse polarity. Port polaritry matters when multiple ports are connected to the same return path.
+
+<img src="./doc/png/ports1.png" alt="ports" width="700">
+
+EMStudio will read the GDSII file and scan for polygon layers 201 and above, which is the recommended layer range to create ports for IHP EM workflows. If these layers are detected, a port configuration will be added for these layers, with Z direction as the default layer and Metal1 to TopMetal2 as the default layer span for the via port. Note that these settings must be checked and updated by the user, there is NO automatic detection if these default values are valid for your model!
+
+When creating ports entries from scratch, there is a checkbox "Use Substrate Layer Names" of the left bottom side of the Window. This will tell EMStudio to use layer names from the XML stackup file for the layer dropdown boxes.
+
+In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area.
+
+## Simulate
+
+On the Simulate tab, you define where the resulting simulation model code (*.py) will be stored, and you can also start simulation from here. 
+
+Note that this simulation model output is different from the Python script  that you selected on the Python tab - that file was loaded as a template only, and should not be overwritten with the newly created model.
+
+<img src="./doc/png/simulate1.png" alt="simulate" width="700">
+
+When you start simulation, the simulation model script will be executed, using the Python interpreter that you defined using Setup > Preferences.
+
+<img src="./doc/png/simulate2.png" alt="simulate" width="700">
+
+
+---
+
 # Configuration Files
 
 EMStudio uses JSON-based configuration files (`*.json`) containing:

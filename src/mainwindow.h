@@ -123,6 +123,7 @@ private slots:
     void                            on_btnGenDefaultPython_clicked();
     void                            on_cbxSimTool_currentIndexChanged(int index);
     void                            on_actionOpen_Python_Model_triggered();
+    void                            onOpenRecentPythonModel();
 
 private:
     void                            saveSettings();
@@ -137,6 +138,12 @@ private:
     void                            importPortsFromEditor();
     void                            hookPortCombo(QComboBox* box);
     void                            drawSubstrate(const QString &filePath);
+
+    void                            initRecentMenu();
+    void                            updateRecentMenu();
+    void                            addRecentPythonModel(const QString& filePath);
+    QStringList                     recentPythonModels() const;
+    void                            setRecentPythonModels(const QStringList& list);
 
     QStringList                     extractGdsCellNames(const QString &filePath);
     QSet<QPair<int, int>>           extractGdsLayerNumbers(const QString &filePath);
@@ -204,6 +211,11 @@ private:
     QtVariantPropertyManager        *m_variantManager = nullptr;
     QtTreePropertyBrowser           *m_propertyBrowser = nullptr;
     QtVariantProperty               *m_simSettingsGroup = nullptr;
+
+    static constexpr int            kMaxRecentPythonModels = 5;
+
+    QMenu*                          m_menuRecent = nullptr;
+    QVector<QAction*>               m_recentModelActions;
 
     PalacePhase                     m_palacePhase = PalacePhase::None;
 

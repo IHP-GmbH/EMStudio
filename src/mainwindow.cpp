@@ -18,9 +18,10 @@
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
-
+#include <QMenu>
 #include <QFile>
 #include <QDebug>
+#include <QAction>
 #include <QProcess>
 #include <QFileInfo>
 #include <QSettings>
@@ -198,6 +199,7 @@ MainWindow::MainWindow(QWidget *parent)
     showTab(m_tabMap.value("Main", 0));
 
     loadSettings();
+    initRecentMenu();
     setupSettingsPanel();
 
     connect(m_ui->editRunPythonScript, &PythonEditor::sigFontSizeChanged,
@@ -2790,16 +2792,14 @@ QString MainWindow::createDefaultOpenemsScript()
     else
         xmlFile = QDir::fromNativeSeparators(xmlFile);
 
-    const QString script = QString::fromUtf8(
-                               R"PY(import os
+    const QString script = QString::fromUtf8(R"PY(import os
 import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'modules')))
 
-from gds2openEMS import *
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'modules')))
+from modules import *
 
 from openEMS import openEMS
 import numpy as np
-
 
 # Model comments
 #
@@ -2807,25 +2807,35 @@ import numpy as np
 # to get full [S] matrix data.
 # Output is stored to Touchstone S-parameter file.
 # No data plots are created by this script.
+#
+# This model uses an alternative syntax where are settings are stored in settings dictionary,
+# which makes it easier to implement future extensions without touching again the
+# simulation model code
 
 
 # ======================== workflow settings ================================
+settings = {}
 
 # preview model/mesh only?
 # postprocess existing data without re-running simulation?
-preview_only = False
-postprocess_only = False
+settings['preview_only'] = False
+settings['postprocess_only'] = False
 
 # ===================== input files and path settings =======================
 
 gds_filename = "%1"   # geometries
-XML_filename = "%2"          # stackup
+cellname = ""  # optional, set empty string "" to use top cell
+
+XML_filename = "%2"   # stackup
+
+# which GDSII data type is evaluated? Values in [] can be separated by comma
+settings['purpose'] = [0]
 
 # preprocess GDSII for safe handling of cutouts/holes?
-preprocess_gds = False
+settings['preprocess_gds'] = False
 
 # merge via polygons with distance less than .. microns, set to 0 to disable via merging.
-merge_polygon_size = 0
+settings['merge_polygon_size'] = 0
 
 
 # get path for this simulation file
@@ -2833,31 +2843,32 @@ script_path = utilities.get_script_path(__file__)
 # use script filename as model basename
 model_basename = utilities.get_basename(__file__)
 # set and create directory for simulation output
-sim_path = utilities.create_sim_path (script_path,model_basename)
+sim_path = utilities.create_sim_path(script_path, model_basename)
 print('Simulation data directory: ', sim_path)
+
 # change current path to model script path
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # ======================== simulation settings ================================
 
-unit   = 1e-6  # geometry is in microns
-margin = 50    # distance in microns from GDSII geometry boundary to simulation boundary
+settings['unit']   = 1e-6  # geometry is in microns
+settings['margin'] = 50    # distance in microns from GDSII geometry boundary to simulation boundary
 
-fstart =  0e9
-fstop  = 110e9
-numfreq = 401
+settings['fstart']   = 0e9
+settings['fstop']    = 110e9
+settings['numfreq']  = 401
 
-refined_cellsize = 1  # mesh cell size in conductor region
+settings['refined_cellsize'] = 2  # mesh cell size in conductor region
 
 # choices for boundary:
 # 'PEC' : perfect electric conductor (default)
 # 'PMC' : perfect magnetic conductor, useful for symmetries
 # 'MUR' : simple MUR absorbing boundary conditions
 # 'PML_8' : PML absorbing boundary conditions
-Boundaries = ['PEC', 'PEC', 'PEC', 'PEC', 'PEC', 'PEC']
+settings['Boundaries'] = ['PEC', 'PEC', 'PEC', 'PEC', 'PEC', 'PEC']
 
-cells_per_wavelength = 20   # how many mesh cells per wavelength, must be 10 or more
-energy_limit = -40          # end criteria for residual energy (dB)
+settings['cells_per_wavelength'] = 20   # how many mesh cells per wavelength, must be 10 or more
+settings['energy_limit'] = -40          # end criteria for residual energy (dB)
 
 # port configuration, port geometry is read from GDSII file on the specified layer
 simulation_ports = simulation_setup.all_simulation_ports()
@@ -2883,7 +2894,7 @@ simulation_ports.add_port(simulation_setup.simulation_port(portnumber=2,
 # ======================== simulation ================================
 
 # get technology stackup data
-materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate (XML_filename)
+materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate(XML_filename)
 # get list of layers from technology
 layernumbers = metals_list.getlayernumbers()
 # we must also read the layers where we added ports, these are not included in technology layers
@@ -2892,54 +2903,50 @@ layernumbers.extend(simulation_ports.portlayers)
 # read geometries from GDSII, only purpose 0
 allpolygons = gds_reader.read_gds(gds_filename,
                                   layernumbers,
-                                  purposelist=[0],
+                                  purposelist=settings['purpose'],
                                   metals_list=metals_list,
-                                  preprocess=preprocess_gds,
-                                  merge_polygon_size=merge_polygon_size)
+                                  preprocess=settings['preprocess_gds'],
+                                  merge_polygon_size=settings['merge_polygon_size'],
+                                  cellname=cellname)
 
-# calculate maximum cellsize from wavelength in dielectric
-wavelength_air = 3e8/fstop / unit
-max_cellsize = (wavelength_air)/(np.sqrt(materials_list.eps_max)*cells_per_wavelength)
+
+########### create model, run and post-process ###########
+
+settings['simulation_ports'] = simulation_ports
+settings['materials_list'] = materials_list
+settings['dielectrics_list'] = dielectrics_list
+settings['metals_list'] = metals_list
+settings['layernumbers'] = layernumbers
+settings['allpolygons'] = allpolygons
+settings['sim_path'] = sim_path
+settings['model_basename'] = model_basename
 
 # define excitation and stop criteria and boundaries
-FDTD = openEMS(EndCriteria=np.exp(energy_limit/10 * np.log(10)))
-FDTD.SetGaussExcite( (fstart+fstop)/2, (fstop-fstart)/2 )
-FDTD.SetBoundaryCond( Boundaries )
+FDTD = openEMS(EndCriteria=np.exp(settings['energy_limit']/10 * np.log(10)))
+FDTD.SetGaussExcite((settings['fstart'] + settings['fstop'])/2,
+                    (settings['fstop'] - settings['fstart'])/2)
+FDTD.SetBoundaryCond(settings['Boundaries'])
 
 
 ########### create model, run and post-process ###########
 
 # run all port excitations, one after another
-
 for port in simulation_ports.ports:
-    simulation_setup.setupSimulation   ([port.portnumber],
-                                        simulation_ports,
-                                        FDTD,
-                                        materials_list,
-                                        dielectrics_list,
-                                        metals_list,
-                                        allpolygons,
-                                        max_cellsize,
-                                        refined_cellsize,
-                                        margin,
-                                        unit,
-                                        xy_mesh_function=util_meshlines.create_xy_mesh_from_polygons)
+    settings['excite_portnumbers'] = [port.portnumber]
 
-    simulation_setup.runSimulation  ([port.portnumber],
-                                        FDTD,
-                                        sim_path,
-                                        model_basename,
-                                        preview_only,
-                                        postprocess_only)
+    # prepare model from GDSII data
+    simulation_setup.setupSimulation(FDTD=FDTD, settings=settings)  # must use named parameters when using settings dict!
+
+    # preview model and start simulation
+    simulation_setup.runSimulation(FDTD=FDTD, settings=settings)    # must use named parameters when using settings dict!
 
 
 # Initialize an empty matrix for S-parameters
 num_ports = simulation_ports.portcount
-s_params = np.empty((num_ports, num_ports, numfreq), dtype=object)
+s_params = np.empty((num_ports, num_ports, settings['numfreq']), dtype=object)
 
-# Define frequency resolution. Due to FFT from Empire time domain results,
-# this is postprocessing and we can change it again at any time.
-f = np.linspace(fstart,fstop,numfreq)
+# Define frequency resolution (postprocessing)
+f = np.linspace(settings['fstart'], settings['fstop'], settings['numfreq'])
 
 # Populate the S-parameter matrix with simulation results
 for i in range(1, num_ports + 1):
@@ -3181,6 +3188,8 @@ void MainWindow::on_actionOpen_Python_Model_triggered()
         return;
 
     loadPythonModel(fileName);
+    addRecentPythonModel(fileName);
+    setStateSaved();
 }
 
 /*!*******************************************************************************************************************
@@ -3642,3 +3651,202 @@ void MainWindow::updateSubLayerNamesAutoCheck()
     if (hasSubstrate && hasPorts)
         m_ui->cbSubLayerNames->setChecked(true);
 }
+
+/*!*******************************************************************************************************************
+ * \brief Returns the list of recently opened Python model files.
+ *
+ * Retrieves the stored list of Python model file paths from the preferences /
+ * settings storage used by the application.
+ *
+ * \return List of file paths ordered from most recent to least recent.
+ **********************************************************************************************************************/
+QStringList MainWindow::recentPythonModels() const
+{
+    const QVariant v = m_preferences.value("RECENT_PYTHON_MODELS");
+    if (v.canConvert<QStringList>())
+        return v.toStringList();
+    if (v.type() == QVariant::String)
+        return QStringList{ v.toString() };
+    return {};
+}
+
+/*!*******************************************************************************************************************
+ * \brief Stores the list of recently opened Python model files.
+ *
+ * Writes \p list into the preferences / settings storage used by the
+ * application. The list is expected to be ordered from most recent to least
+ * recent.
+ *
+ * \param list List of Python model file paths.
+ **********************************************************************************************************************/
+void MainWindow::setRecentPythonModels(const QStringList& list)
+{
+    m_preferences["RECENT_PYTHON_MODELS"] = list;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Initializes the "Recent" menu for Python model files.
+ *
+ * Locates (or creates) the "Recent" submenu under File, creates up to five
+ * placeholder actions, connects them to the open-recent handler and populates
+ * the menu based on the stored list of recently opened Python model files.
+ **********************************************************************************************************************/
+void MainWindow::initRecentMenu()
+{
+    m_menuRecent = nullptr;
+
+    if (m_ui->menuRecent) {
+        m_menuRecent = m_ui->menuRecent;
+    } else if (m_ui->menuFile) {
+        m_menuRecent = new QMenu(tr("Recent"), m_ui->menuFile);
+        m_menuRecent->setObjectName("menuRecent");
+
+        QAction* openAct = m_ui->actionOpen_Python_Model;
+        if (openAct) {
+            m_ui->menuFile->insertMenu(openAct, m_menuRecent);
+        } else {
+            m_ui->menuFile->addMenu(m_menuRecent);
+        }
+    }
+
+    if (!m_menuRecent)
+        return;
+
+    m_recentModelActions.clear();
+    m_menuRecent->clear();
+
+    for (int i = 0; i < kMaxRecentPythonModels; ++i) {
+        QAction* a = new QAction(this);
+        a->setVisible(false);
+        connect(a, &QAction::triggered, this, &MainWindow::onOpenRecentPythonModel);
+        m_menuRecent->addAction(a);
+        m_recentModelActions.push_back(a);
+    }
+
+    m_menuRecent->addSeparator();
+    QAction* clearAct = m_menuRecent->addAction(tr("Clear"));
+    connect(clearAct, &QAction::triggered, this, [this](){
+        setRecentPythonModels({});
+        updateRecentMenu();
+        saveSettings();
+    });
+
+    updateRecentMenu();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Updates the "Recent" menu entries for Python model files.
+ *
+ * Reads the stored list of recently opened Python model files, sanitizes it
+ * (keeps only unique existing *.py files) and updates the corresponding menu
+ * actions (text, tooltip and action data). The menu is disabled when the list
+ * is empty.
+ **********************************************************************************************************************/
+void MainWindow::updateRecentMenu()
+{
+    if (!m_menuRecent)
+        return;
+
+    QStringList files = recentPythonModels();
+
+    QStringList cleaned;
+    cleaned.reserve(files.size());
+
+    for (const QString& p : files) {
+        const QString path = QDir::fromNativeSeparators(p.trimmed());
+        if (path.isEmpty())
+            continue;
+        if (!path.endsWith(".py", Qt::CaseInsensitive))
+            continue;
+        if (!QFileInfo::exists(path))
+            continue;
+        if (!cleaned.contains(path))
+            cleaned << path;
+        if (cleaned.size() >= kMaxRecentPythonModels)
+            break;
+    }
+
+    if (cleaned != files) {
+        setRecentPythonModels(cleaned);
+    }
+
+    const int n = cleaned.size();
+    for (int i = 0; i < m_recentModelActions.size(); ++i) {
+        QAction* a = m_recentModelActions[i];
+        if (i < n) {
+            const QString filePath = cleaned.at(i);
+            const QString shown = QDir::toNativeSeparators(filePath);
+
+            a->setText(QString("&%1  %2").arg(i + 1).arg(shown));
+            a->setToolTip(shown);
+            a->setData(filePath);
+            a->setVisible(true);
+        } else {
+            a->setVisible(false);
+        }
+    }
+
+    m_menuRecent->setEnabled(n > 0);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Adds a Python model file to the recent-files list.
+ *
+ * Prepends \p filePath to the recent list, removes duplicates, enforces the
+ * maximum number of entries and refreshes the "Recent" menu. Non-Python files
+ * are ignored.
+ *
+ * \param filePath Absolute path to the Python model file (*.py).
+ **********************************************************************************************************************/
+void MainWindow::addRecentPythonModel(const QString& filePath)
+{
+    QString path = QDir::fromNativeSeparators(filePath.trimmed());
+    if (path.isEmpty())
+        return;
+
+    if (!path.endsWith(".py", Qt::CaseInsensitive))
+        return;
+
+    QStringList files = recentPythonModels();
+    files.removeAll(path);
+    files.prepend(path);
+
+    while (files.size() > kMaxRecentPythonModels)
+        files.removeLast();
+
+    setRecentPythonModels(files);
+    updateRecentMenu();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Opens a Python model selected from the "Recent" menu.
+ *
+ * Triggered by one of the recent-file actions. Loads the model referenced by
+ * the triggering action, updates the recent list order and removes stale
+ * entries if the file no longer exists.
+ **********************************************************************************************************************/
+void MainWindow::onOpenRecentPythonModel()
+{
+    QAction* a = qobject_cast<QAction*>(sender());
+    if (!a)
+        return;
+
+    const QString filePath = a->data().toString();
+    if (filePath.isEmpty())
+        return;
+
+    if (!QFileInfo::exists(filePath)) {
+        QStringList files = recentPythonModels();
+        files.removeAll(filePath);
+        setRecentPythonModels(files);
+        updateRecentMenu();
+        saveSettings();
+        error(tr("File not found: %1").arg(QDir::toNativeSeparators(filePath)));
+        return;
+    }
+
+    loadPythonModel(filePath);
+    addRecentPythonModel(filePath);
+    saveSettings();
+}
+

@@ -144,7 +144,7 @@ When you start EMStudio, you first need to configure some path settings using **
 - **Python Path**  
   Path to the Python interpreter used for the **openEMS** workflow. 
   If you installed openEMS and the IHP workflow files into 
-  a venv named "openEMS" located in your home directory "~/venv/openEMS", the python interpreter would be "~/venv/openEMS/bin/python"
+  a venv named "openEMS" located in your home directory "home/venv/openEMS", the python interpreter would be "home/venv/openEMS/bin/python"
 
 - **OPENEMS_INSTALL_PATH**  
   This is where you installed openEMS. If you built openEMS according to the defaults, this is "~/opt/openEMS" in your user home directory.
@@ -152,7 +152,7 @@ When you start EMStudio, you first need to configure some path settings using **
 - **PALACE_WSL_PYTHON**  
   Path to the Python interpreter used for the **Palace** workflow.
   If you installed the gds2palace workflow files into 
-  a venv named "palace" located in "~/venv/palace", the python interpreter would be "~/venv/palace/bin/python".
+  a venv named "palace" located in "home/venv/palace", the python interpreter would be "home/venv/palace/bin/python".
   If you don't want to use Palace, you can leave this empty.
 
 - **PALACE_RUN_MODE**  

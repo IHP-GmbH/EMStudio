@@ -152,7 +152,7 @@ When you start EMStudio, you first need to configure some path settings using **
 - **PALACE_WSL_PYTHON**  
   Path to the Python interpreter used for the **Palace** workflow.
   If you installed the gds2palace workflow files into 
-  a venv named "palace" located in "~\venv\palace", the python interpreter would be "~/venv/palace/bin/python".
+  a venv named "palace" located in "home/venv/palace", the python interpreter would be "home/venv/palace/bin/python".
   If you don't want to use Palace, you can leave this empty.
 
 - **PALACE_RUN_MODE**  

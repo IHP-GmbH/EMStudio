@@ -43,6 +43,74 @@ It provides an integrated workflow for:
 
 ---
 
+# Installation
+
+## Pre-built binaries (Windows)
+
+A ready-to-use **Windows installer** is produced by the CI pipeline.
+
+You can download it from **GitHub → Actions → Workflows → latest successful run**.  
+In the workflow artifacts (job `build-windows`) you will find the Windows installer.
+
+> Linux users typically build EMStudio from source (see below).
+
+---
+
+## Build from source (Linux)
+
+```bash
+cd /path/to/EMStudio
+qmake EMStudio.pro
+make -j$(nproc)
+./EMStudio
+```
+
+---
+
+## Build from source (Windows / MSVC)
+
+```cmd
+cd \path\to\EMStudio
+qmake EMStudio.pro
+nmake
+.\release\EMStudio.exe
+```
+
+---
+
+## External solvers (required for full functionality)
+
+EMStudio integrates with external electromagnetic solvers.  
+For full functionality, these tools must be installed separately by the user.
+
+Please ensure the solvers are available in your `PATH`, or configure their locations explicitly in the EMStudio settings.
+
+### openEMS
+
+EC-FDTD electromagnetic solver.
+
+- Project page: https://www.openems.de/
+- Documentation: https://docs.openems.de/
+- Source code & build instructions: https://github.com/thliebig/openEMS-Project
+
+### Palace
+
+Parallel finite-element electromagnetic solver.
+
+- Project page & documentation: https://awslabs.github.io/palace/
+- Source code: https://github.com/awslabs/palace
+
+---
+
+## Build from command line (Windows / MSVC)
+
+```cmd
+qmake EMStudio.pro
+nmake release\EMStudio.exe
+```
+
+---
+
 # Running EMStudio (Standalone)
 
 You can launch **EMStudio.exe** directly or via terminal:
@@ -187,7 +255,7 @@ When you start from scratch, the settings grid is almost empty. You can now load
 For the meaning of settings, please refer to the documentation of the IHP openEMS workflow:
 https://github.com/VolkerMuehlhaus/openems_ihp_sg13g2/blob/main/doc/Using_OpenEMS_Python_with_IHP_SG13G2_v2.pdf
 and IHP Palace workflow gds2palace:
-https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/blob/main/doc/gds2palace_workflow_October_2025.pdf 
+https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/blob/main/doc/gds2palace_workflow_userguide.pdf
 
 After loading the GDSII file, EMStudio uses that information in the background to prepare some other configuration tabs, so please use the tabs in "top down" order as shown in the "Run Control" window.
 
@@ -229,45 +297,6 @@ When you start simulation, the simulation model script will be executed, using t
 
 <img src="./doc/png/simulate2.png" alt="simulate" width="700">
 
-
----
-
-# Configuration Files
-
-EMStudio uses JSON-based configuration files (`*.json`) containing:
-
-- GDS file path  
-- Top cell  
-- Frequency range  
-- Mesh settings  
-- Substrate definition  
-- Port definitions  
-- Output directory  
-- Python script path  
-
-These files can be created or edited in EMStudio and reused for automated runs.
-
----
-
-# Building EMStudio
-
-## Build from command line (Linux)
-
-```bash
-cd /path/to/EMStudio
-qmake EMStudio.pro
-make -j$(nproc)
-./EMStudio
-```
-
----
-
-## Build from command line (Windows / MSVC)
-
-```cmd
-qmake EMStudio.pro
-nmake release\EMStudio.exe
-```
 
 ---
 

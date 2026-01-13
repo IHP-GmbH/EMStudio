@@ -164,7 +164,8 @@ private:
     void                            applySubLayerNamesToPorts(bool toNames);
 
     void                            updateSubLayerNamesAutoCheck();
-    void                            rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings);
+    void                            rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings,
+                                                                        const QMap<QString, QString>& tips);
 
     bool                            isStateChanged() const;
 

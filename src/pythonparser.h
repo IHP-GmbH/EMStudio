@@ -38,8 +38,13 @@ public:
         QString                     gdsFilename;
         QString                     xmlFilename;
 
+        QMap<QString, QString>      settingTips;
+
         QString getGdsFilename() const { return gdsFilename; }
         QString getXmlFilename() const { return xmlFilename; }
+
+        QString getSettingTip(const QString &key) const { return settingTips.value(key); }
+        bool hasSettingTip(const QString &key) const { return settingTips.contains(key); }
     };
 
     static Result parseSettings(const QString &filePath);

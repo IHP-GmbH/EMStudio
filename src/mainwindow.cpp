@@ -2962,7 +2962,7 @@ print('Created S-parameter output file at ', snp_name)
 
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
     if (parseResult.ok)
-        rebuildSimulationSettingsFromPalace(parseResult.settings);
+        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips);
 
     return script;
 }
@@ -3120,7 +3120,7 @@ if start_simulation:
 
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
     if (parseResult.ok)
-        rebuildSimulationSettingsFromPalace(parseResult.settings);
+        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips);
 
     return script;
 }
@@ -3256,7 +3256,7 @@ void MainWindow::loadPythonModel(const QString &fileName)
     if (idxSim >= 0 && m_ui->cbxSimTool->isEnabled())
         m_ui->cbxSimTool->setCurrentIndex(idxSim);
 
-    rebuildSimulationSettingsFromPalace(res.settings);
+    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips);
 
     const QDir modelDir(fi.absolutePath());
 
@@ -3325,7 +3325,8 @@ void MainWindow::loadPythonModel(const QString &fileName)
  *
  * \param settings  Map of key–value pairs extracted from the Palace Python model.
  **********************************************************************************************************************/
-void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings)
+void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings,
+                                                     const QMap<QString, QString>& tips)
 {
     if (!m_simSettingsGroup || !m_variantManager)
         return;
@@ -3516,6 +3517,12 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         if (!prop)
             continue;
 
+        auto itTip = tips.constFind(key);
+        if (itTip != tips.constEnd()) {
+            const QString tip = itTip.value();
+            prop->setToolTip(tip);
+        }
+
         if (propType == QVariant::Double) {
             prop->setAttribute(QLatin1String("decimals"), decimals);
             prop->setAttribute(QLatin1String("minimum"), -std::numeric_limits<double>::max());
@@ -3589,7 +3596,7 @@ bool MainWindow::applyPythonScriptFromEditor()
         return false;
     }
 
-    rebuildSimulationSettingsFromPalace(res.settings);
+    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips);
 
     QFileInfo fi(filePath);
     const QDir modelDir(fi.absolutePath());

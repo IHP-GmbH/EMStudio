@@ -1,8 +1,3 @@
-#include "pythonparser.h"
-
-#include <QDir>
-#include <QFile>
-#include <QFileInfo>
 /************************************************************************
  *  EMStudio – GUI tool for setting up, running and analysing
  *  electromagnetic simulations with IHP PDKs.
@@ -22,6 +17,12 @@
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
+
+#include "pythonparser.h"
+
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 
 #include <QRegularExpression>
 
@@ -52,6 +53,19 @@ PythonParser::Result parseSettingsImpl(const QString &content,
         R"(^\s*(\w+)\s*\[\s*['"]([^'"]+)['"]\s*\]\s*=\s*(.+)$)",
         QRegularExpression::MultilineOption);
 
+    // Tips (Doxygen-like) in Python comments:
+    //   # @param settings.unit float
+    //   # @brief ...
+    //   # @details ...
+    //   # @default ...
+    //
+    // Any subset/order of @brief/@details/@default is allowed after @param.
+    QRegularExpression paramRe(R"(^\s*#\s*@param\s+settings\.([A-Za-z_]\w*)\b.*$)");
+    QRegularExpression briefRe(R"(^\s*#\s*@brief\s*(.*)$)");
+    QRegularExpression detailsRe(R"(^\s*#\s*@details\s*(.*)$)");
+    QRegularExpression defaultRe(R"(^\s*#\s*@default\s*(.*)$)");
+
+    // ---------------- parse settings assignments ----------------
     auto it = re.globalMatch(content);
     while (it.hasNext())
     {
@@ -112,6 +126,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
         result.settings.insert(key, value);
     }
 
+    // ---------------- parse filenames (gds_filename / XML_filename) ----------------
     QRegularExpression fileRe(
         R"(^\s*(gds_filename|XML_filename)\s*=\s*(.+)$)",
         QRegularExpression::MultilineOption);
@@ -154,6 +169,136 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             result.xmlFilename = valueExpr;
     }
 
+    // ---------------- parse doc blocks into settingTips ----------------
+    QString currentKey;
+    QString brief, details, deflt;
+
+    enum class LastSection { None, Brief, Details, Default };
+    LastSection last = LastSection::None;
+
+    auto commit = [&]()
+    {
+        if (currentKey.isEmpty())
+            return;
+
+        QString tip;
+        if (!brief.trimmed().isEmpty())
+            tip += brief.trimmed();
+
+        if (!details.trimmed().isEmpty())
+        {
+            if (!tip.isEmpty())
+                tip += "\n\n";
+            tip += details.trimmed();
+        }
+
+        if (!deflt.trimmed().isEmpty())
+        {
+            if (!tip.isEmpty())
+                tip += "\n\n";
+            tip += QStringLiteral("Default: %1").arg(deflt.trimmed());
+        }
+
+        if (!tip.isEmpty())
+            result.settingTips.insert(currentKey, tip);
+
+        currentKey.clear();
+        brief.clear();
+        details.clear();
+        deflt.clear();
+        last = LastSection::None;
+    };
+
+    const QStringList lines = content.split('\n');
+    for (const QString &line : lines)
+    {
+        const QString t = line.trimmed();
+
+        if (t.startsWith('#'))
+        {
+            // @param starts a new block
+            QRegularExpressionMatch pm = paramRe.match(line);
+            if (pm.hasMatch())
+            {
+                commit();
+                currentKey = pm.captured(1).trimmed();
+                last = LastSection::None;
+                continue;
+            }
+
+            if (currentKey.isEmpty())
+                continue; // ignore doc lines until @param appears
+
+            QRegularExpressionMatch bm = briefRe.match(line);
+            if (bm.hasMatch())
+            {
+                brief = bm.captured(1).trimmed();
+                last = LastSection::Brief;
+                continue;
+            }
+
+            QRegularExpressionMatch dm = detailsRe.match(line);
+            if (dm.hasMatch())
+            {
+                details = dm.captured(1).trimmed();
+                last = LastSection::Details;
+                continue;
+            }
+
+            QRegularExpressionMatch dfm = defaultRe.match(line);
+            if (dfm.hasMatch())
+            {
+                deflt = dfm.captured(1).trimmed();
+                last = LastSection::Default;
+                continue;
+            }
+
+            QString c = t.mid(1).trimmed();
+            if (c.startsWith('@'))
+                continue;
+
+            if (last == LastSection::Details && !details.isEmpty())
+            {
+                details += "\n" + c;
+            }
+            else if (last == LastSection::Brief && !brief.isEmpty())
+            {
+                brief += "\n" + c;
+            }
+            else if (last == LastSection::Default && !deflt.isEmpty())
+            {
+                deflt += " " + c;
+            }
+            else if (!details.isEmpty())
+            {
+                details += "\n" + c;
+                last = LastSection::Details;
+            }
+            else if (!brief.isEmpty())
+            {
+                brief += "\n" + c;
+                last = LastSection::Brief;
+            }
+
+            continue;
+        }
+
+        // Allow empty lines inside doc blocks (do not commit on empty).
+        if (!currentKey.isEmpty() && !t.isEmpty())
+            commit();
+    }
+
+    commit(); // flush at EOF
+
+    // Keep only tips for keys that actually exist in settings
+    for (auto itTips = result.settingTips.begin(); itTips != result.settingTips.end(); )
+    {
+        if (!result.settings.contains(itTips.key()))
+            itTips = result.settingTips.erase(itTips);
+        else
+            ++itTips;
+    }
+
     if (!scriptDir.isEmpty() && !baseName.isEmpty())
         result.simPath = QDir(scriptDir).filePath(baseName);
 
@@ -171,7 +316,8 @@ PythonParser::Result parseSettingsImpl(const QString &content,
 
     return result;
 }
-}
+
+} // close namespce
 
 /*!*******************************************************************************************************************
  * \brief Try to parse "settings-like" key/value pairs from Palace Python model file.

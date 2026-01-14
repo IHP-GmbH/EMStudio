@@ -16,8 +16,8 @@ SetupIconFile={#AppIco}
 UninstallDisplayIcon={app}\{#AppIco}
 
 [Files]
-Source: "..\build\dist\*"; DestDir: "{app}"; Flags: recursesubdirs
-Source: "{#AppIco}"; DestDir: "{app}"
+Source: "..\build\dist\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+Source: "{#AppIco}"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\EMStudio"; Filename: "{app}\{#AppExe}"; IconFilename: "{app}\{#AppIco}"

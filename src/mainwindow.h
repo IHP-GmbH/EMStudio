@@ -84,6 +84,7 @@ public:
 
     void                            setTopCell(const QString &cellName);
     void                            setGdsFile(const QString &filePath);
+    void                            tryAutoLoadRecentPythonForTopCell();
     void                            loadPythonModel(const QString &fileName);
 
 private slots:
@@ -109,9 +110,6 @@ private slots:
 
     void                            on_actionPrefernces_triggered();
 
-    void                            on_btnRunDir_clicked();
-    void                            on_txtRunDir_textEdited(const QString &arg1);
-    void                            on_txtRunDir_textChanged(const QString &arg1);
     void                            on_btnRunPythonScript_clicked();
     void                            on_txtRunPythonScript_textEdited(const QString &arg1);
     void                            on_txtRunPythonScript_textChanged(const QString &arg1);

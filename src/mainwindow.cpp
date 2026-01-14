@@ -908,9 +908,6 @@ void MainWindow::updateSimulationSettings()
         }
     }
 
-    if (m_simSettings.contains("RunDir"))
-        m_ui->txtRunDir->setText(m_simSettings["RunDir"].toString());
-
     if (m_simSettings.contains("GdsFile"))
         m_ui->txtGdsFile->setText(m_simSettings["GdsFile"].toString());
 
@@ -1142,49 +1139,6 @@ void MainWindow::on_txtGdsFile_textChanged(const QString &arg1)
 }
 
 /*!*******************************************************************************************************************
- * \brief Opens a directory dialog for selecting the run output directory and updates simulation settings.
- **********************************************************************************************************************/
-void MainWindow::on_btnRunDir_clicked()
-{
-    QString defaultDir = QDir::homePath();
-
-    if (m_simSettings.contains("RunDir")) {
-        QString dirPath = m_simSettings["RunDir"].toString();
-        if (QDir(dirPath).exists()) {
-            defaultDir = dirPath;
-        }
-    }
-
-    QString dirPath = QFileDialog::getExistingDirectory(this, tr("Select Run Directory"), defaultDir,
-                                                        QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
-    if (!dirPath.isEmpty()) {
-        m_ui->txtRunDir->setText(dirPath);
-        m_simSettings["RunDir"] = dirPath;
-        setStateChanged();
-    }
-}
-
-/*!*******************************************************************************************************************
- * \brief Triggered when the run directory text is edited. Updates text color and simulation state.
- * \param arg1 The newly typed path.
- **********************************************************************************************************************/
-void MainWindow::on_txtRunDir_textEdited(const QString &arg1)
-{
-    setLineEditPalette(m_ui->txtRunDir, arg1);
-    setStateChanged();
-}
-
-/*!*******************************************************************************************************************
- * \brief Triggered when the run directory text is changed. Updates path highlighting and simulation state.
- * \param arg1 The new directory path.
- **********************************************************************************************************************/
-void MainWindow::on_txtRunDir_textChanged(const QString &arg1)
-{
-    setLineEditPalette(m_ui->txtRunDir, arg1);
-    setStateChanged();
-}
-
-/*!*******************************************************************************************************************
  * \brief Opens a file dialog to select a Python script and loads it into the script editor.
  * Also updates the simulation settings accordingly.
  **********************************************************************************************************************/
@@ -1325,17 +1279,16 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
                 continue;
 
             QRegularExpression reVar(
-                QString("^\\s*%1\\s*=.*$")
+                QString(R"(^(\s*%1\s*=\s*)([^#\n]*?)(\s*#.*)?$)")
                     .arg(QRegularExpression::escape(key)),
                 QRegularExpression::MultilineOption);
-            script.replace(reVar, QString("%1 = %2").arg(key, strValue));
+            script.replace(reVar, QStringLiteral("\\1%1\\3").arg(strValue));
 
             QRegularExpression reDict(
-                QString("^\\s*(\\w+)\\s*\\[\\s*['\"]%1['\"]\\s*\\]\\s*=.*$")
+                QString(R"(^(\s*(\w+)\s*\[\s*['"]%1['"]\s*\]\s*=\s*)([^#\n]*?)(\s*#.*)?$)")
                     .arg(QRegularExpression::escape(key)),
                 QRegularExpression::MultilineOption);
-            script.replace(reDict,
-                           QString("\\1['%1'] = %2").arg(key, strValue));
+            script.replace(reDict, QStringLiteral("\\1%1\\4").arg(strValue));
         }
 
         QStringList bndKeys = {"X-", "X+", "Y-", "Y+", "Z-", "Z+"};
@@ -1383,13 +1336,12 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
             else
                 continue;
 
-            QString pattern = QString(
-                                  R"(^\s*(\w+)\s*\[\s*['"]%1['"]\s*\]\s*=\s*.*$)"
-                                  ).arg(QRegularExpression::escape(key));
+            QRegularExpression re(
+                QString(R"(^(\s*\w+\s*\[\s*['"]%1['"]\s*\]\s*=\s*)([^#\n]*?)(\s*#.*)?$)")
+                    .arg(QRegularExpression::escape(key)),
+                QRegularExpression::MultilineOption);
 
-            QRegularExpression re(pattern, QRegularExpression::MultilineOption);
-
-            script.replace(re, QString("\\1['%1'] = %2").arg(key, strValue));
+            script.replace(re, QStringLiteral("\\1%1\\3").arg(strValue));
         }
 
         if (m_simSettings.contains("Boundaries")) {
@@ -1413,10 +1365,6 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
 
 #ifdef Q_OS_WIN
         const QString simKey = currentSimToolKey().toLower();
-
-        // Only convert to WSL path when:
-        //  - we are running Palace
-        //  - Palace is executed inside WSL (wsl.exe is present)
         if (simKey == QLatin1String("palace")) {
             if (!QStandardPaths::findExecutable(QStringLiteral("wsl")).isEmpty()) {
                 p = toWslPath(p);
@@ -1425,7 +1373,6 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
 #else
         Q_UNUSED(nativePath);
 #endif
-
         return p;
     };
 
@@ -1435,8 +1382,7 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
 
         QRegularExpression re("^gds_filename\\s*=.*$",
                               QRegularExpression::MultilineOption);
-        script.replace(re,
-                       QStringLiteral("gds_filename = \"%1\"").arg(gdsPath));
+        script.replace(re, QStringLiteral("gds_filename = \"%1\"").arg(gdsPath));
     }
 
     if (m_simSettings.contains("SubstrateFile")) {
@@ -1445,14 +1391,12 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
 
         QRegularExpression re("^XML_filename\\s*=.*$",
                               QRegularExpression::MultilineOption);
-        script.replace(re,
-                       QStringLiteral("XML_filename = \"%1\"").arg(xmlPath));
+        script.replace(re, QStringLiteral("XML_filename = \"%1\"").arg(xmlPath));
     }
 
     QRegularExpression portBlock(
         R"(simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\n(?:.|\n)*?(?=#[^\n]*simulation\s*={3,}))",
-        QRegularExpression::MultilineOption
-        );
+        QRegularExpression::MultilineOption);
 
     if (m_ui->tblPorts->rowCount() == 0) {
         rebuildLayerMapping();
@@ -1519,13 +1463,17 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         }
 
         const QString fromName = toLayerName(fromVal);
-        if (!fromName.isEmpty()) {
-            argsList << QStringLiteral("from_layername=%1").arg(pyQuote(fromName));
-        }
+        const QString toName   = toLayerName(toVal);
 
-        const QString toName = toLayerName(toVal);
-        if (!toName.isEmpty()) {
+        if (!fromName.isEmpty() && !toName.isEmpty()) {
+            argsList << QStringLiteral("from_layername=%1").arg(pyQuote(fromName));
             argsList << QStringLiteral("to_layername=%1").arg(pyQuote(toName));
+        }
+        else if (!fromName.isEmpty()) {
+            argsList << QStringLiteral("target_layername=%1").arg(pyQuote(fromName));
+        }
+        else if (!toName.isEmpty()) {
+            argsList << QStringLiteral("target_layername=%1").arg(pyQuote(toName));
         }
 
         argsList << QStringLiteral("direction=%1").arg(pyQuote(dirVal));
@@ -1544,8 +1492,7 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
     } else if (m_ui->tblPorts->rowCount() > 0) {
         QRegularExpression simMarker(
             R"(#[^\n]*simulation\s*={3,})",
-            QRegularExpression::MultilineOption
-            );
+            QRegularExpression::MultilineOption);
         QRegularExpressionMatch simMatch = simMarker.match(script);
 
         const QString injected = QStringLiteral("\n\n") + portCode + QStringLiteral("\n");
@@ -1964,25 +1911,28 @@ void MainWindow::runOpenEMS()
     m_simProcess->setProcessEnvironment(env);
     m_simProcess->setWorkingDirectory(runDir);
 
+    auto appendLog = [this](const QByteArray& data)
+    {
+        if (data.isEmpty())
+            return;
+
+        QSignalBlocker blocker(m_ui->editSimulationLog);
+        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+        m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
+        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+    };
+
+
     connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [=]() {
-        const QByteArray data = m_simProcess->readAllStandardOutput();
-        if (!data.isEmpty()) {
-            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-            m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
-            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-        }
+        appendLog(m_simProcess->readAllStandardOutput());
     });
     connect(m_simProcess, &QProcess::readyReadStandardError, this, [=]() {
-        const QByteArray data = m_simProcess->readAllStandardError();
-        if (!data.isEmpty()) {
-            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-            m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
-            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-        }
+        appendLog(m_simProcess->readAllStandardError());
     });
     connect(m_simProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this, [=](int exitCode, QProcess::ExitStatus) {
                 const QString msg = QString("\n[Simulation finished with exit code %1]\n").arg(exitCode);
+                QSignalBlocker blocker(m_ui->editSimulationLog);
                 m_ui->editSimulationLog->moveCursor(QTextCursor::End);
                 m_ui->editSimulationLog->insertPlainText(msg);
                 m_ui->editSimulationLog->moveCursor(QTextCursor::End);
@@ -2067,7 +2017,6 @@ void MainWindow::runPalace()
         runDir = baseDir.filePath(QStringLiteral("palace_model/%1_data").arg(baseName));
 
         m_simSettings["RunDir"] = runDir;
-        m_ui->txtRunDir->setText(runDir);
     }
 
     QString palaceRoot = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
@@ -2147,30 +2096,29 @@ void MainWindow::runPalace()
     m_simProcess->start(pythonCmd, argsPython);
 #endif
 
+    auto appendLog = [this](const QByteArray& data)
+    {
+        if (data.isEmpty())
+            return;
+
+        QSignalBlocker blocker(m_ui->editSimulationLog);
+        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+        m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
+        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+    };
+
     connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [=]() {
-        const QByteArray data = m_simProcess->readAllStandardOutput();
-        if (!data.isEmpty()) {
-            const QString text = QString::fromUtf8(data);
-            m_palacePythonOutput.append(text);
-            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-            m_ui->editSimulationLog->insertPlainText(text);
-            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-        }
+        appendLog(m_simProcess->readAllStandardOutput());
     });
 
     connect(m_simProcess, &QProcess::readyReadStandardError, this, [=]() {
-        const QByteArray data = m_simProcess->readAllStandardError();
-        if (!data.isEmpty()) {
-            const QString text = QString::fromUtf8(data);
-            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-            m_ui->editSimulationLog->insertPlainText(text);
-            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-        }
+        appendLog(m_simProcess->readAllStandardError());
     });
 
     connect(m_simProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this,
             [=](int exitCode, QProcess::ExitStatus) {
+                QSignalBlocker blocker(m_ui->editSimulationLog);
                 if (m_palacePhase == PalacePhase::PythonModel) {
                     if (exitCode != 0) {
                         const QString msg =
@@ -2208,7 +2156,6 @@ void MainWindow::runPalace()
 #else
                             detectedRunDir = simDirLinux;
 #endif
-
                             m_ui->editSimulationLog->moveCursor(QTextCursor::End);
                             m_ui->editSimulationLog->insertPlainText(
                                 QString("[Detected Palace simulation dir: %1]\n")
@@ -2217,7 +2164,6 @@ void MainWindow::runPalace()
 
                             if (!detectedRunDir.isEmpty()) {
                                 m_simSettings["RunDir"] = detectedRunDir;
-                                m_ui->txtRunDir->setText(detectedRunDir);
                             }
                         }
                     }
@@ -3305,8 +3251,7 @@ void MainWindow::loadPythonModel(const QString &fileName)
             runDir = modelDir.filePath(runDir);
 
         QDir().mkpath(runDir);
-        m_ui->txtRunDir->setText(runDir);
-        m_simSettings["RunDir"] = runDir;
+        m_simSettings["RunDir"] = fi.absolutePath();;
     }
 
     setStateSaved();
@@ -3627,7 +3572,6 @@ bool MainWindow::applyPythonScriptFromEditor()
             runDir = modelDir.filePath(runDir);
 
         QDir().mkpath(runDir);
-        m_ui->txtRunDir->setText(runDir);
         m_simSettings["RunDir"] = runDir;
     }
 
@@ -3857,3 +3801,56 @@ void MainWindow::onOpenRecentPythonModel()
     saveSettings();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Tries to auto-load a recent Python script matching the currently selected top cell.
+ *
+ * This is intended for KLayout integration workflow:
+ * - KLayout starts EMStudio with -gdsfile and -topcell
+ * - after setGdsFile()/setTopCell() we try to find a recent Python script named "<topcell>.py"
+ *   (by comparing QFileInfo(path).completeBaseName() with the top cell name)
+ * - if found, the script is loaded into the editor and applied to GUI settings
+ *
+ * The function does nothing if:
+ * - top cell is empty
+ * - no recent python list exists / is empty
+ * - no matching script is found
+ **********************************************************************************************************************/
+void MainWindow::tryAutoLoadRecentPythonForTopCell()
+{
+    if (!m_ui || !m_ui->cbxTopCell)
+        return;
+
+    const QString top = m_ui->cbxTopCell->currentText().trimmed();
+    if (top.isEmpty())
+        return;
+
+    const QStringList recentPy = m_preferences.value(QStringLiteral("RecentPythonScripts")).toStringList();
+    if (recentPy.isEmpty())
+        return;
+
+    QString bestMatch;
+
+    for (const QString &p : recentPy)
+    {
+        if (p.isEmpty())
+            continue;
+
+        QFileInfo fi(p);
+        if (!fi.exists() || !fi.isFile())
+            continue;
+
+        if (fi.completeBaseName().compare(top, Qt::CaseInsensitive) == 0 &&
+            fi.suffix().compare(QStringLiteral("py"), Qt::CaseInsensitive) == 0)
+        {
+            bestMatch = fi.absoluteFilePath();
+            break;
+        }
+    }
+
+    if (bestMatch.isEmpty())
+        return;
+
+    loadPythonScriptToEditor(bestMatch);
+
+    applyPythonScriptFromEditor();
+}

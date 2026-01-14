@@ -163,6 +163,7 @@ int main(int argc, char *argv[])
 
     QTimer::singleShot(1000, [&]() {
         splash.finish(&w);
+        w.tryAutoLoadRecentPythonForTopCell();
         w.show();
     });
 

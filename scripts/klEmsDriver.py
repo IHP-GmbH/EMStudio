@@ -27,21 +27,17 @@ def handler_func():
     topcell_name = cell_view.cell.name
     gdsfile_path = cell_view.filename()
 
-    gds_dir = os.path.dirname(gdsfile_path)
-    json_file = os.path.join(gds_dir, f"{topcell_name}.json")
+    gds_dir = os.path.dirname(gdsfile_path)    
 
     env = os.environ.copy()
     env.pop("PYTHONHOME", None) 
 
     # Build command line arguments
-    if os.path.isfile(json_file):
-        args = [emstudio_path, json_file]
-    else:
-        args = [
-            emstudio_path,
-            "-gdsfile", gdsfile_path,
-            "-topcell", topcell_name
-        ]
+    args = [
+        emstudio_path,
+        "-gdsfile", gdsfile_path,
+        "-topcell", topcell_name
+    ]
 
     # For debugging – show constructed arguments
     #pya.MessageBox.info("Launch Info", f"GDS file: {gdsfile_path}\n\nArguments:\n{' '.join(args)}", pya.MessageBox.Ok)

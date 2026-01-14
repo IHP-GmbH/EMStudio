@@ -53,17 +53,19 @@ PythonParser::Result parseSettingsImpl(const QString &content,
         R"(^\s*(\w+)\s*\[\s*['"]([^'"]+)['"]\s*\]\s*=\s*(.+)$)",
         QRegularExpression::MultilineOption);
 
-    // Tips (Doxygen-like) in Python comments:
-    //   # @param settings.unit float
-    //   # @brief ...
-    //   # @details ...
-    //   # @default ...
-    //
-    // Any subset/order of @brief/@details/@default is allowed after @param.
-    QRegularExpression paramRe(R"(^\s*#\s*@param\s+settings\.([A-Za-z_]\w*)\b.*$)");
-    QRegularExpression briefRe(R"(^\s*#\s*@brief\s*(.*)$)");
+    QRegularExpression fileRe(
+        R"(^\s*(gds_filename|XML_filename)\s*=\s*(.+)$)",
+        QRegularExpression::MultilineOption);
+
+    QRegularExpression paramRe  (R"(^\s*#\s*@param\s+([^\s]+).*$)");
+    QRegularExpression briefRe  (R"(^\s*#\s*@brief\s*(.*)$)");
     QRegularExpression detailsRe(R"(^\s*#\s*@details\s*(.*)$)");
     QRegularExpression defaultRe(R"(^\s*#\s*@default\s*(.*)$)");
+
+    QRegularExpression assignRe(
+        R"(^\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*|\s*\[\s*['"][^'"]+['"]\s*\])*)\s*=\s*(.+)$)");
+
+    QRegularExpression inlineTagRe(R"(#\s*@(\w+)\s*(.*)$)");
 
     // ---------------- parse settings assignments ----------------
     auto it = re.globalMatch(content);
@@ -73,6 +75,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
         const QString key = m.captured(2);
         QString valueExpr = m.captured(3).trimmed();
 
+        // strip trailing inline '#' comments (but keep quoted '#')
         int hashPos = -1;
         bool inSingle = false;
         bool inDouble = false;
@@ -127,10 +130,6 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     }
 
     // ---------------- parse filenames (gds_filename / XML_filename) ----------------
-    QRegularExpression fileRe(
-        R"(^\s*(gds_filename|XML_filename)\s*=\s*(.+)$)",
-        QRegularExpression::MultilineOption);
-
     auto fit = fileRe.globalMatch(content);
     while (fit.hasNext())
     {
@@ -176,6 +175,44 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     enum class LastSection { None, Brief, Details, Default };
     LastSection last = LastSection::None;
 
+    bool pendingDoc = false;
+
+    auto normalizeKey = [](QString k) -> QString
+    {
+        k = k.trimmed();
+
+        if (k.contains('.') && !k.contains('['))
+        {
+            const int dot = k.lastIndexOf('.');
+            if (dot > 0)
+            {
+                const QString lhs = k.left(dot).trimmed();
+                const QString rhs = k.mid(dot + 1).trimmed();
+                if (!lhs.isEmpty() && !rhs.isEmpty())
+                    return QStringLiteral("%1['%2']").arg(lhs, rhs);
+            }
+        }
+
+        return k;
+    };
+
+    auto storeTipForKey = [&](const QString &key, const QString &tipText)
+    {
+        if (key.trimmed().isEmpty() || tipText.trimmed().isEmpty())
+            return;
+
+        result.settingTips.insert(key, tipText);
+
+        QRegularExpression dictKeyRe(R"(^\s*\w+\s*\[\s*['"]([^'"]+)['"]\s*\]\s*$)");
+        QRegularExpressionMatch mm = dictKeyRe.match(key);
+        if (mm.hasMatch())
+        {
+            const QString alias = mm.captured(1).trimmed();
+            if (!alias.isEmpty() && !result.settingTips.contains(alias))
+                result.settingTips.insert(alias, tipText);
+        }
+    };
+
     auto commit = [&]()
     {
         if (currentKey.isEmpty())
@@ -199,14 +236,45 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             tip += QStringLiteral("Default: %1").arg(deflt.trimmed());
         }
 
-        if (!tip.isEmpty())
-            result.settingTips.insert(currentKey, tip);
+        storeTipForKey(currentKey, tip);
 
         currentKey.clear();
         brief.clear();
         details.clear();
         deflt.clear();
         last = LastSection::None;
+        pendingDoc = false;
+    };
+
+    auto applyInlineTag = [&](const QString &line)
+    {
+        QRegularExpressionMatch im = inlineTagRe.match(line);
+        if (!im.hasMatch())
+            return;
+
+        const QString tag = im.captured(1).trimmed().toLower();
+        const QString txt = im.captured(2).trimmed();
+        if (txt.isEmpty())
+            return;
+
+        if (tag == QLatin1String("brief"))
+        {
+            brief = txt;
+            last = LastSection::Brief;
+            pendingDoc = true;
+        }
+        else if (tag == QLatin1String("details"))
+        {
+            details = txt;
+            last = LastSection::Details;
+            pendingDoc = true;
+        }
+        else if (tag == QLatin1String("default"))
+        {
+            deflt = txt;
+            last = LastSection::Default;
+            pendingDoc = true;
+        }
     };
 
     const QStringList lines = content.split('\n');
@@ -214,26 +282,25 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     {
         const QString t = line.trimmed();
 
+        // ---------------- comment lines ----------------
         if (t.startsWith('#'))
         {
-            // @param starts a new block
             QRegularExpressionMatch pm = paramRe.match(line);
             if (pm.hasMatch())
             {
                 commit();
-                currentKey = pm.captured(1).trimmed();
+                currentKey = normalizeKey(pm.captured(1));
+                pendingDoc = true;
                 last = LastSection::None;
                 continue;
             }
-
-            if (currentKey.isEmpty())
-                continue; // ignore doc lines until @param appears
 
             QRegularExpressionMatch bm = briefRe.match(line);
             if (bm.hasMatch())
             {
                 brief = bm.captured(1).trimmed();
                 last = LastSection::Brief;
+                pendingDoc = true;
                 continue;
             }
 
@@ -242,6 +309,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             {
                 details = dm.captured(1).trimmed();
                 last = LastSection::Details;
+                pendingDoc = true;
                 continue;
             }
 
@@ -250,25 +318,24 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             {
                 deflt = dfm.captured(1).trimmed();
                 last = LastSection::Default;
+                pendingDoc = true;
                 continue;
             }
 
+            // Free text continuation "# something..."
             QString c = t.mid(1).trimmed();
             if (c.startsWith('@'))
                 continue;
 
+            if (!pendingDoc)
+                continue;
+
             if (last == LastSection::Details && !details.isEmpty())
-            {
                 details += "\n" + c;
-            }
             else if (last == LastSection::Brief && !brief.isEmpty())
-            {
                 brief += "\n" + c;
-            }
             else if (last == LastSection::Default && !deflt.isEmpty())
-            {
                 deflt += " " + c;
-            }
             else if (!details.isEmpty())
             {
                 details += "\n" + c;
@@ -283,21 +350,62 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             continue;
         }
 
-        // Allow empty lines inside doc blocks (do not commit on empty).
-        if (!currentKey.isEmpty() && !t.isEmpty())
-            commit();
+        // ---------------- non-comment lines ----------------
+
+        if (pendingDoc && currentKey.isEmpty())
+        {
+            QRegularExpressionMatch am = assignRe.match(line);
+            if (am.hasMatch())
+            {
+                currentKey = normalizeKey(am.captured(1));
+
+                applyInlineTag(line);
+
+                commit();
+                continue;
+            }
+        }
+
+        if (!currentKey.isEmpty())
+        {
+            applyInlineTag(line);
+
+            QRegularExpressionMatch am = assignRe.match(line);
+            if (am.hasMatch())
+            {
+                commit();
+                continue;
+            }
+
+            if (!t.isEmpty())
+            {
+                commit();
+                continue;
+            }
+        }
+
+        // settings['fstop'] = ... # @brief ...
+        QRegularExpressionMatch am2 = assignRe.match(line);
+        if (am2.hasMatch())
+        {
+            QRegularExpressionMatch im = inlineTagRe.match(line);
+            if (im.hasMatch())
+            {
+                const QString tag = im.captured(1).trimmed().toLower();
+                if (tag == QLatin1String("brief") ||
+                    tag == QLatin1String("details") ||
+                    tag == QLatin1String("default"))
+                {
+                    currentKey = normalizeKey(am2.captured(1));
+                    applyInlineTag(line);
+                    commit();
+                    continue;
+                }
+            }
+        }
     }
 
     commit(); // flush at EOF
-
-    // Keep only tips for keys that actually exist in settings
-    for (auto itTips = result.settingTips.begin(); itTips != result.settingTips.end(); )
-    {
-        if (!result.settings.contains(itTips.key()))
-            itTips = result.settingTips.erase(itTips);
-        else
-            ++itTips;
-    }
 
     if (!scriptDir.isEmpty() && !baseName.isEmpty())
         result.simPath = QDir(scriptDir).filePath(baseName);
@@ -316,6 +424,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
 
     return result;
 }
+
 
 } // close namespce
 

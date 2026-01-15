@@ -764,57 +764,14 @@ void MainWindow::on_actionExit_triggered()
  * \brief Triggered when the "Save As" action is invoked.
  *
  * Opens a file dialog to let the user choose a new file name and location
- * for saving the current Python model. The chosen path is stored in the UI
- * and preferences, and then applyPythonScriptFromEditor() is called to
- * write the editor contents and update simulation settings.
- **********************************************************************************************************************/
-/*!*******************************************************************************************************************
- * \brief Triggered when the "Save As" action is invoked.
- *
- * Opens a file dialog to let the user choose a new file name and location
  * for the current Python model. The chosen path is stored in
  * txtRunPythonScript and PALACE_MODEL_FILE, and then the model is saved
  * via applyPythonScriptFromEditor().
  **********************************************************************************************************************/
 void MainWindow::on_actionSave_As_triggered()
 {
-    const QString prefPath    = m_preferences.value("PALACE_MODEL_FILE").toString().trimmed();
-    const QString currentPath = m_ui->txtRunPythonScript->text().trimmed();
-
-    QString startDir;
-    QString suggestedName;
-
-    if (!prefPath.isEmpty()) {
-        QFileInfo pfi(prefPath);
-        startDir      = pfi.absolutePath();
-        suggestedName = pfi.fileName();
-    } else if (!currentPath.isEmpty()) {
-        QFileInfo cfi(currentPath);
-        startDir      = cfi.absolutePath();
-        suggestedName = cfi.fileName();
-    } else {
-        startDir      = QDir::homePath();
-        suggestedName = QStringLiteral("model.py");
-    }
-
-    const QString defaultPath = QDir(startDir).filePath(suggestedName);
-
-    QString newPath = QFileDialog::getSaveFileName(
-        this,
-        tr("Save Python Model As"),
-        defaultPath,
-        tr("Python Files (*.py);;All Files (*)")
-        );
-
-    if (newPath.isEmpty())
+    if (!ensurePythonScriptPathBySaveAs(true))
         return;
-
-    QFileInfo fiNew(newPath);
-    if (fiNew.suffix().isEmpty())
-        newPath += QStringLiteral(".py");
-
-    m_ui->txtRunPythonScript->setText(QDir::toNativeSeparators(newPath));
-    m_preferences["PALACE_MODEL_FILE"] = newPath;
 
     on_actionSave_triggered();
 }
@@ -838,7 +795,6 @@ void MainWindow::on_actionSave_As_triggered()
  **********************************************************************************************************************/
 void MainWindow::on_actionSave_triggered()
 {
-    // Check where the keyboard focus currently is.
     bool pythonEditorActive = false;
     if (QWidget *fw = QApplication::focusWidget()) {
         pythonEditorActive =
@@ -846,12 +802,8 @@ void MainWindow::on_actionSave_triggered()
             m_ui->editRunPythonScript->isAncestorOf(fw);
     }
 
-    // If we are NOT in the Python editor, GUI is the "master":
-    // regenerate the script from the current GUI state, but only if
-    // the simulation state is marked as changed AND the editor itself
-    // was not manually modified.
     if (!pythonEditorActive) {
-        if (!m_ui->editRunPythonScript->document()->isModified()) {
+        if (!m_ui->editRunPythonScript->document()->isModified() && !isStateChanged()) {
             const QString scriptPath = m_ui->txtRunPythonScript->text().trimmed();
             if (!scriptPath.isEmpty() && QFileInfo(scriptPath).exists()) {
                 loadPythonScriptToEditor(scriptPath);
@@ -937,7 +889,6 @@ void MainWindow::updateSimulationSettings()
 
     if (m_simSettings.contains("Ports")) {
 
-        // очищаем таблицу ТОЛЬКО если Ports есть
         m_ui->tblPorts->setRowCount(0);
 
         rebuildLayerMapping();
@@ -3481,6 +3432,165 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
 }
 
 /*!*******************************************************************************************************************
+ * \brief Ensures that a valid Python model file path exists, invoking "Save As" if necessary.
+ *
+ * This function is intended to unify the save logic between regular Save and Save As actions.
+ * If the current Python script path is empty or not yet defined, the user is prompted with the
+ * "Save Python Model As" dialog to choose a target file and directory.
+ *
+ * The function performs all checks implemented in the Save As workflow, including:
+ *  - Suggesting a default file name (top cell name if available, otherwise "model.py")
+ *  - Verifying simulation-specific folder requirements
+ *    (e.g. "modules" for OpenEMS, "gds2palace" for Palace)
+ *  - Allowing the user to choose another directory, save anyway, or cancel
+ *
+ * If the user successfully selects a file, the internal script path and preferences
+ * are updated accordingly.
+ *
+ * \return true if a valid Python script path is available after the call,
+ *         false if the user cancels the operation.
+ **********************************************************************************************************************/
+bool MainWindow::ensurePythonScriptPathBySaveAs(bool forceDialog)
+{
+    const QString currentPath = m_ui->txtRunPythonScript->text().trimmed();
+
+    if (!forceDialog && !currentPath.isEmpty())
+        return true;
+
+    const QString prefPath = m_preferences.value("PALACE_MODEL_FILE").toString().trimmed();
+
+    QString startDir;
+    QString suggestedName;
+
+    if (!currentPath.isEmpty()) {
+        QFileInfo cfi(currentPath);
+        startDir      = cfi.absolutePath();
+        suggestedName = cfi.fileName();
+    } else if (!prefPath.isEmpty()) {
+        QFileInfo pfi(prefPath);
+        startDir = pfi.absolutePath();
+
+        QString gdsPath;
+        if (m_ui->txtGdsFile)
+            gdsPath = m_ui->txtGdsFile->text().trimmed();
+
+        if (!gdsPath.isEmpty() && QFileInfo::exists(gdsPath)) {
+            QFileInfo gdsFi(gdsPath);
+            startDir = gdsFi.absolutePath();
+        } else {
+            startDir = QDir::homePath();
+        }
+
+        QString topCell =
+            m_simSettings.value("TopCell").toString().trimmed();
+        if (topCell.isEmpty() && m_ui->cbxTopCell)
+            topCell = m_ui->cbxTopCell->currentText().trimmed();
+
+        suggestedName = !topCell.isEmpty()
+                            ? (topCell + QStringLiteral(".py"))
+                            : pfi.fileName();
+    } else {
+        QString gdsPath;
+        if (m_ui->txtGdsFile)
+            gdsPath = m_ui->txtGdsFile->text().trimmed();
+
+        if (!gdsPath.isEmpty() && QFileInfo::exists(gdsPath)) {
+            QFileInfo gdsFi(gdsPath);
+            startDir = gdsFi.absolutePath();
+        } else {
+            startDir = QDir::homePath();
+        }
+
+        const QString topCell =
+            m_ui->cbxTopCell ? m_ui->cbxTopCell->currentText().trimmed() : QString();
+
+        suggestedName = !topCell.isEmpty()
+                            ? (topCell + QStringLiteral(".py"))
+                            : QStringLiteral("model.py");
+    }
+
+    const QString simKey = currentSimToolKey().toLower();
+
+    auto requiredFolderForSim = [&](const QString &k) -> QString {
+        if (k == QLatin1String("openems"))
+            return QStringLiteral("modules");
+        if (k == QLatin1String("palace"))
+            return QStringLiteral("gds2palace");
+        return QString();
+    };
+
+    auto checkRequiredFolder = [&](const QString &dirPath, QString *missingName) -> bool {
+        const QString need = requiredFolderForSim(simKey);
+        if (need.isEmpty())
+            return true;
+
+        const QString reqPath = QDir(dirPath).filePath(need);
+        const bool ok = QDir(reqPath).exists();
+        if (!ok && missingName)
+            *missingName = need;
+        return ok;
+    };
+
+    while (true)
+    {
+        const QString defaultPath = QDir(startDir).filePath(suggestedName);
+
+        QString newPath = QFileDialog::getSaveFileName(
+            this,
+            tr("Save Python Model As"),
+            defaultPath,
+            tr("Python Files (*.py);;All Files (*)")
+            );
+
+        if (newPath.isEmpty())
+            return false;
+
+        QFileInfo fiNew(newPath);
+        if (fiNew.suffix().isEmpty())
+            newPath += QStringLiteral(".py");
+
+        QFileInfo chosenFi(newPath);
+        const QString chosenDir = chosenFi.absolutePath();
+
+        QString missing;
+        if (!checkRequiredFolder(chosenDir, &missing))
+        {
+            const QString simName =
+                (simKey == QLatin1String("openems")) ? QStringLiteral("OpenEMS") :
+                    (simKey == QLatin1String("palace"))  ? QStringLiteral("Palace")  :
+                    simKey;
+
+            QMessageBox msg(this);
+            msg.setIcon(QMessageBox::Warning);
+            msg.setWindowTitle(tr("Missing simulation modules"));
+            msg.setText(tr("The selected folder does not contain the required '%1' directory for %2.")
+                            .arg(missing, simName));
+            msg.setInformativeText(tr("Choose another folder, or save here anyway."));
+
+            QPushButton *btnChoose = msg.addButton(tr("Choose another directory"), QMessageBox::AcceptRole);
+            QPushButton *btnSave   = msg.addButton(tr("Save here anyway"), QMessageBox::DestructiveRole);
+            msg.addButton(QMessageBox::Cancel);
+
+            msg.exec();
+
+            if (msg.clickedButton() == btnChoose) {
+                startDir = chosenDir;
+                suggestedName = chosenFi.fileName();
+                continue;
+            }
+            if (msg.clickedButton() != btnSave)
+                return false;
+        }
+
+        m_ui->txtRunPythonScript->setText(QDir::toNativeSeparators(newPath));
+        m_preferences["PALACE_MODEL_FILE"] = newPath;
+
+        setLineEditPalette(m_ui->txtRunPythonScript, newPath);
+        return true;
+    }
+}
+
+/*!*******************************************************************************************************************
  * \brief Saves the current Python script, re-parses it and updates the simulation setup.
  *
  * Writes the contents of the embedded Python editor to the file referenced by
@@ -3497,25 +3607,14 @@ bool MainWindow::applyPythonScriptFromEditor()
 {
     QString filePath = m_ui->txtRunPythonScript->text().trimmed();
 
+    info(filePath, true);
+
     if (filePath.isEmpty()) {
-        const QString defaultPath =
-            QDir(QDir::homePath()).filePath(QStringLiteral("model.py"));
-
-        filePath = QFileDialog::getSaveFileName(
-            this,
-            tr("Save Python Model"),
-            defaultPath,
-            tr("Python Files (*.py);;All Files (*)")
-            );
-
+        if (!ensurePythonScriptPathBySaveAs(false))
+            return false;
+        filePath = m_ui->txtRunPythonScript->text().trimmed();
         if (filePath.isEmpty())
             return false;
-
-        QFileInfo fi(filePath);
-        if (fi.suffix().isEmpty())
-            filePath += QStringLiteral(".py");
-
-        m_ui->txtRunPythonScript->setText(QDir::toNativeSeparators(filePath));
     }
 
     if (filePath.isEmpty()) {
@@ -3644,27 +3743,20 @@ void MainWindow::setRecentPythonModels(const QStringList& list)
  **********************************************************************************************************************/
 void MainWindow::initRecentMenu()
 {
-    m_menuRecent = nullptr;
-
-    if (m_ui->menuRecent) {
-        m_menuRecent = m_ui->menuRecent;
-    } else if (m_ui->menuFile) {
-        m_menuRecent = new QMenu(tr("Recent"), m_ui->menuFile);
-        m_menuRecent->setObjectName("menuRecent");
-
-        QAction* openAct = m_ui->actionOpen_Python_Model;
-        if (openAct) {
-            m_ui->menuFile->insertMenu(openAct, m_menuRecent);
-        } else {
-            m_ui->menuFile->addMenu(m_menuRecent);
-        }
-    }
-
-    if (!m_menuRecent)
+    QAction* recentAct = m_ui->actionRecent;
+    if (!recentAct)
         return;
 
+    if (!m_menuRecent) {
+        m_menuRecent = new QMenu(this);
+        m_menuRecent->setObjectName("menuRecent");
+        recentAct->setMenu(m_menuRecent);
+    } else {
+        m_menuRecent->clear();
+        recentAct->setMenu(m_menuRecent);
+    }
+
     m_recentModelActions.clear();
-    m_menuRecent->clear();
 
     for (int i = 0; i < kMaxRecentPythonModels; ++i) {
         QAction* a = new QAction(this);
@@ -3674,9 +3766,8 @@ void MainWindow::initRecentMenu()
         m_recentModelActions.push_back(a);
     }
 
-    m_menuRecent->addSeparator();
     QAction* clearAct = m_menuRecent->addAction(tr("Clear"));
-    connect(clearAct, &QAction::triggered, this, [this](){
+    connect(clearAct, &QAction::triggered, this, [this]() {
         setRecentPythonModels({});
         updateRecentMenu();
         saveSettings();
@@ -3684,6 +3775,7 @@ void MainWindow::initRecentMenu()
 
     updateRecentMenu();
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Updates the "Recent" menu entries for Python model files.

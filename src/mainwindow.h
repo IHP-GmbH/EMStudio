@@ -160,6 +160,7 @@ private:
 
     bool                            applyPythonScriptFromEditor();
     void                            applySubLayerNamesToPorts(bool toNames);
+    bool                            ensurePythonScriptPathBySaveAs(bool forceDialog);
 
     void                            updateSubLayerNamesAutoCheck();
     void                            rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings,

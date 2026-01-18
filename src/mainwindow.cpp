@@ -1345,10 +1345,6 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         script.replace(re, QStringLiteral("XML_filename = \"%1\"").arg(xmlPath));
     }
 
-    QRegularExpression portBlock(
-        R"(simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\n(?:.|\n)*?(?=#[^\n]*simulation\s*={3,}))",
-        QRegularExpression::MultilineOption);
-
     if (m_ui->tblPorts->rowCount() == 0) {
         rebuildLayerMapping();
 
@@ -1435,6 +1431,10 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
                         "simulation_setup.simulation_port(%1))\n")
                         .arg(argsJoined);
     }
+
+    QRegularExpression portBlock(
+        R"(simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\n(?:.|\n)*?(?=#[^\n]*simulation\s*={3,}))",
+        QRegularExpression::MultilineOption);
 
     QRegularExpressionMatch portMatch = portBlock.match(script);
 
@@ -2499,6 +2499,14 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
         { auto m2 = rxStr("to_layername").match(args);
           if (m2.hasMatch()) p.toLayer = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
 
+        if (p.fromLayer.isEmpty() && p.toLayer.isEmpty()) {
+            auto m2 = rxStr("target_layername").match(args);
+            if (m2.hasMatch()) {
+                const QString t = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1);
+                p.toLayer = t;
+            }
+        }
+
         { auto m2 = rxStr("direction").match(args);
           if (m2.hasMatch()) p.direction = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
 
@@ -2689,6 +2697,14 @@ QString MainWindow::createDefaultOpenemsScript()
     else
         xmlFile = QDir::fromNativeSeparators(xmlFile);
 
+    QString topCell = m_ui->cbxTopCell->currentText().trimmed();
+
+    auto pyEscape = [](QString s) -> QString {
+        s.replace("\\", "\\\\");
+        s.replace("\"", "\\\"");
+        return s;
+    };
+
     const QString script = QString::fromUtf8(R"PY(import os
 import sys
 
@@ -2721,7 +2737,7 @@ settings['postprocess_only'] = False
 # ===================== input files and path settings =======================
 
 gds_filename = "%1"   # geometries
-cellname = ""  # optional, set empty string "" to use top cell
+cellname = "%3"  # optional, set empty string "" to use top cell from GDS
 
 XML_filename = "%2"   # stackup
 
@@ -2855,7 +2871,7 @@ snp_name = os.path.join(sim_path, model_basename + '.s' + str(num_ports) + 'p')
 utilities.write_snp(s_params, f, snp_name)
 
 print('Created S-parameter output file at ', snp_name)
-)PY").arg(gdsFile, xmlFile);
+)PY").arg(gdsFile, xmlFile, pyEscape(topCell));
 
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
     if (parseResult.ok)
@@ -2863,6 +2879,7 @@ print('Created S-parameter output file at ', snp_name)
 
     return script;
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Fills the embedded Python editor with the default Palace / Gmsh template.
@@ -2886,8 +2903,16 @@ QString MainWindow::createDefaultPalaceScript()
     else
         xmlFile = toWslPath(QDir::fromNativeSeparators(xmlFile));
 
-    const QString script = QString::fromUtf8(
-                               R"PY(# MODEL FOR GMSH WITH PALACE
+    // Top cell (gds_cellname) support
+    QString topCell = m_ui->cbxTopCell->currentText().trimmed();
+
+    auto pyEscape = [](QString s) -> QString {
+        s.replace("\\", "\\\\");
+        s.replace("\"", "\\\"");
+        return s;
+    };
+
+    const QString script = QString::fromUtf8(R"PY(# MODEL FOR GMSH WITH PALACE
 
 import os
 import sys
@@ -2898,8 +2923,10 @@ from gds2palace import *
 
 # Model comments
 #
-# Ports: Model uses a via port that is defined between Metal1 and TopMetal2 (not using in-plane port here)
-
+# This is a generic model running port excitation for all ports defined below,
+# to get full [S] matrix data.
+# Output is stored to Touchstone S-parameter file.
+# No data plots are created by this script.
 
 # ======================== workflow settings ================================
 
@@ -2910,15 +2937,12 @@ run_command = ['./run_sim']
 # ===================== input files and path settings =======================
 
 gds_filename = "%1"   # geometries
-gds_cellname = ""       # optional name of cell, empty string to load always top cell
+gds_cellname = "%3"   # optional name of cell, empty string "" -> load always top cell
 
-XML_filename = "%2"          # stackup
+XML_filename = "%2"   # stackup
 
-# preprocess GDSII for safe handling of cutouts/holes?
-preprocess_gds = False
-
-# merge via polygons with distance less than .. microns, set to 0 to disable via merging.
-merge_polygon_size = 0
+preprocess_gds = False # @brief preprocess GDSII for safe handling of cutouts/holes?
+merge_polygon_size = 0 # @brief merge via polygons with distance less than .. microns, set to 0 to disable via merging.
 
 # get path for this simulation file
 script_path = utilities.get_script_path(__file__)
@@ -2938,25 +2962,24 @@ os.chdir(modelDir)
 
 settings = {}
 
-settings['unit']   = 1e-6  # geometry is in microns
-settings['margin'] = 50    # distance in microns from GDSII geometry boundary to simulation boundary
+settings['unit']   = 1e-6  # @brief Geometry units, 1E-6 is in microns
+settings['margin'] = 50    # @brief Distance from GDSII geometry boundary to stackup boundary, in project units
 
-settings['fstart']  = 0e9
-settings['fstop']   = 100e9
-settings['fstep']   = 2.5e9
-# optional: list of discrete frequencies [] -> "Point" frequency sample in Palace config
-settings['fpoint']   = []
-# optional: list of discrete frequencies where Palace stores field dump for visualization in Paraview
-settings['fdump']   = []
+settings['fstart']  = 0e9   # @brief start frequency [Hz]
+settings['fstop']   = 100e9 # @brief stop frequency [Hz]
+settings['fstep']   = 2.5e9 # @brief frequency step [Hz], adaptive frequency sweep is used
+
+settings['fpoint']  = [] # @brief optional: list of discrete frequencies fpr S-param, in addition to sweep, default is []
+settings['fdump']   = [] # @brief optional: list of discrete frequencies for field dump file (Paraview), default is []
 
 # optional: boundary condition ABC, PEC or PMC at X-,X+,Y-mY+,Z-,Z+ Default is absorbing boundary.
 settings['boundary']=['ABC','ABC','ABC','ABC','ABC','ABC']
 
-settings['refined_cellsize'] = 2  # mesh cell size in conductor region
-settings['cells_per_wavelength'] = 10   # how many mesh cells per wavelength, must be 10 or more
+settings['refined_cellsize'] = 2   # @brief mesh cell size in conductor region, in project units, default is 2
+settings['cells_per_wavelength'] = 10  # @brief how many mesh cells per wavelength, must be 10 or more
 
-settings['meshsize_max'] = 70  # microns, override cells_per_wavelength
-settings['adaptive_mesh_iterations'] = 0
+settings['meshsize_max'] = 70  # @brief maximum absolute mesh size, in addition to cells_per_wavelength
+settings['adaptive_mesh_iterations'] = 0  # @brief adaptive mesh iterations, default is 2
 
 # Ports from GDSII Data, polygon geometry from specified special layer
 # Excitations can be switched off by voltage=0, those S-parameter will be incomplete then
@@ -2997,15 +3020,12 @@ settings['allpolygons'] = allpolygons
 settings['sim_path'] = sim_path
 settings['model_basename'] = model_basename
 
-
 # list of ports that are excited (set voltage to zero in port excitation to skip an excitation!)
 excite_ports = simulation_ports.all_active_excitations()
 config_name, data_dir = simulation_setup.create_palace (excite_ports, settings)
 
-
 # for convenience, write run script to model directory
 utilities.create_run_script(sim_path)
-
 
 if start_simulation:
     try:
@@ -3013,7 +3033,7 @@ if start_simulation:
         subprocess.run(run_command, shell=True)
     except:
         print(f"Unable to run Palace using command ",run_command)
-)PY").arg(gdsFile, xmlFile);
+)PY").arg(gdsFile, xmlFile, pyEscape(topCell));
 
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
     if (parseResult.ok)

@@ -26,6 +26,12 @@ Source: "{#AppIco}"; DestDir: "{app}"; Flags: ignoreversion
 ; KLayout integration script
 Source: "..\scripts\klEmsDriver.py"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
+; KLayout launcher (bat)
+Source: "..\scripts\KLayout.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+
+; KLayout icon (as PNG) - you keep it next to EMStudio.iss
+Source: "KLayout.png"; DestDir: "{app}"; Flags: ignoreversion
+
 ; Logo used by KLayout action
 Source: "..\icons\logo.png"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -39,6 +45,19 @@ Name: "{commondesktop}\EMStudio"; \
     IconFilename: "{app}\{#AppIco}"; \
     Tasks: desktopicon
 
+; KLayout integration shortcut (Start Menu)
+Name: "{group}\EMStudio in KLayout"; \
+    Filename: "{app}\scripts\KLayout.bat"; \
+    WorkingDir: "{app}\scripts"; \
+    IconFilename: "{app}\KLayout.png"
+
+; KLayout integration shortcut (Desktop)
+Name: "{commondesktop}\EMStudio in KLayout"; \
+    Filename: "{app}\scripts\KLayout.bat"; \
+    WorkingDir: "{app}\scripts"; \
+    IconFilename: "{app}\KLayout.png"; \
+    Tasks: desktopicon_klayout
+
 Name: "{group}\Uninstall EMStudio"; \
     Filename: "{uninstallexe}"; \
     IconFilename: "{app}\{#AppIco}"
@@ -47,6 +66,11 @@ Name: "{group}\Uninstall EMStudio"; \
 Name: "desktopicon"; \
     Description: "Create a desktop icon"; \
     GroupDescription: "Additional icons:"
+
+Name: "desktopicon_klayout"; \
+    Description: "Create a desktop icon (EMStudio in KLayout)"; \
+    GroupDescription: "Additional icons:"; \
+    Flags: unchecked
 
 Name: "addtopath"; \
     Description: "Add EMStudio to PATH (recommended)"; \

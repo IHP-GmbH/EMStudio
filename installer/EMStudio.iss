@@ -2,6 +2,7 @@
 #define AppVersion "1.0.0"
 #define AppExe "EMStudio.exe"
 #define AppIco "emstudio.ico"
+#define KLayoutIco "KLayout.ico"
 
 [Setup]
 AppId={{A3B2E413-8A21-4C0C-92F1-0E20796C124B}
@@ -29,8 +30,8 @@ Source: "..\scripts\klEmsDriver.py"; DestDir: "{app}\scripts"; Flags: ignorevers
 ; KLayout launcher (bat)
 Source: "..\scripts\KLayout.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
-; KLayout icon (PNG, stored next to EMStudio.exe)
-Source: "KLayout.png"; DestDir: "{app}"; Flags: ignoreversion
+; KLayout icon (ICO) - stored next to EMStudio.exe
+Source: "{#KLayoutIco}"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Logo used by KLayout action (used by the Python macro)
 Source: "..\icons\logo.png"; DestDir: "{app}\scripts"; Flags: ignoreversion
@@ -41,8 +42,8 @@ Name: "{group}\EMStudio"; \
     Filename: "{app}\{#AppExe}"; \
     IconFilename: "{app}\{#AppIco}"
 
-; Main EMStudio shortcut (Desktop)
-Name: "{commondesktop}\EMStudio"; \
+; Main EMStudio shortcut (Desktop) - current user desktop
+Name: "{autodesktop}\EMStudio"; \
     Filename: "{app}\{#AppExe}"; \
     IconFilename: "{app}\{#AppIco}"; \
     Tasks: desktopicon
@@ -51,13 +52,13 @@ Name: "{commondesktop}\EMStudio"; \
 Name: "{group}\KLayout_EMStudio"; \
     Filename: "{app}\scripts\KLayout.bat"; \
     WorkingDir: "{app}\scripts"; \
-    IconFilename: "{app}\KLayout.png"
+    IconFilename: "{app}\{#KLayoutIco}"
 
-; KLayout integration shortcut (Desktop)
-Name: "{commondesktop}\KLayout_EMStudio"; \
+; KLayout integration shortcut (Desktop) - current user desktop
+Name: "{autodesktop}\KLayout_EMStudio"; \
     Filename: "{app}\scripts\KLayout.bat"; \
     WorkingDir: "{app}\scripts"; \
-    IconFilename: "{app}\KLayout.png"; \
+    IconFilename: "{app}\{#KLayoutIco}"; \
     Tasks: desktopicon
 
 ; Uninstall shortcut
@@ -67,7 +68,7 @@ Name: "{group}\Uninstall EMStudio"; \
 
 [Tasks]
 Name: "desktopicon"; \
-    Description: "Create desktop icons"; \
+    Description: "Create desktop icons (EMStudio + KLayout_EMStudio)"; \
     GroupDescription: "Additional icons:"
 
 Name: "addtopath"; \

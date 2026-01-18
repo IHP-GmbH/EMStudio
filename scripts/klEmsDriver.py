@@ -57,17 +57,37 @@ def find_emstudio_executable():
     return None
 
 
-def find_icon_path():
+def find_icon_path(emstudio_path=None):
     """
-    Prefer icon next to this KLayout macro (driver) to avoid relying on EMStudio install layout.
-    Looks for: logo.png or KLayout.png next to the driver.
+    Search order:
+      1) Next to this driver (same folder as klEmsDriver.py)
+      2) ../icons next to the driver (typical repo/install layout: EMStudio/icons)
+      3) Next to EMStudio executable (if provided)
     Returns path (with /) or empty string.
     """
-    d = _this_script_dir()
+    driver_dir = _this_script_dir()
+
+    # 1) same dir as driver
     for fname in ("logo.png", "KLayout.png", "emstudio.png"):
-        p = os.path.join(d, fname)
+        p = os.path.join(driver_dir, fname)
         if os.path.exists(p):
             return p.replace("\\", "/")
+
+    # 2) ../icons relative to driver
+    icons_dir = os.path.normpath(os.path.join(driver_dir, "..", "icons"))
+    for fname in ("logo.png", "KLayout.png", "emstudio.png", "doxy.png"):
+        p = os.path.join(icons_dir, fname)
+        if os.path.exists(p):
+            return p.replace("\\", "/")
+
+    # 3) next to EMStudio executable
+    if emstudio_path:
+        em_dir = os.path.dirname(emstudio_path)
+        for fname in ("logo.png", "KLayout.png", "emstudio.png"):
+            p = os.path.join(em_dir, fname)
+            if os.path.exists(p):
+                return p.replace("\\", "/")
+
     return ""
 
 
@@ -111,6 +131,7 @@ def handler_func():
         pya.MessageBox.critical("Error", msg, pya.MessageBox.Ok)
         return
 
+    # Clean environment (avoid python embedding conflicts)
     env = os.environ.copy()
     env.pop("PYTHONHOME", None)
     env.pop("PYTHONPATH", None)
@@ -132,10 +153,13 @@ menu_handler = pya.Action()
 menu_handler.title = "EMStudio"
 menu_handler.on_triggered = handler_func
 
-icon_path = find_icon_path()
+# Resolve icon path at load time (so toolbar icon is visible)
+emstudio_path_for_icon = find_emstudio_executable()
+icon_path = find_icon_path(emstudio_path_for_icon)
 if icon_path:
     menu_handler.icon = icon_path
 
 menu = pya.Application.instance().main_window().menu()
 menu.insert_item("@toolbar.end", "menu_item_emstudio", menu_handler)
 menu.insert_item("tools_menu.end", "menu_item_emstudio", menu_handler)
+

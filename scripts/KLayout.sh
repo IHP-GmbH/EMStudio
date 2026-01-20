@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+[ -n "${BASH_VERSION:-}" ] || exec /usr/bin/env bash "$0" "$@"
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -70,5 +73,6 @@ echo "Using EMStudio: ${EMSTUDIO_BIN}"
 echo "Using KLayout : ${KLAYOUT}"
 echo "Launching KLayout with EMStudio integration..."
 
-exec "${KLAYOUT}" -e -rm "${DRIVER}"
+exec "${KLAYOUT}" -e -rm "${DRIVER}" "$@"
+
 

@@ -803,11 +803,9 @@ void MainWindow::on_actionSave_triggered()
     }
 
     if (!pythonEditorActive) {
-        if (!m_ui->editRunPythonScript->document()->isModified() && !isStateChanged()) {
-            const QString scriptPath = m_ui->txtRunPythonScript->text().trimmed();
-            if (!scriptPath.isEmpty() && QFileInfo(scriptPath).exists()) {
-                loadPythonScriptToEditor(scriptPath);
-            }
+        const QString scriptPath = m_ui->txtRunPythonScript->text().trimmed();
+        if (!scriptPath.isEmpty() && QFileInfo(scriptPath).exists()) {
+            loadPythonScriptToEditor(scriptPath);
         }
     }
 
@@ -2089,7 +2087,7 @@ void MainWindow::runPalace()
                     {
                         QRegularExpression re(
                             R"(Simulation data directory:\s*([^\s]+))");
-                        QRegularExpressionMatch m = re.match(m_palacePythonOutput);
+                        QRegularExpressionMatch m = re.match(m_ui->editSimulationLog->toPlainText());
                         if (m.hasMatch()) {
                             const QString simDirLinux = m.captured(1).trimmed();
 

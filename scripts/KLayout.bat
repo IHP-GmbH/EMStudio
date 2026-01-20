@@ -30,8 +30,6 @@ rem ----------------------------------------------------------------------------
 rem Locate KLayout executable
 rem -----------------------------------------------------------------------------
 
-rem Helper: test & accept a candidate
-rem (we keep it inline because cmd has no real functions)
 set "KLAYOUT="
 
 rem 1) If KLAYOUT_EXE is set by user/environment, prefer it
@@ -42,7 +40,7 @@ if defined KLAYOUT_EXE (
   )
 )
 
-rem 2) Try PATH (prefer klayout_app.exe, fallback to klayout.exe, also klayout_app without .exe)
+rem 2) Try PATH (prefer klayout_app.exe, fallback to klayout.exe, also without .exe)
 for %%X in (klayout_app.exe klayout.exe klayout_app klayout) do (
   if not "%%~$PATH:X"=="" (
     set "KLAYOUT=%%~$PATH:X"
@@ -63,8 +61,7 @@ for %%C in ("%CAND1%" "%CAND2%" "%CAND3%" "%CAND4%") do (
   )
 )
 
-rem 4) Try per-user locations (AppData) - NOT hardcoded, uses env vars
-rem Your case: %APPDATA%\KLayout\klayout_app(.exe)
+rem 4) Try per-user locations (AppData)
 set "CAND5=%APPDATA%\KLayout\klayout_app.exe"
 set "CAND6=%APPDATA%\KLayout\klayout_app"
 set "CAND7=%LOCALAPPDATA%\KLayout\klayout_app.exe"
@@ -118,6 +115,14 @@ if not exist "%KLAYOUT%" (
   exit /b 3
 )
 
-rem Launch KLayout with your driver
-start "" "%KLAYOUT%" -e -rm "%DRIVER%"
+rem -----------------------------------------------------------------------------
+rem Launch KLayout with your driver and forward any passed args/files (e.g. *.gds)
+rem NOTE: pass %* directly to preserve quoting for paths with spaces.
+rem -----------------------------------------------------------------------------
+if "%~1"=="" (
+  start "" "%KLAYOUT%" -e -rm "%DRIVER%"
+) else (
+  start "" "%KLAYOUT%" -e -rm "%DRIVER%" %*
+)
+
 exit /b 0

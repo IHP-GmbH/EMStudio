@@ -951,7 +951,7 @@ void MainWindow::updateSimulationSettings()
                     toLayerBox->addItem(nm);
                 }
 
-                directionBox->addItems(QStringList() << "x" << "y" << "z");
+                directionBox->addItems(QStringList() << "x" << "y" << "z" << "-x" << "-y" << "-z");
 
                 const QString src  = portMap.value("Source Layer").toString().trimmed();
                 const QString from = portMap.value("From Layer").toString().trimmed();
@@ -1528,7 +1528,7 @@ void MainWindow::on_btnAddPort_clicked()
         toLayerBox->addItem(nm);
     }
 
-    directionBox->addItems(QStringList() << "x" << "y" << "z");
+    directionBox->addItems(QStringList() << "x" << "y" << "z" << "-x" << "-y" << "-z");
     directionBox->setCurrentText("z");
 
     m_ui->tblPorts->setItem(row, 0, new QTableWidgetItem(QString::number(row + 1)));
@@ -2576,7 +2576,7 @@ void MainWindow::appendParsedPortsToTable(const QVector<PortInfo>& ports)
             toLayerBox->addItem(nm);
         }
 
-        directionBox->addItems(QStringList() << "x" << "y" << "z");
+        directionBox->addItems(QStringList() << "x" << "y" << "z" << "-x" << "-y" << "-z");
         directionBox->setCurrentText(p.direction.isEmpty() ? "z" : p.direction);
 
         const QString srcVal = p.sourceLayer.isEmpty()
@@ -3429,8 +3429,9 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         }
 
         if (propType == QVariant::String) {
-            if (key == finalValue.toString())
+            if (key == finalValue.toString() || finalValue.toString().contains(".")) {
                 continue;
+            }
         }
 
         QtVariantProperty* prop = m_variantManager->addProperty(propType, key);

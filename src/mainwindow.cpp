@@ -2122,8 +2122,15 @@ void MainWindow::runPalace()
                         "\n[Palace Python preprocessing finished successfully, searching for config...]\n");
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
 
+                    QString defRunDir = QFileInfo(m_ui->txtRunPythonScript->text()).absolutePath() +
+                                        QString("/palace_model/%1_data").arg(m_ui->cbxTopCell->currentText());
+
+                    if(!QFileInfo().exists(defRunDir)) {
+                        defRunDir = "";
+                    }
+
                     QString searchDir = detectedRunDir.isEmpty()
-                                            ? m_simSettings.value("RunDir").toString().trimmed()
+                                            ? defRunDir
                                             : detectedRunDir;
 
                     QDir dir(searchDir);
@@ -2163,7 +2170,6 @@ void MainWindow::runPalace()
                     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
 
                     if (runMode == 1) {
-                        // Script mode: call external launcher with the config file
                         m_ui->editSimulationLog->moveCursor(QTextCursor::End);
                         m_ui->editSimulationLog->insertPlainText(
                             "\n[Starting Palace via external launcher script...]\n");

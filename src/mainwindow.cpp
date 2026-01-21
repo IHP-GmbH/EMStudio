@@ -959,6 +959,8 @@ void MainWindow::updateSimulationSettings()
                 QString dir        = portMap.value("Direction").toString().trimmed();
                 if (dir.isEmpty()) dir = "z";
 
+                dir = dir.toLower();
+
                 setCurrentSafe(sourceLayerBox, src);
                 setCurrentSafe(fromLayerBox,   from);
                 setCurrentSafe(toLayerBox,     to);
@@ -1353,11 +1355,12 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
 
     updateSubLayerNamesAutoCheck();
 
-    QString portCode = "simulation_ports = simulation_setup.all_simulation_ports()\n";
-
+    // ---------------------------------------------------------------------------------------------
+    // Build portCode from GUI table
+    // ---------------------------------------------------------------------------------------------
     auto toLayerName = [&](const QString& s) -> QString {
         bool ok = false;
-        int n = s.toInt(&ok);
+        const int n = s.toInt(&ok);
         if (ok && m_gdsToSubName.contains(n))
             return m_gdsToSubName.value(n);
         return s;
@@ -1369,10 +1372,17 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         return "'" + s + "'";
     };
 
+    QString portCode;
+    portCode += "simulation_ports = simulation_setup.all_simulation_ports()\n";
+
     for (int row = 0; row < m_ui->tblPorts->rowCount(); ++row) {
-        const QString num  = m_ui->tblPorts->item(row, 0)->text().trimmed();
-        const QString volt = m_ui->tblPorts->item(row, 1)->text().trimmed();
-        const QString z0   = m_ui->tblPorts->item(row, 2)->text().trimmed();
+        auto* itemNum  = m_ui->tblPorts->item(row, 0);
+        auto* itemVolt = m_ui->tblPorts->item(row, 1);
+        auto* itemZ0   = m_ui->tblPorts->item(row, 2);
+
+        const QString num  = itemNum  ? itemNum->text().trimmed()  : QString();
+        const QString volt = itemVolt ? itemVolt->text().trimmed() : QString();
+        const QString z0   = itemZ0   ? itemZ0->text().trimmed()   : QString();
 
         auto* srcBox  = qobject_cast<QComboBox*>(m_ui->tblPorts->cellWidget(row, 3));
         auto* fromBox = qobject_cast<QComboBox*>(m_ui->tblPorts->cellWidget(row, 4));
@@ -1399,12 +1409,10 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         if (!srcVal.isEmpty()) {
             bool srcIsInt = false;
             const int srcNum = srcVal.toInt(&srcIsInt);
-
-            if (srcIsInt) {
+            if (srcIsInt)
                 argsList << QStringLiteral("source_layernum=%1").arg(srcNum);
-            } else {
+            else
                 argsList << QStringLiteral("source_layername=%1").arg(pyQuote(srcVal));
-            }
         }
 
         const QString fromName = toLayerName(fromVal);
@@ -1413,11 +1421,9 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         if (!fromName.isEmpty() && !toName.isEmpty()) {
             argsList << QStringLiteral("from_layername=%1").arg(pyQuote(fromName));
             argsList << QStringLiteral("to_layername=%1").arg(pyQuote(toName));
-        }
-        else if (!fromName.isEmpty()) {
+        } else if (!fromName.isEmpty()) {
             argsList << QStringLiteral("target_layername=%1").arg(pyQuote(fromName));
-        }
-        else if (!toName.isEmpty()) {
+        } else if (!toName.isEmpty()) {
             argsList << QStringLiteral("target_layername=%1").arg(pyQuote(toName));
         }
 
@@ -1430,15 +1436,64 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
                         .arg(argsJoined);
     }
 
-    QRegularExpression portBlock(
-        R"(simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\n(?:.|\n)*?(?=#[^\n]*simulation\s*={3,}))",
+    // ---------------------------------------------------------------------------------------------
+    // Replace first port section and delete all subsequent ones.
+    // A "port section" here means:
+    //   simulation_ports = simulation_setup.all_simulation_ports()
+    //   (blank lines and simulation_ports.add_port(...) lines)*
+    // ---------------------------------------------------------------------------------------------
+    auto isAddPortLine = [](const QString& t) -> bool {
+        return t.startsWith("simulation_ports.add_port");
+    };
+
+    struct Block { int start = -1; int end = -1; };
+    QVector<Block> blocks;
+
+    QRegularExpression startRe(
+        R"(simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\s*\n?)",
         QRegularExpression::MultilineOption);
 
-    QRegularExpressionMatch portMatch = portBlock.match(script);
+    int searchPos = 0;
+    while (true) {
+        QRegularExpressionMatch m = startRe.match(script, searchPos);
+        if (!m.hasMatch())
+            break;
 
-    if (portMatch.hasMatch()) {
-        script.replace(portBlock, portCode);
+        const int blockStart = m.capturedStart();
+        int scan = m.capturedEnd();
+
+        // scan forward while lines are empty or add_port
+        while (scan < script.size()) {
+            int lineEnd = script.indexOf('\n', scan);
+            if (lineEnd < 0) lineEnd = script.size();
+            const QString line = script.mid(scan, lineEnd - scan);
+            const QString t = line.trimmed();
+
+            if (t.isEmpty() || isAddPortLine(t)) {
+                scan = (lineEnd < script.size()) ? (lineEnd + 1) : lineEnd;
+                continue;
+            }
+            break;
+        }
+
+        blocks.push_back(Block{blockStart, scan});
+        searchPos = scan;
+    }
+
+    if (!blocks.isEmpty()) {
+        // delete from the end to keep indices valid
+        for (int i = blocks.size() - 1; i >= 1; --i) {
+            const int s = blocks[i].start;
+            const int e = blocks[i].end;
+            script.remove(s, e - s);
+        }
+
+        // replace the first block
+        const int s0 = blocks[0].start;
+        const int e0 = blocks[0].end;
+        script.replace(s0, e0 - s0, portCode);
     } else if (m_ui->tblPorts->rowCount() > 0) {
+        // no section found -> insert before "simulation ===" marker if present, else append
         QRegularExpression simMarker(
             R"(#[^\n]*simulation\s*={3,})",
             QRegularExpression::MultilineOption);
@@ -1454,6 +1509,9 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         }
     }
 
+    // ---------------------------------------------------------------------------------------------
+    // Restore editor state
+    // ---------------------------------------------------------------------------------------------
     QTextCursor oldCursor = m_ui->editRunPythonScript->textCursor();
     int oldPos    = oldCursor.position();
     int oldAnchor = oldCursor.anchor();

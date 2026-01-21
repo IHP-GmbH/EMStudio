@@ -28,35 +28,237 @@
 
 namespace
 {
-/*!*******************************************************************************************************************
- * \brief Internal implementation for parsing "settings-like" key/value pairs from Python script text.
- *
- * Shared core used by both parseSettings() and parseSettingsFromText().
- * Optional \a scriptDir and \a baseName are used to construct \c simPath.
- * \a contextForErrors is used only to enrich error messages (e.g. with a file path).
- *
- * \param content          Full Python script text to be parsed.
- * \param scriptDir        Directory where the script is conceptually located (may be empty).
- * \param baseName         Script base name without extension (may be empty).
- * \param contextForErrors Context string for error messages (e.g. file path, may be empty).
- *
- * \return Parsed settings and auxiliary information.
- **********************************************************************************************************************/
-PythonParser::Result parseSettingsImpl(const QString &content,
-                                       const QString &scriptDir,
-                                       const QString &baseName,
-                                       const QString &contextForErrors)
-{
-    PythonParser::Result result;
 
+/*!*******************************************************************************************************************
+ * \brief Remove trailing inline '#' comments from a Python expression.
+ *
+ * Strips comments starting with '#' that are not enclosed in single or double quotes.
+ * Quoted '#' characters are preserved.
+ *
+ * \param s Python expression or value string.
+ *
+ * \return String with inline comments removed and whitespace trimmed.
+ **********************************************************************************************************************/
+static QString stripInlineHashComment(QString s)
+{
+    int hashPos = -1;
+    bool inSingle = false;
+    bool inDouble = false;
+
+    for (int i = 0; i < s.size(); ++i) {
+        const QChar c = s.at(i);
+        if (c == '\'' && !inDouble)
+            inSingle = !inSingle;
+        else if (c == '\"' && !inSingle)
+            inDouble = !inDouble;
+        else if (c == '#' && !inSingle && !inDouble) {
+            hashPos = i;
+            break;
+        }
+    }
+
+    if (hashPos >= 0)
+        s = s.left(hashPos).trimmed();
+
+    return s.trimmed();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Remove surrounding single or double quotes from a string if present.
+ *
+ * If the input string is enclosed in matching single or double quotes,
+ * the quotes are removed. Otherwise, the string is returned unchanged.
+ *
+ * \param s Input string.
+ *
+ * \return Unquoted string or original string if no surrounding quotes are found.
+ **********************************************************************************************************************/
+static QString unquoteIfQuoted(QString s)
+{
+    s = s.trimmed();
+    if ((s.startsWith('\'') && s.endsWith('\'')) ||
+        (s.startsWith('\"') && s.endsWith('\"')))
+    {
+        return s.mid(1, s.size() - 2);
+    }
+    return s;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Parse a Python literal or numeric expression into a QVariant.
+ *
+ * Handles basic Python literals such as True, False, and None, quoted strings,
+ * integer and floating-point numbers (including scientific notation).
+ * If the value cannot be interpreted numerically, it is returned as a string.
+ *
+ * \param valueExprIn String representation of a Python literal or expression.
+ *
+ * \return QVariant containing the parsed value.
+ **********************************************************************************************************************/
+static QVariant parsePythonLiteralOrNumber(const QString& valueExprIn)
+{
+    QString valueExpr = valueExprIn.trimmed();
+
+    if (valueExpr == QLatin1String("True"))
+        return true;
+    if (valueExpr == QLatin1String("False"))
+        return false;
+    if (valueExpr == QLatin1String("None"))
+        return QVariant();
+
+    if ((valueExpr.startsWith('\'') && valueExpr.endsWith('\'')) ||
+        (valueExpr.startsWith('\"') && valueExpr.endsWith('\"')))
+    {
+        return valueExpr.mid(1, valueExpr.size() - 2);
+    }
+
+    bool okInt = false;
+    const qlonglong intVal = valueExpr.toLongLong(&okInt, 0);
+
+    bool okDouble = false;
+    const double dblVal = valueExpr.toDouble(&okDouble);
+
+    const QString lower = valueExpr.toLower();
+    const bool looksFloat = lower.contains('.') || lower.contains('e');
+
+    if (okInt && !looksFloat)
+        return intVal;
+    if (okDouble)
+        return dblVal;
+
+    return valueExpr;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Parse settings dictionary assignments from a Python script.
+ *
+ * Extracts assignments of the form:
+ *     settings['key'] = value
+ *
+ * The left-hand variable name is ignored. Parsed key/value pairs are stored
+ * in the \c settings map of the result structure.
+ *
+ * \param content Full Python script text.
+ * \param result  Result structure to be filled with parsed settings.
+ **********************************************************************************************************************/
+static void parseSettingsAssignments(const QString& content, PythonParser::Result& result)
+{
     QRegularExpression re(
         R"(^\s*(\w+)\s*\[\s*['"]([^'"]+)['"]\s*\]\s*=\s*(.+)$)",
         QRegularExpression::MultilineOption);
 
+    auto it = re.globalMatch(content);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        const QString key = m.captured(2);
+        QString valueExpr = m.captured(3).trimmed();
+
+        valueExpr = stripInlineHashComment(valueExpr);
+
+        const QVariant value = parsePythonLiteralOrNumber(valueExpr);
+        result.settings.insert(key, value);
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Parse legacy GDS and substrate file variables from a Python script.
+ *
+ * Extracts assignments of the form:
+ *     gds_filename = "..."
+ *     XML_filename = "..."
+ *
+ * These variables are treated as explicit file definitions and stored
+ * directly in the result structure.
+ *
+ * \param content Full Python script text.
+ * \param result  Result structure to be updated with parsed filenames.
+ **********************************************************************************************************************/
+static void parseLegacyFileVars(const QString& content, PythonParser::Result& result)
+{
     QRegularExpression fileRe(
         R"(^\s*(gds_filename|XML_filename)\s*=\s*(.+)$)",
         QRegularExpression::MultilineOption);
 
+    auto it = fileRe.globalMatch(content);
+    while (it.hasNext()) {
+        QRegularExpressionMatch m = it.next();
+        const QString var = m.captured(1);
+        QString valueExpr = m.captured(2).trimmed();
+
+        valueExpr = stripInlineHashComment(valueExpr);
+        valueExpr = unquoteIfQuoted(valueExpr);
+
+        if (var == QLatin1String("gds_filename"))
+            result.gdsFilename = valueExpr;
+        else if (var == QLatin1String("XML_filename"))
+            result.xmlFilename = valueExpr;
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Infer GDS and substrate file paths from parsed settings values.
+ *
+ * Attempts to determine GDS and XML file paths using the following priority:
+ *  - Explicit legacy variables (gds_filename / XML_filename)
+ *  - Explicit settings keys (GdsFile / SubstrateFile)
+ *  - Fallback: any string-valued setting ending with .gds or .xml
+ *
+ * Existing explicit filenames are not overwritten by inferred values.
+ *
+ * \param result Result structure containing parsed settings and filenames.
+ **********************************************************************************************************************/
+static void inferFilesFromSettings(PythonParser::Result& result)
+{
+    auto endsWithCi = [](const QString& s, const QString& suf) -> bool {
+        return s.trimmed().toLower().endsWith(suf);
+    };
+
+    auto vToString = [](const QVariant& v) -> QString {
+        return (v.type() == QVariant::String) ? v.toString() : QString();
+    };
+
+    if (result.gdsFilename.trimmed().isEmpty() && result.settings.contains(QStringLiteral("GdsFile"))) {
+        const QString s = vToString(result.settings.value(QStringLiteral("GdsFile")));
+        if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".gds")))
+            result.gdsFilename = s;
+    }
+
+    if (result.xmlFilename.trimmed().isEmpty() && result.settings.contains(QStringLiteral("SubstrateFile"))) {
+        const QString s = vToString(result.settings.value(QStringLiteral("SubstrateFile")));
+        if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".xml")))
+            result.xmlFilename = s;
+    }
+
+    for (auto it = result.settings.constBegin(); it != result.settings.constEnd(); ++it) {
+        const QString s = vToString(it.value());
+        if (s.isEmpty())
+            continue;
+
+        if (result.gdsFilename.trimmed().isEmpty() && endsWithCi(s, QStringLiteral(".gds")))
+            result.gdsFilename = s;
+
+        if (result.xmlFilename.trimmed().isEmpty() && endsWithCi(s, QStringLiteral(".xml")))
+            result.xmlFilename = s;
+
+        if (!result.gdsFilename.trimmed().isEmpty() && !result.xmlFilename.trimmed().isEmpty())
+            break;
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Parse documentation blocks and inline tags associated with settings.
+ *
+ * Processes special comment annotations such as:
+ *     @param, @brief, @details, @default
+ *
+ * Documentation blocks are associated with the following setting assignment
+ * and stored as human-readable tooltips in the result structure.
+ *
+ * \param content Full Python script text.
+ * \param result  Result structure to be filled with setting documentation.
+ **********************************************************************************************************************/
+static void parseSettingTips(const QString& content, PythonParser::Result& result)
+{
     QRegularExpression paramRe  (R"(^\s*#\s*@param\s+([^\s]+).*$)");
     QRegularExpression briefRe  (R"(^\s*#\s*@brief\s*(.*)$)");
     QRegularExpression detailsRe(R"(^\s*#\s*@details\s*(.*)$)");
@@ -67,108 +269,6 @@ PythonParser::Result parseSettingsImpl(const QString &content,
 
     QRegularExpression inlineTagRe(R"(#\s*@(\w+)\s*(.*)$)");
 
-    // ---------------- parse settings assignments ----------------
-    auto it = re.globalMatch(content);
-    while (it.hasNext())
-    {
-        QRegularExpressionMatch m = it.next();
-        const QString key = m.captured(2);
-        QString valueExpr = m.captured(3).trimmed();
-
-        // strip trailing inline '#' comments (but keep quoted '#')
-        int hashPos = -1;
-        bool inSingle = false;
-        bool inDouble = false;
-        for (int i = 0; i < valueExpr.size(); ++i)
-        {
-            const QChar c = valueExpr.at(i);
-            if (c == '\'' && !inDouble)
-                inSingle = !inSingle;
-            else if (c == '\"' && !inSingle)
-                inDouble = !inDouble;
-            else if (c == '#' && !inSingle && !inDouble)
-            {
-                hashPos = i;
-                break;
-            }
-        }
-        if (hashPos >= 0)
-            valueExpr = valueExpr.left(hashPos).trimmed();
-
-        QVariant value;
-        if (valueExpr == QLatin1String("True"))
-            value = true;
-        else if (valueExpr == QLatin1String("False"))
-            value = false;
-        else if (valueExpr == QLatin1String("None"))
-            value = QVariant();
-        else if ((valueExpr.startsWith('\'') && valueExpr.endsWith('\'')) ||
-                 (valueExpr.startsWith('\"') && valueExpr.endsWith('\"')))
-        {
-            value = valueExpr.mid(1, valueExpr.size() - 2);
-        }
-        else
-        {
-            bool okInt = false;
-            qlonglong intVal = valueExpr.toLongLong(&okInt, 0);
-
-            bool okDouble = false;
-            double dblVal = valueExpr.toDouble(&okDouble);
-
-            QString lower = valueExpr.toLower();
-            const bool looksFloat = lower.contains('.') || lower.contains('e');
-
-            if (okInt && !looksFloat)
-                value = intVal;
-            else if (okDouble)
-                value = dblVal;
-            else
-                value = valueExpr;
-        }
-
-        result.settings.insert(key, value);
-    }
-
-    // ---------------- parse filenames (gds_filename / XML_filename) ----------------
-    auto fit = fileRe.globalMatch(content);
-    while (fit.hasNext())
-    {
-        QRegularExpressionMatch m = fit.next();
-        QString var = m.captured(1);
-        QString valueExpr = m.captured(2).trimmed();
-
-        int hashPos = -1;
-        bool inSingle = false;
-        bool inDouble = false;
-        for (int i = 0; i < valueExpr.size(); ++i)
-        {
-            const QChar c = valueExpr.at(i);
-            if (c == '\'' && !inDouble)
-                inSingle = !inSingle;
-            else if (c == '\"' && !inSingle)
-                inDouble = !inDouble;
-            else if (c == '#' && !inSingle && !inDouble)
-            {
-                hashPos = i;
-                break;
-            }
-        }
-        if (hashPos >= 0)
-            valueExpr = valueExpr.left(hashPos).trimmed();
-
-        if ((valueExpr.startsWith('\'') && valueExpr.endsWith('\'')) ||
-            (valueExpr.startsWith('\"') && valueExpr.endsWith('\"')))
-        {
-            valueExpr = valueExpr.mid(1, valueExpr.size() - 2);
-        }
-
-        if (var == QLatin1String("gds_filename"))
-            result.gdsFilename = valueExpr;
-        else if (var == QLatin1String("XML_filename"))
-            result.xmlFilename = valueExpr;
-    }
-
-    // ---------------- parse doc blocks into settingTips ----------------
     QString currentKey;
     QString brief, details, deflt;
 
@@ -181,18 +281,15 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     {
         k = k.trimmed();
 
-        if (k.contains('.') && !k.contains('['))
-        {
+        if (k.contains('.') && !k.contains('[')) {
             const int dot = k.lastIndexOf('.');
-            if (dot > 0)
-            {
+            if (dot > 0) {
                 const QString lhs = k.left(dot).trimmed();
                 const QString rhs = k.mid(dot + 1).trimmed();
                 if (!lhs.isEmpty() && !rhs.isEmpty())
                     return QStringLiteral("%1['%2']").arg(lhs, rhs);
             }
         }
-
         return k;
     };
 
@@ -205,8 +302,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
 
         QRegularExpression dictKeyRe(R"(^\s*\w+\s*\[\s*['"]([^'"]+)['"]\s*\]\s*$)");
         QRegularExpressionMatch mm = dictKeyRe.match(key);
-        if (mm.hasMatch())
-        {
+        if (mm.hasMatch()) {
             const QString alias = mm.captured(1).trimmed();
             if (!alias.isEmpty() && !result.settingTips.contains(alias))
                 result.settingTips.insert(alias, tipText);
@@ -222,15 +318,13 @@ PythonParser::Result parseSettingsImpl(const QString &content,
         if (!brief.trimmed().isEmpty())
             tip += brief.trimmed();
 
-        if (!details.trimmed().isEmpty())
-        {
+        if (!details.trimmed().isEmpty()) {
             if (!tip.isEmpty())
                 tip += "\n\n";
             tip += details.trimmed();
         }
 
-        if (!deflt.trimmed().isEmpty())
-        {
+        if (!deflt.trimmed().isEmpty()) {
             if (!tip.isEmpty())
                 tip += "\n\n";
             tip += QStringLiteral("Default: %1").arg(deflt.trimmed());
@@ -257,20 +351,17 @@ PythonParser::Result parseSettingsImpl(const QString &content,
         if (txt.isEmpty())
             return;
 
-        if (tag == QLatin1String("brief"))
-        {
+        if (tag == QLatin1String("brief")) {
             brief = txt;
             last = LastSection::Brief;
             pendingDoc = true;
         }
-        else if (tag == QLatin1String("details"))
-        {
+        else if (tag == QLatin1String("details")) {
             details = txt;
             last = LastSection::Details;
             pendingDoc = true;
         }
-        else if (tag == QLatin1String("default"))
-        {
+        else if (tag == QLatin1String("default")) {
             deflt = txt;
             last = LastSection::Default;
             pendingDoc = true;
@@ -282,12 +373,10 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     {
         const QString t = line.trimmed();
 
-        // ---------------- comment lines ----------------
         if (t.startsWith('#'))
         {
             QRegularExpressionMatch pm = paramRe.match(line);
-            if (pm.hasMatch())
-            {
+            if (pm.hasMatch()) {
                 commit();
                 currentKey = normalizeKey(pm.captured(1));
                 pendingDoc = true;
@@ -296,8 +385,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             }
 
             QRegularExpressionMatch bm = briefRe.match(line);
-            if (bm.hasMatch())
-            {
+            if (bm.hasMatch()) {
                 brief = bm.captured(1).trimmed();
                 last = LastSection::Brief;
                 pendingDoc = true;
@@ -305,8 +393,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             }
 
             QRegularExpressionMatch dm = detailsRe.match(line);
-            if (dm.hasMatch())
-            {
+            if (dm.hasMatch()) {
                 details = dm.captured(1).trimmed();
                 last = LastSection::Details;
                 pendingDoc = true;
@@ -314,15 +401,13 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             }
 
             QRegularExpressionMatch dfm = defaultRe.match(line);
-            if (dfm.hasMatch())
-            {
+            if (dfm.hasMatch()) {
                 deflt = dfm.captured(1).trimmed();
                 last = LastSection::Default;
                 pendingDoc = true;
                 continue;
             }
 
-            // Free text continuation "# something..."
             QString c = t.mid(1).trimmed();
             if (c.startsWith('@'))
                 continue;
@@ -336,13 +421,11 @@ PythonParser::Result parseSettingsImpl(const QString &content,
                 brief += "\n" + c;
             else if (last == LastSection::Default && !deflt.isEmpty())
                 deflt += " " + c;
-            else if (!details.isEmpty())
-            {
+            else if (!details.isEmpty()) {
                 details += "\n" + c;
                 last = LastSection::Details;
             }
-            else if (!brief.isEmpty())
-            {
+            else if (!brief.isEmpty()) {
                 brief += "\n" + c;
                 last = LastSection::Brief;
             }
@@ -350,17 +433,13 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             continue;
         }
 
-        // ---------------- non-comment lines ----------------
-
+        // non-comment lines
         if (pendingDoc && currentKey.isEmpty())
         {
             QRegularExpressionMatch am = assignRe.match(line);
-            if (am.hasMatch())
-            {
+            if (am.hasMatch()) {
                 currentKey = normalizeKey(am.captured(1));
-
                 applyInlineTag(line);
-
                 commit();
                 continue;
             }
@@ -371,26 +450,22 @@ PythonParser::Result parseSettingsImpl(const QString &content,
             applyInlineTag(line);
 
             QRegularExpressionMatch am = assignRe.match(line);
-            if (am.hasMatch())
-            {
+            if (am.hasMatch()) {
                 commit();
                 continue;
             }
 
-            if (!t.isEmpty())
-            {
+            if (!t.isEmpty()) {
                 commit();
                 continue;
             }
         }
 
-        // settings['fstop'] = ... # @brief ...
         QRegularExpressionMatch am2 = assignRe.match(line);
         if (am2.hasMatch())
         {
             QRegularExpressionMatch im = inlineTagRe.match(line);
-            if (im.hasMatch())
-            {
+            if (im.hasMatch()) {
                 const QString tag = im.captured(1).trimmed().toLower();
                 if (tag == QLatin1String("brief") ||
                     tag == QLatin1String("details") ||
@@ -405,28 +480,69 @@ PythonParser::Result parseSettingsImpl(const QString &content,
         }
     }
 
-    commit(); // flush at EOF
+    commit();
+}
 
+/*!*******************************************************************************************************************
+ * \brief Finalize parsing result and derive auxiliary information.
+ *
+ * Constructs the simulation path from \a scriptDir and \a baseName if provided,
+ * and sets the final status flags and error messages in the result structure.
+ *
+ * \param scriptDir        Directory where the script is conceptually located.
+ * \param baseName         Script base name without extension.
+ * \param contextForErrors Context string used to enrich error messages.
+ * \param result           Result structure to be finalized.
+ **********************************************************************************************************************/
+static void finalizeResult(const QString& scriptDir,
+                           const QString& baseName,
+                           const QString& contextForErrors,
+                           PythonParser::Result& result)
+{
     if (!scriptDir.isEmpty() && !baseName.isEmpty())
         result.simPath = QDir(scriptDir).filePath(baseName);
 
-    if (result.settings.isEmpty())
-    {
+    if (result.settings.isEmpty()) {
         if (!contextForErrors.isEmpty())
             result.error = QStringLiteral("No settings-like assignments found in %1").arg(contextForErrors);
         else
             result.error = QStringLiteral("No settings-like assignments found in input text.");
-    }
-    else
-    {
+    } else {
         result.ok = true;
     }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Parse "settings-like" key/value pairs and metadata from a Python script.
+ *
+ * This function coordinates parsing of settings dictionary assignments,
+ * legacy file variables, inferred file paths, and documentation blocks.
+ * It also derives auxiliary information such as the simulation output path.
+ *
+ * \param content          Full Python script text to be parsed.
+ * \param scriptDir        Directory where the script is conceptually located (may be empty).
+ * \param baseName         Script base name without extension (may be empty).
+ * \param contextForErrors Context string used to enrich error messages (may be empty).
+ *
+ * \return Parsed settings and auxiliary information.
+ **********************************************************************************************************************/
+PythonParser::Result parseSettingsImpl(const QString &content,
+                                       const QString &scriptDir,
+                                       const QString &baseName,
+                                       const QString &contextForErrors)
+{
+    PythonParser::Result result;
+
+    parseSettingsAssignments(content, result);
+    parseLegacyFileVars(content, result);
+    inferFilesFromSettings(result);
+    parseSettingTips(content, result);
+    finalizeResult(scriptDir, baseName, contextForErrors, result);
 
     return result;
 }
 
-
-} // close namespce
+} // namespace
 
 /*!*******************************************************************************************************************
  * \brief Try to parse "settings-like" key/value pairs from Palace Python model file.

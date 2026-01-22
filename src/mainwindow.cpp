@@ -2635,7 +2635,9 @@ void MainWindow::appendParsedPortsToTable(const QVector<PortInfo>& ports)
         }
 
         directionBox->addItems(QStringList() << "x" << "y" << "z" << "-x" << "-y" << "-z");
-        directionBox->setCurrentText(p.direction.isEmpty() ? "z" : p.direction);
+
+        QString dir = p.direction.toLower();
+        directionBox->setCurrentText(p.direction.isEmpty() ? "z" : dir);
 
         const QString srcVal = p.sourceLayer.isEmpty()
                                    ? (gdsNums.isEmpty() ? QString() : QString::number(gdsNums.first()))

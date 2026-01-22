@@ -2011,7 +2011,7 @@ void MainWindow::runPalace()
         }
     }
 
-    QString runDir = m_simSettings.value("RunDir").toString().trimmed();
+    /*QString runDir = m_simSettings.value("RunDir").toString().trimmed();
     if (runDir.isEmpty()) {
         QFileInfo fi(modelWin);
         const QString baseName = fi.completeBaseName();
@@ -2024,7 +2024,17 @@ void MainWindow::runPalace()
         runDir = baseDir.filePath(QStringLiteral("palace_model/%1_data").arg(baseName));
 
         m_simSettings["RunDir"] = runDir;
+    }*/
+
+    QFileInfo fi(modelWin);
+    const QString baseName = fi.completeBaseName();
+    if (baseName.isEmpty()) {
+        error("Cannot infer Palace run directory (empty model basename).", true);
+        return;
     }
+
+    QDir baseDir(fi.absolutePath());
+    QString runDir = baseDir.filePath(QStringLiteral("palace_model/%1_data").arg(baseName));
 
     QString palaceRoot = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
     if (palaceRoot.isEmpty()) {

@@ -155,6 +155,8 @@ private:
     void                            loadPythonScriptToEditor(const QString &filePath);
     void                            setLineEditPalette(QLineEdit* lineEdit, const QString& path);
 
+    bool                            readTextFileUtf8(const QString &fileName, QString &outText);
+
     void                            updateSubLayerNamesCheckboxState();
     void                            rebuildLayerMapping();
 

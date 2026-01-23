@@ -82,3 +82,39 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 
 RESOURCES += \
     icons.qrc
+
+SCRIPTS_SRC_DIR = $$clean_path($$PWD/scripts)
+
+# Determine output subdir (debug/release)
+OUT_SUBDIR = $$DESTDIR
+isEmpty(OUT_SUBDIR) {
+    CONFIG(debug, debug|release) {
+        OUT_SUBDIR = debug
+    } else {
+        OUT_SUBDIR = release
+    }
+}
+
+SCRIPTS_DST_DIR = $$clean_path($$OUT_PWD/$$OUT_SUBDIR/scripts)
+
+win32 {
+    SRC_WIN = $$shell_path($$SCRIPTS_SRC_DIR)
+    DST_WIN = $$shell_path($$SCRIPTS_DST_DIR)
+
+    QMAKE_POST_LINK += $$quote(cmd /c echo [EMStudio] Copy scripts: "$$SRC_WIN" ^> "$$DST_WIN") $$escape_expand(\\n\\t)
+
+    # If destination exists as a FILE (not a dir), remove it (otherwise mkdir/xcopy fails)
+    QMAKE_POST_LINK += $$quote(cmd /c if exist "$$DST_WIN" if not exist "$$DST_WIN\\NUL" del /F /Q "$$DST_WIN") $$escape_expand(\\n\\t)
+
+    QMAKE_POST_LINK += $$quote(cmd /c if not exist "$$DST_WIN" mkdir "$$DST_WIN") $$escape_expand(\\n\\t)
+
+    # Copy folder contents recursively
+    QMAKE_POST_LINK += $$quote(cmd /c xcopy /E /I /H /K /Y "$$SRC_WIN\\*" "$$DST_WIN\\" ^>nul) $$escape_expand(\\n\\t)
+}
+
+unix {
+    SCRIPTS_DST_DIR = $$clean_path($$OUT_PWD/$$OUT_SUBDIR/scripts)
+    QMAKE_POST_LINK += $$quote(echo "[EMStudio] Copy scripts: $$SCRIPTS_SRC_DIR -> $$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
+    QMAKE_POST_LINK += $$quote(mkdir -p "$$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
+    QMAKE_POST_LINK += $$quote(cp -R "$$SCRIPTS_SRC_DIR"/. "$$SCRIPTS_DST_DIR"/) $$escape_expand(\\n\\t)
+}

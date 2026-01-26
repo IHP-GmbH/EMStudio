@@ -46,8 +46,8 @@ os.chdir(modelDir)
 settings = {}
 
 settings['purpose'] = [0] # @brief Which GDSII data type is evaluated? Values in [] can be separated by comma
-settings['preprocess_gds'] = False  # @brief  Preprocess GDSII for safe handling of cutouts/holes?
-settings['merge_polygon_size'] = 0 #  @brief  Merge via polygons with distance less than .. microns, set to 0 to disable via merging.
+settings['preprocess_gds'] = True  # @brief  Preprocess GDSII for safe handling of cutouts/holes?
+settings['merge_polygon_size'] = 0.5 #  @brief  Merge via polygons with distance less than .. microns, set to 0 to disable via merging.
 
 settings['unit']   = 1e-6  # @brief Geometry units, 1E-6 is in microns
 settings['margin'] = 50    # @brief Distance from GDSII geometry boundary to stackup boundary, in project units
@@ -72,9 +72,6 @@ settings['adaptive_mesh_iterations'] = 0  # @brief adaptive mesh iterations, def
 # Excitations can be switched off by voltage=0, those S-parameter will be incomplete then
 
 simulation_ports = simulation_setup.all_simulation_ports()
-# instead of in-plane port specified with target_layername, we here use via port specified with from_layername and to_layername
-simulation_ports.add_port(simulation_setup.simulation_port(portnumber=1, voltage=1, port_Z0=50, source_layernum=201, from_layername='Metal1', to_layername='TopMetal2', direction='z'))
-simulation_ports.add_port(simulation_setup.simulation_port(portnumber=2, voltage=1, port_Z0=50, source_layernum=202, from_layername='Metal1', to_layername='TopMetal2', direction='z'))
 
 
 # ======================== simulation ================================

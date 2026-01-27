@@ -475,6 +475,10 @@ QString MainWindow::queryWslCpuCores(const QString &distro) const
  **********************************************************************************************************************/
 QString MainWindow::detectMpiCoreCount(const QString &distro) const
 {
+#ifndef Q_OS_WIN
+    Q_UNUSED(distro);
+#endif
+
     QProcess p;
 
 #ifdef Q_OS_WIN

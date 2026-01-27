@@ -124,7 +124,12 @@ win32 {
 }
 
 unix {
-    QMAKE_POST_LINK += $$quote(echo "[EMStudio] Copy scripts: $$SCRIPTS_SRC_DIR -> $$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(mkdir -p "$$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(cp -R "$$SCRIPTS_SRC_DIR"/. "$$SCRIPTS_DST_DIR"/) $$escape_expand(\\n\\t)
+    !equals($$clean_path($$OUT_PWD), $$clean_path($$PWD)) {
+        QMAKE_POST_LINK += $$quote(echo "[EMStudio] Copy scripts: $$SCRIPTS_SRC_DIR to $$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
+        QMAKE_POST_LINK += $$quote(mkdir -p "$$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
+        QMAKE_POST_LINK += $$quote(cp -R "$$SCRIPTS_SRC_DIR"/. "$$SCRIPTS_DST_DIR"/) $$escape_expand(\\n\\t)
+    } else {
+        QMAKE_POST_LINK += $$quote(echo "[EMStudio] In-source build detected, using existing scripts directory") $$escape_expand(\\n\\t)
+    }
 }
+

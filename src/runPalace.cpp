@@ -480,9 +480,9 @@ QString MainWindow::detectMpiCoreCount(const QString &distro) const
 #ifdef Q_OS_WIN
     QStringList args;
     args << "-d" << distro << "--" << "nproc";
-    p.start("wsl", args);
+    p.start(QStringLiteral("wsl"), args);
 #else
-    p.start("nproc");
+    p.start(QStringLiteral("nproc"), QStringList());
 #endif
 
     if (!p.waitForFinished(2000))

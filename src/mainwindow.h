@@ -267,7 +267,8 @@ private:
     void                            logPalaceStartupInfo(const PalaceRunContext &ctx);
 
     void                            startPalacePythonStage(const PalaceRunContext &ctx);
-    void                            startPalaceSolverStage(PalaceRunContext &ctx); // ctx gets config paths filled
+    void                            startPalaceSolverStage(PalaceRunContext &ctx);
+    QString                         queryWslCpuCores(const QString &distro) const;
 
     void                            connectPalaceProcessIo();
     void                            onPalaceProcessFinished(int exitCode);

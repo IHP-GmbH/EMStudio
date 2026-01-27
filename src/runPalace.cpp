@@ -434,6 +434,35 @@ QString MainWindow::findPalaceConfigJson(const QString &runDir) const
 }
 
 /*!*******************************************************************************************************************
+ * \brief Queries the number of available CPU cores inside WSL.
+ *
+ * Executes the \c nproc command inside the specified WSL distribution and returns
+ * the number of logical CPU cores visible to Linux. This reflects possible limits
+ * imposed by .wslconfig (e.g. processors=).
+ *
+ * \param distro WSL distribution name (e.g. "Ubuntu").
+ *
+ * \return Number of CPU cores reported by \c nproc, or an empty string on failure.
+ **********************************************************************************************************************/
+QString MainWindow::queryWslCpuCores(const QString &distro) const
+{
+    QProcess p;
+
+    QStringList args;
+    args << "-d" << distro << "--" << "nproc";
+
+    p.start(QStringLiteral("wsl"), args);
+
+    if (!p.waitForFinished(3000))
+        return QString();
+
+    if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
+        return QString();
+
+    return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+}
+
+/*!*******************************************************************************************************************
  * \brief Starts the Palace solver stage.
  *
  * Determines the Palace configuration file to use and launches the solver
@@ -511,12 +540,21 @@ void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
 #ifdef Q_OS_WIN
     const QString distro = m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed();
 
-    const QString cmd =
-        QString("cd \"%1\" && "
-                "\"%2\" --launcher-args --oversubscribe "
-                "-np $(/usr/bin/nproc 2>/dev/null || nproc 2>/dev/null || echo 1) "
-                "\"%3\"")
-            .arg(configDirLinux, palaceExeLinux2, configBaseLinux);
+    const QString coreExpr = QStringLiteral("$(/usr/bin/nproc 2>/dev/null || nproc 2>/dev/null || echo 1)");
+    const QString palaceCmd = QString("\"%1\" --launcher-args --oversubscribe -np %2 \"%3\"")
+                                      .arg(palaceExeLinux2, coreExpr, configBaseLinux);
+
+    const QString cmd = QString("cd \"%1\" && %2").arg(configDirLinux, palaceCmd);
+
+    appendToSimulationLog(QString("[Palace solver command]\n  %1\n").arg(cmd).toUtf8());
+
+    const QString cores = queryWslCpuCores(distro);
+
+    if (!cores.isEmpty()) {
+        appendToSimulationLog(QString("[MPI cores]\n  np = %1\n").arg(cores).toUtf8());
+    } else {
+        appendToSimulationLog("[MPI cores]\n  np = nproc (failed to query value)\n");
+    }
 
     QStringList argsPalace;
     argsPalace << "-d" << distro

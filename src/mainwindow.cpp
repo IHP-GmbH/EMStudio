@@ -734,8 +734,6 @@ void MainWindow::onSimulationSettingChanged(QtProperty* property, const QVariant
     setStateChanged();
 }
 
-
-
 /*!*******************************************************************************************************************
  * \brief Handles item clicks in the run control list, triggering tab switching based on selected item.
  * \param item The clicked list item.
@@ -1174,377 +1172,6 @@ void MainWindow::on_txtRunPythonScript_textChanged(const QString &arg1)
 }
 
 /*!*******************************************************************************************************************
- * \brief Loads the Python simulation script into the editor and updates its parameters according to current settings.
- *
- * Depending on the active simulation tool, replaces either OpenEMS-style parameters
- * (top-level assignments like \c unit = 1e-6) or Palace-style parameters
- * (dictionary-style assignments like \c settings['unit'] = 1e-6) with the current values
- * from \c m_simSettings. The replacement ensures that the Python script reflects the
- * simulation parameters currently stored in the GUI and the run configuration JSON.
- *
- * Additionally, this function updates:
- * - The GDS and XML file paths (\c gds_filename, \c XML_filename)
- * - The list of defined simulation ports
- *
- * The modified script is then displayed in \c editRunPythonScript for user review and editing.
- *
- * \param filePath Path to the Python script file to load and update.
- **********************************************************************************************************************/
-void MainWindow::loadPythonScriptToEditor(const QString &filePath)
-{
-    QString script;
-
-    if (!m_ui->editRunPythonScript->document()->isModified()) {
-        QFile file(filePath);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            error(QString("Failed to load Python script: %1").arg(file.errorString()), false);
-            return;
-        }
-        script = QString::fromUtf8(file.readAll());
-        file.close();
-    } else {
-        script = m_ui->editRunPythonScript->toPlainText();
-    }
-
-    const QString simKey = currentSimToolKey().toLower();
-
-    if (simKey == QLatin1String("openems")) {
-        const QStringList keysToReplace = {
-            "unit", "margin", "fstart", "fstop", "numfreq", "refined_cellsize",
-            "preview_only", "postprocess_only"
-        };
-
-        for (const QString &key : keysToReplace) {
-            if (!m_simSettings.contains(key))
-                continue;
-
-            QVariant value = m_simSettings.value(key);
-            QString strValue;
-
-            if (value.type() == QVariant::Double)
-                strValue = QString::number(value.toDouble(), 'g', 12);
-            else if (value.type() == QVariant::Int)
-                strValue = QString::number(value.toInt());
-            else if (value.type() == QVariant::Bool)
-                strValue = value.toBool() ? "True" : "False";
-            else
-                continue;
-
-            QRegularExpression reVar(
-                QString(R"(^(\s*%1\s*=\s*)([^#\n]*?)(\s*#.*)?$)")
-                    .arg(QRegularExpression::escape(key)),
-                QRegularExpression::MultilineOption);
-            script.replace(reVar, QStringLiteral("\\1%1\\3").arg(strValue));
-
-            QRegularExpression reDict(
-                QString(R"(^(\s*(\w+)\s*\[\s*['"]%1['"]\s*\]\s*=\s*)([^#\n]*?)(\s*#.*)?$)")
-                    .arg(QRegularExpression::escape(key)),
-                QRegularExpression::MultilineOption);
-            script.replace(reDict, QStringLiteral("\\1%1\\4").arg(strValue));
-        }
-
-        QStringList bndKeys = {"X-", "X+", "Y-", "Y+", "Z-", "Z+"};
-        QStringList bndValues;
-        QVariantMap bndMap;
-        if (m_simSettings.contains("Boundaries"))
-            bndMap = m_simSettings["Boundaries"].toMap();
-        for (const QString &key : bndKeys)
-            bndValues << bndMap.value(key, "PEC").toString();
-
-        const QString bndPython = QString("['%1']").arg(bndValues.join("', '"));
-
-        QRegularExpression reSettings(
-            R"(^\s*(\w+)\s*\[\s*['"]Boundaries['"]\s*\]\s*=\s*.*$)",
-            QRegularExpression::MultilineOption);
-        script.replace(reSettings, QString("\\1['Boundaries'] = %1").arg(bndPython));
-
-        QRegularExpression reBnd("^Boundaries\\s*=.*$", QRegularExpression::MultilineOption);
-        script.replace(reBnd, QString("Boundaries = %1").arg(bndPython));
-    }
-    else if (simKey == QLatin1String("palace")) {
-        for (auto it = m_simSettings.constBegin(); it != m_simSettings.constEnd(); ++it) {
-            const QString &key = it.key();
-
-            if (key == QLatin1String("Boundaries") ||
-                key == QLatin1String("Ports") ||
-                key == QLatin1String("GdsFile") ||
-                key == QLatin1String("SubstrateFile") ||
-                key == QLatin1String("RunDir") ||
-                key == QLatin1String("RunPythonScript"))
-                continue;
-
-            QVariant value = it.value();
-            QString strValue;
-
-            if (value.type() == QVariant::Double)
-                strValue = QString::number(value.toDouble(), 'g', 12);
-            else if (value.type() == QVariant::Int ||
-                     value.type() == QVariant::LongLong ||
-                     value.type() == QVariant::UInt ||
-                     value.type() == QVariant::ULongLong)
-                strValue = QString::number(value.toLongLong());
-            else if (value.type() == QVariant::Bool)
-                strValue = value.toBool() ? "True" : "False";
-            else
-                continue;
-
-            QRegularExpression re(
-                QString(R"(^(\s*\w+\s*\[\s*['"]%1['"]\s*\]\s*=\s*)([^#\n]*?)(\s*#.*)?$)")
-                    .arg(QRegularExpression::escape(key)),
-                QRegularExpression::MultilineOption);
-
-            script.replace(re, QStringLiteral("\\1%1\\3").arg(strValue));
-        }
-
-        if (m_simSettings.contains("Boundaries")) {
-            QStringList bndKeys = {"X-", "X+", "Y-", "Y+", "Z-", "Z+"};
-            QStringList bndValues;
-            QVariantMap bndMap = m_simSettings["Boundaries"].toMap();
-            for (const QString &key : bndKeys)
-                bndValues << bndMap.value(key, "PEC").toString();
-
-            const QString bndPython = QString("['%1']").arg(bndValues.join("', '"));
-
-            QRegularExpression reSettings(
-                R"(^\s*(\w+)\s*\[\s*['"]Boundaries['"]\s*\]\s*=\s*.*$)",
-                QRegularExpression::MultilineOption);
-            script.replace(reSettings, QString("\\1['Boundaries'] = %1").arg(bndPython));
-        }
-    }
-
-    auto makeScriptPath = [&](const QString &nativePath) -> QString {
-        QString p = nativePath;
-
-#ifdef Q_OS_WIN
-        const QString simKey = currentSimToolKey().toLower();
-        if (simKey == QLatin1String("palace")) {
-            if (!QStandardPaths::findExecutable(QStringLiteral("wsl")).isEmpty()) {
-                p = toWslPath(p);
-            }
-        }
-#else
-        Q_UNUSED(nativePath);
-#endif
-        return p;
-    };
-
-    if (m_simSettings.contains("GdsFile")) {
-        QString gdsPath = m_simSettings.value("GdsFile").toString();
-        gdsPath = makeScriptPath(gdsPath);
-
-        QRegularExpression re("^gds_filename\\s*=.*$",
-                              QRegularExpression::MultilineOption);
-        script.replace(re, QStringLiteral("gds_filename = \"%1\"").arg(gdsPath));
-    }
-
-    if (m_simSettings.contains("SubstrateFile")) {
-        QString xmlPath = m_simSettings.value("SubstrateFile").toString();
-        xmlPath = makeScriptPath(xmlPath);
-
-        QRegularExpression re("^XML_filename\\s*=.*$",
-                              QRegularExpression::MultilineOption);
-        script.replace(re, QStringLiteral("XML_filename = \"%1\"").arg(xmlPath));
-    }
-
-    if (m_ui->tblPorts->rowCount() == 0) {
-        rebuildLayerMapping();
-
-        const auto parsed = parsePortsFromScript(script);
-        if (!parsed.isEmpty())
-            appendParsedPortsToTable(parsed);
-    }
-
-    updateSubLayerNamesAutoCheck();
-
-    // ---------------------------------------------------------------------------------------------
-    // Build portCode from GUI table
-    // ---------------------------------------------------------------------------------------------
-    auto toLayerName = [&](const QString& s) -> QString {
-        bool ok = false;
-        const int n = s.toInt(&ok);
-        if (ok && m_gdsToSubName.contains(n))
-            return m_gdsToSubName.value(n);
-        return s;
-    };
-
-    auto pyQuote = [](QString s) -> QString {
-        s.replace('\\', "\\\\");
-        s.replace('\'', "\\'");
-        return "'" + s + "'";
-    };
-
-    QString portCode;
-    portCode += "simulation_ports = simulation_setup.all_simulation_ports()\n";
-
-    for (int row = 0; row < m_ui->tblPorts->rowCount(); ++row) {
-        auto* itemNum  = m_ui->tblPorts->item(row, 0);
-        auto* itemVolt = m_ui->tblPorts->item(row, 1);
-        auto* itemZ0   = m_ui->tblPorts->item(row, 2);
-
-        const QString num  = itemNum  ? itemNum->text().trimmed()  : QString();
-        const QString volt = itemVolt ? itemVolt->text().trimmed() : QString();
-        const QString z0   = itemZ0   ? itemZ0->text().trimmed()   : QString();
-
-        auto* srcBox  = qobject_cast<QComboBox*>(m_ui->tblPorts->cellWidget(row, 3));
-        auto* fromBox = qobject_cast<QComboBox*>(m_ui->tblPorts->cellWidget(row, 4));
-        auto* toBox   = qobject_cast<QComboBox*>(m_ui->tblPorts->cellWidget(row, 5));
-        auto* dirBox  = qobject_cast<QComboBox*>(m_ui->tblPorts->cellWidget(row, 6));
-
-        const QString srcVal  = srcBox  ? srcBox->currentText().trimmed()  : QString();
-        const QString fromVal = fromBox ? fromBox->currentText().trimmed() : QString();
-        const QString toVal   = toBox   ? toBox->currentText().trimmed()   : QString();
-        QString       dirVal  = dirBox  ? dirBox->currentText().trimmed()  : QString();
-
-        if (dirVal.isEmpty())
-            dirVal = QStringLiteral("z");
-
-        QStringList argsList;
-
-        if (!num.isEmpty())
-            argsList << QStringLiteral("portnumber=%1").arg(num);
-        if (!volt.isEmpty())
-            argsList << QStringLiteral("voltage=%1").arg(volt);
-        if (!z0.isEmpty())
-            argsList << QStringLiteral("port_Z0=%1").arg(z0);
-
-        if (!srcVal.isEmpty()) {
-            bool srcIsInt = false;
-            const int srcNum = srcVal.toInt(&srcIsInt);
-            if (srcIsInt)
-                argsList << QStringLiteral("source_layernum=%1").arg(srcNum);
-            else
-                argsList << QStringLiteral("source_layername=%1").arg(pyQuote(srcVal));
-        }
-
-        const QString fromName = toLayerName(fromVal);
-        const QString toName   = toLayerName(toVal);
-
-        if (!fromName.isEmpty() && !toName.isEmpty()) {
-            argsList << QStringLiteral("from_layername=%1").arg(pyQuote(fromName));
-            argsList << QStringLiteral("to_layername=%1").arg(pyQuote(toName));
-        } else if (!fromName.isEmpty()) {
-            argsList << QStringLiteral("target_layername=%1").arg(pyQuote(fromName));
-        } else if (!toName.isEmpty()) {
-            argsList << QStringLiteral("target_layername=%1").arg(pyQuote(toName));
-        }
-
-        argsList << QStringLiteral("direction=%1").arg(pyQuote(dirVal));
-
-        const QString argsJoined = argsList.join(QStringLiteral(", "));
-        portCode += QStringLiteral(
-                        "simulation_ports.add_port("
-                        "simulation_setup.simulation_port(%1))\n")
-                        .arg(argsJoined);
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // Replace first port section and delete all subsequent ones.
-    // A "port section" here means:
-    //   simulation_ports = simulation_setup.all_simulation_ports()
-    //   (blank lines and simulation_ports.add_port(...) lines)*
-    // ---------------------------------------------------------------------------------------------
-    auto isAddPortLine = [](const QString& t) -> bool {
-        return t.startsWith("simulation_ports.add_port");
-    };
-
-    struct Block { int start = -1; int end = -1; };
-    QVector<Block> blocks;
-
-    QRegularExpression startRe(
-        R"(simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\s*\n?)",
-        QRegularExpression::MultilineOption);
-
-    int searchPos = 0;
-    while (true) {
-        QRegularExpressionMatch m = startRe.match(script, searchPos);
-        if (!m.hasMatch())
-            break;
-
-        const int blockStart = m.capturedStart();
-        int scan = m.capturedEnd();
-
-        // scan forward while lines are empty or add_port
-        while (scan < script.size()) {
-            int lineEnd = script.indexOf('\n', scan);
-            if (lineEnd < 0) lineEnd = script.size();
-            const QString line = script.mid(scan, lineEnd - scan);
-            const QString t = line.trimmed();
-
-            if (t.isEmpty() || isAddPortLine(t)) {
-                scan = (lineEnd < script.size()) ? (lineEnd + 1) : lineEnd;
-                continue;
-            }
-            break;
-        }
-
-        blocks.push_back(Block{blockStart, scan});
-        searchPos = scan;
-    }
-
-    if (!blocks.isEmpty()) {
-        // delete from the end to keep indices valid
-        for (int i = blocks.size() - 1; i >= 1; --i) {
-            const int s = blocks[i].start;
-            const int e = blocks[i].end;
-            script.remove(s, e - s);
-        }
-
-        // replace the first block
-        const int s0 = blocks[0].start;
-        const int e0 = blocks[0].end;
-        script.replace(s0, e0 - s0, portCode);
-    } else if (m_ui->tblPorts->rowCount() > 0) {
-        // no section found -> insert before "simulation ===" marker if present, else append
-        QRegularExpression simMarker(
-            R"(#[^\n]*simulation\s*={3,})",
-            QRegularExpression::MultilineOption);
-        QRegularExpressionMatch simMatch = simMarker.match(script);
-
-        const QString injected = QStringLiteral("\n\n") + portCode + QStringLiteral("\n");
-
-        if (simMatch.hasMatch()) {
-            const int insertPos = simMatch.capturedStart();
-            script.insert(insertPos, injected);
-        } else {
-            script.append(injected);
-        }
-    }
-
-    // ---------------------------------------------------------------------------------------------
-    // Restore editor state
-    // ---------------------------------------------------------------------------------------------
-    QTextCursor oldCursor = m_ui->editRunPythonScript->textCursor();
-    int oldPos    = oldCursor.position();
-    int oldAnchor = oldCursor.anchor();
-
-    QScrollBar *vScroll = m_ui->editRunPythonScript->verticalScrollBar();
-    QScrollBar *hScroll = m_ui->editRunPythonScript->horizontalScrollBar();
-    int oldV = vScroll ? vScroll->value() : 0;
-    int oldH = hScroll ? hScroll->value() : 0;
-
-    QSignalBlocker blocker(m_ui->editRunPythonScript);
-    m_ui->editRunPythonScript->setPlainTextUndoable(script);
-    m_ui->editRunPythonScript->document()->setModified(false);
-
-    QTextDocument *doc = m_ui->editRunPythonScript->document();
-    const int len = doc->characterCount();
-    if (len > 0) {
-        oldPos    = qBound(0, oldPos,    len - 1);
-        oldAnchor = qBound(0, oldAnchor, len - 1);
-
-        QTextCursor newCursor(doc);
-        newCursor.setPosition(oldAnchor);
-        newCursor.setPosition(oldPos, QTextCursor::KeepAnchor);
-        m_ui->editRunPythonScript->setTextCursor(newCursor);
-    }
-
-    if (vScroll)
-        vScroll->setValue(qMin(oldV, vScroll->maximum()));
-    if (hScroll)
-        hScroll->setValue(qMin(oldH, hScroll->maximum()));
-}
-
-/*!*******************************************************************************************************************
  * \brief Adds a new port row to the port table with default values and available layers.
  **********************************************************************************************************************/
 void MainWindow::on_btnAddPort_clicked()
@@ -1841,512 +1468,6 @@ QString MainWindow::currentSimToolKey() const
         return {};
 
     return m_ui->cbxSimTool->itemData(idx).toString().trimmed().toLower();
-}
-
-/*!*******************************************************************************************************************
- * \brief Runs OpenEMS: writes the Python script, configures env, and launches the Python process.
- **********************************************************************************************************************/
-void MainWindow::runOpenEMS()
-{
-    if (m_simProcess) {
-        info("Simulation is already running.", true);
-        return;
-    }
-
-    on_actionSave_triggered();
-
-    QString pythonPath = m_preferences.value("Python Path").toString();
-    if (pythonPath.isEmpty())
-        pythonPath = "python";
-
-    QString runDir = m_simSettings.value("RunDir").toString();
-    if (runDir.isEmpty() || !QDir(runDir).exists()) {
-        error("Run directory not found or not specified.", true);
-        return;
-    }
-
-    const QString topCell = m_simSettings.value("TopCell").toString();
-
-    const QString scriptPath = QDir(runDir).filePath(topCell + ".py");
-    QFile scriptFile(scriptPath);
-    if (!scriptFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        error(QString("Failed to save simulation script to %1").arg(scriptPath), true);
-        return;
-    }
-
-    QTextStream out(&scriptFile);
-    out << m_ui->editRunPythonScript->toPlainText();
-    scriptFile.close();
-
-    m_simProcess = new QProcess(this);
-
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    for (auto it = m_preferences.constBegin(); it != m_preferences.constEnd(); ++it) {
-        const QString key = it.key();
-        const QString value = it.value().toString();
-
-        if (key == "Python Path") {
-            QFileInfo pythonFile(value);
-            QString pythonDir = pythonFile.absolutePath();
-            QString currentPath = env.value("PATH");
-
-            if (!currentPath.contains(pythonDir, Qt::CaseInsensitive)) {
-                env.insert("PATH", pythonDir + QDir::listSeparator() + currentPath);
-            }
-        } else if (!env.contains(key)) {
-            env.insert(key, value);
-        }
-    }
-
-    if (!env.contains("OPENEMS_INSTALL_PATH") && m_preferences.contains("OPENEMS_INSTALL_PATH")) {
-        env.insert("OPENEMS_INSTALL_PATH", m_preferences.value("OPENEMS_INSTALL_PATH").toString());
-    }
-
-    const QString origScriptPath = QFileInfo(m_ui->txtRunPythonScript->text()).absolutePath();
-#ifdef Q_OS_WIN
-    const QString pathSep = ";";
-#else
-    const QString pathSep = ":";
-#endif
-    if (env.contains("PYTHONPATH")) {
-        env.insert("PYTHONPATH", origScriptPath + pathSep + env.value("PYTHONPATH"));
-    } else {
-        env.insert("PYTHONPATH", origScriptPath);
-    }
-
-    env.remove("PYTHONHOME");
-
-    m_simProcess->setProcessEnvironment(env);
-    m_simProcess->setWorkingDirectory(runDir);
-
-    auto appendLog = [this](const QByteArray& data)
-    {
-        if (data.isEmpty())
-            return;
-
-        QSignalBlocker blocker(m_ui->editSimulationLog);
-        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-        m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
-        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-    };
-
-
-    connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [=]() {
-        appendLog(m_simProcess->readAllStandardOutput());
-    });
-    connect(m_simProcess, &QProcess::readyReadStandardError, this, [=]() {
-        appendLog(m_simProcess->readAllStandardError());
-    });
-    connect(m_simProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [=](int exitCode, QProcess::ExitStatus) {
-                const QString msg = QString("\n[Simulation finished with exit code %1]\n").arg(exitCode);
-                QSignalBlocker blocker(m_ui->editSimulationLog);
-                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                m_ui->editSimulationLog->insertPlainText(msg);
-                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                m_simProcess->deleteLater();
-                m_simProcess = nullptr;
-            });
-
-    m_ui->editSimulationLog->clear();
-    m_ui->editSimulationLog->insertPlainText("Starting OpenEMS simulation...\n");
-
-    m_simProcess->start(pythonPath, QStringList() << scriptPath);
-    if (!m_simProcess->waitForStarted(3000)) {
-        error("Failed to start simulation process.", false);
-        m_simProcess->deleteLater();
-        m_simProcess = nullptr;
-    }
-}
-
-/*!*******************************************************************************************************************
- * \brief Runs the Palace workflow under WSL in two stages.
- *
- * Stage 1: Executes the Palace Python model script (RunPythonScript) under WSL. The script
- *          is expected to generate a Palace configuration file in the run directory
- *          (RunDir) based on the current simulation settings.
- *
- * Stage 2: After the Python script finishes successfully, searches the run directory
- *          for a Palace config file (currently the newest *.json file) and launches
- *          the Palace binary under WSL with that config.
- *
- * All commands are executed inside WSL using "wsl -d <distro> -- ...". No use is made
- * of m_runFile in this flow; the Palace config is entirely produced by the Python model.
- **********************************************************************************************************************/
-void MainWindow::runPalace()
-{
-    if (m_simProcess) {
-        info("Simulation is already running.", true);
-        return;
-    }
-
-    on_actionSave_triggered();
-
-    const QString simKey = currentSimToolKey().toLower();
-    if (simKey != QLatin1String("palace")) {
-        error("Current simulation tool is not Palace.", true);
-        return;
-    }
-
-    const QString modelWin = m_simSettings.value("RunPythonScript").toString().trimmed();
-    if (modelWin.isEmpty() || !QFileInfo::exists(modelWin)) {
-        error("Palace Python model script is not specified or does not exist.", true);
-        return;
-    }
-
-    const int runMode = m_preferences.value("PALACE_RUN_MODE", 0).toInt();
-    QString launcherWin;
-
-    // Validate launcher script if we are in script mode
-    if (runMode == 1) {
-        launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
-        if (launcherWin.isEmpty() || !QFileInfo::exists(launcherWin)) {
-            error("PALACE_RUN_SCRIPT is not configured or does not exist.", true);
-            return;
-        }
-
-        QFileInfo fiLaunch(launcherWin);
-        if (!fiLaunch.isExecutable()) {
-            error("PALACE_RUN_SCRIPT must point to an executable file.", true);
-            return;
-        }
-    }
-
-    /*QString runDir = m_simSettings.value("RunDir").toString().trimmed();
-    if (runDir.isEmpty()) {
-        QFileInfo fi(modelWin);
-        const QString baseName = fi.completeBaseName();
-        if (baseName.isEmpty()) {
-            error("Cannot infer Palace run directory (empty model basename).", true);
-            return;
-        }
-
-        QDir baseDir(fi.absolutePath());
-        runDir = baseDir.filePath(QStringLiteral("palace_model/%1_data").arg(baseName));
-
-        m_simSettings["RunDir"] = runDir;
-    }*/
-
-    QFileInfo fi(modelWin);
-    const QString baseName = fi.completeBaseName();
-    if (baseName.isEmpty()) {
-        error("Cannot infer Palace run directory (empty model basename).", true);
-        return;
-    }
-
-    QDir baseDir(fi.absolutePath());
-    QString runDir = baseDir.filePath(QStringLiteral("palace_model/%1_data").arg(baseName));
-
-    QString palaceRoot = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
-    if (palaceRoot.isEmpty()) {
-        error("PALACE_INSTALL_PATH is not configured in Preferences.", true);
-        return;
-    }
-
-#ifdef Q_OS_WIN
-    if (QStandardPaths::findExecutable("wsl").isEmpty()) {
-        error("WSL is not available on this system. Install WSL or use Palace launcher mode.", true);
-        return;
-    }
-
-    const QString distro = m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed();
-
-    if (!palaceRoot.startsWith('/'))
-        palaceRoot = toWslPath(palaceRoot);
-    const QString palaceExeLinux = QDir(palaceRoot).filePath("bin/palace");
-
-    const QString modelDirLinux = toWslPath(QFileInfo(modelWin).absolutePath());
-    const QString modelLinux    = toWslPath(modelWin);
-#else
-    const QString palaceExeLinux = QDir(palaceRoot).filePath("bin/palace");
-    const QString modelDirLinux  = QFileInfo(modelWin).absolutePath();
-    const QString modelLinux     = modelWin;
-#endif
-
-    QString pythonCmd = m_preferences.value("PALACE_WSL_PYTHON").toString().trimmed();
-    if (pythonCmd.isEmpty())
-        pythonCmd = QStringLiteral("python3");
-
-    m_palacePythonOutput.clear();
-
-    m_ui->editSimulationLog->clear();
-#ifdef Q_OS_WIN
-    if (runMode == 1)
-        m_ui->editSimulationLog->insertPlainText(
-            QString("Starting Palace Python preprocessing in WSL (%1) [launcher mode]...\n")
-                .arg(distro));
-    else
-        m_ui->editSimulationLog->insertPlainText(
-            QString("Starting Palace Python preprocessing in WSL (%1)...\n").arg(distro));
-#else
-    if (runMode == 1)
-        m_ui->editSimulationLog->insertPlainText(
-            "Starting Palace Python preprocessing (launcher mode)...\n");
-    else
-        m_ui->editSimulationLog->insertPlainText(
-            "Starting Palace Python preprocessing (native)...\n");
-#endif
-    m_ui->editSimulationLog->insertPlainText(
-        QString("[Using Python: %1]\n").arg(pythonCmd));
-    m_ui->editSimulationLog->insertPlainText(
-        QString("[Initial Palace run directory guess: %1]\n").arg(runDir));
-    if (runMode == 1) {
-        m_ui->editSimulationLog->insertPlainText(
-            QString("[Launcher script: %1]\n")
-                .arg(QDir::toNativeSeparators(launcherWin)));
-    }
-
-    m_simProcess  = new QProcess(this);
-    m_palacePhase = PalacePhase::PythonModel;
-
-#ifdef Q_OS_WIN
-    QStringList argsPython;
-    argsPython << "-d" << distro
-               << "--"
-               << "bash" << "-lc"
-               << QString("cd \"%1\" && %2 \"%3\"")
-                      .arg(modelDirLinux, pythonCmd, modelLinux);
-    m_simProcess->start("wsl", argsPython);
-#else
-    m_simProcess->setWorkingDirectory(modelDirLinux);
-    QStringList argsPython;
-    argsPython << modelLinux;
-    m_simProcess->start(pythonCmd, argsPython);
-#endif
-
-    auto appendLog = [this](const QByteArray& data)
-    {
-        if (data.isEmpty())
-            return;
-
-        QSignalBlocker blocker(m_ui->editSimulationLog);
-        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-        m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
-        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-    };
-
-    connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [=]() {
-        appendLog(m_simProcess->readAllStandardOutput());
-    });
-
-    connect(m_simProcess, &QProcess::readyReadStandardError, this, [=]() {
-        appendLog(m_simProcess->readAllStandardError());
-    });
-
-    connect(m_simProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this,
-            [=](int exitCode, QProcess::ExitStatus) {
-                QSignalBlocker blocker(m_ui->editSimulationLog);
-                if (m_palacePhase == PalacePhase::PythonModel) {
-                    if (exitCode != 0) {
-                        const QString msg =
-                            QString("\n[Palace Python preprocessing finished with exit code %1]\n")
-                                .arg(exitCode);
-                        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                        m_ui->editSimulationLog->insertPlainText(msg);
-                        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-
-                        m_simProcess->deleteLater();
-                        m_simProcess  = nullptr;
-                        m_palacePhase = PalacePhase::None;
-                        return;
-                    }
-
-                    QString detectedRunDir;
-                    {
-                        QRegularExpression re(
-                            R"(Simulation data directory:\s*([^\s]+))");
-                        QRegularExpressionMatch m = re.match(m_ui->editSimulationLog->toPlainText());
-                        if (m.hasMatch()) {
-                            const QString simDirLinux = m.captured(1).trimmed();
-
-#ifdef Q_OS_WIN
-                            auto wslToWin = [](const QString& p) -> QString {
-                                if (p.startsWith("/mnt/") && p.size() > 6) {
-                                    const QChar drive = p.at(5).toUpper();
-                                    QString rest = p.mid(6);
-                                    QString win = QString("%1:/%2").arg(drive).arg(rest);
-                                    return win;
-                                }
-                                return p;
-                            };
-                            detectedRunDir = wslToWin(simDirLinux);
-#else
-                            detectedRunDir = simDirLinux;
-#endif
-                            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                            m_ui->editSimulationLog->insertPlainText(
-                                QString("[Detected Palace simulation dir: %1]\n")
-                                    .arg(detectedRunDir));
-                            m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-
-                            if (!detectedRunDir.isEmpty()) {
-                                m_simSettings["RunDir"] = detectedRunDir;
-                            }
-                        }
-                    }
-
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                    m_ui->editSimulationLog->insertPlainText(
-                        "\n[Palace Python preprocessing finished successfully, searching for config...]\n");
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-
-                    QString defRunDir = QFileInfo(m_ui->txtRunPythonScript->text()).absolutePath() +
-                                        QString("/palace_model/%1_data").arg(m_ui->cbxTopCell->currentText());
-
-                    if(!QFileInfo().exists(defRunDir)) {
-                        defRunDir = "";
-                    }
-
-                    QString searchDir = detectedRunDir.isEmpty()
-                                            ? defRunDir
-                                            : detectedRunDir;
-
-                    QDir dir(searchDir);
-                    dir.setFilter(QDir::Files | QDir::Readable | QDir::NoSymLinks);
-                    dir.setNameFilters(QStringList() << "*.json");
-                    dir.setSorting(QDir::Time | QDir::Reversed);
-                    const QFileInfoList files = dir.entryInfoList();
-
-                    if (files.isEmpty()) {
-                        error(QString("No Palace config (*.json) found in run directory: %1")
-                                  .arg(searchDir),
-                                  true);
-                        m_simProcess->deleteLater();
-                        m_simProcess  = nullptr;
-                        m_palacePhase = PalacePhase::None;
-                        return;
-                    }
-
-                    QString configPath = files.first().absoluteFilePath();
-                    foreach(const QFileInfo &fileInfo, files) {
-                        if(fileInfo.completeBaseName().toLower() == "config" &&
-                           fileInfo.completeSuffix().toLower() == "json" ) {
-                            configPath = fileInfo.absoluteFilePath();
-                            break;
-                        }
-                    }
-
-#ifdef Q_OS_WIN
-                    const QString configLinux = toWslPath(configPath);
-#else
-                    const QString configLinux = configPath;
-#endif
-
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                    m_ui->editSimulationLog->insertPlainText(
-                        QString("[Using Palace config: %1]\n").arg(configPath));
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-
-                    if (runMode == 1) {
-                        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                        m_ui->editSimulationLog->insertPlainText(
-                            "\n[Starting Palace via external launcher script...]\n");
-                        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-
-                        m_palacePhase = PalacePhase::PalaceSolver;
-
-                        QString workDir = searchDir;
-                        if (workDir.isEmpty())
-                            workDir = QFileInfo(configPath).absolutePath();
-                        m_simProcess->setWorkingDirectory(workDir);
-
-                        QStringList scriptArgs;
-                        scriptArgs << QDir::toNativeSeparators(configPath);
-
-                        m_simProcess->start(QDir::toNativeSeparators(launcherWin), scriptArgs);
-                        if (!m_simProcess->waitForStarted(3000)) {
-                            error("Failed to start Palace launcher script.", false);
-                            m_simProcess->deleteLater();
-                            m_simProcess  = nullptr;
-                            m_palacePhase = PalacePhase::None;
-                        }
-                        return;
-                    }
-
-                    // Normal WSL/native Palace solver mode
-                    const QString configDirLinux  = QFileInfo(configLinux).path();
-                    const QString configBaseLinux = QFileInfo(configLinux).fileName();
-
-                    QString palaceRoot2 = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
-#ifdef Q_OS_WIN
-                    if (!palaceRoot2.startsWith('/'))
-                        palaceRoot2 = toWslPath(palaceRoot2);
-#endif
-                    const QString palaceExeLinux2 = QDir(palaceRoot2).filePath("bin/palace");
-
-#ifdef Q_OS_WIN
-                    QString cmd = QString(
-                                      "cd \"%1\" && "
-                                      "\"%2\" --launcher-args --oversubscribe "
-                                      "-np $(/usr/bin/nproc 2>/dev/null || nproc 2>/dev/null || echo 1) "
-                                      "\"%3\"")
-                                      .arg(configDirLinux, palaceExeLinux2, configBaseLinux);
-
-                    QStringList argsPalace;
-                    argsPalace << "-d" << m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed()
-                               << "--"
-                               << "bash" << "-lc"
-                               << cmd;
-
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                    m_ui->editSimulationLog->insertPlainText(
-                        "\n[Starting Palace solver in WSL...]\n");
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-
-                    m_palacePhase = PalacePhase::PalaceSolver;
-                    m_simProcess->start("wsl", argsPalace);
-#else
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                    m_ui->editSimulationLog->insertPlainText(
-                        "\n[Starting Palace solver (native)...]\n");
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-
-                    m_palacePhase = PalacePhase::PalaceSolver;
-                    m_simProcess->setWorkingDirectory(configDirLinux);
-                    m_simProcess->start(palaceExeLinux2, QStringList() << configBaseLinux);
-#endif
-
-                    if (!m_simProcess->waitForStarted(3000)) {
-#ifdef Q_OS_WIN
-                        error("Failed to start Palace solver under WSL.", false);
-#else
-                        error("Failed to start Palace solver.", false);
-#endif
-                        m_simProcess->deleteLater();
-                        m_simProcess  = nullptr;
-                        m_palacePhase = PalacePhase::None;
-                    }
-                    return;
-                }
-
-                if (m_palacePhase == PalacePhase::PalaceSolver) {
-                    const QString msg =
-                        (runMode == 1)
-                            ? QString("\n[Palace launcher finished with exit code %1]\n")
-                                  .arg(exitCode)
-                            : QString("\n[Palace solver finished with exit code %1]\n")
-                                  .arg(exitCode);
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                    m_ui->editSimulationLog->insertPlainText(msg);
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-
-                    m_simProcess->deleteLater();
-                    m_simProcess  = nullptr;
-                    m_palacePhase = PalacePhase::None;
-                }
-            });
-
-    if (!m_simProcess->waitForStarted(3000)) {
-#ifdef Q_OS_WIN
-        error("Failed to start Palace Python preprocessing under WSL.", false);
-#else
-        error("Failed to start Palace Python preprocessing.", false);
-#endif
-        m_simProcess->deleteLater();
-        m_simProcess  = nullptr;
-        m_palacePhase = PalacePhase::None;
-    }
 }
 
 /*!*******************************************************************************************************************
@@ -2990,8 +2111,7 @@ void MainWindow::loadPythonModel(const QString &fileName)
     const QString modelType = detectModelType(text);
 
     PythonParser::Result res = PythonParser::parseSettings(fileName);
-    if (!res.ok)
-    {
+    if (!res.ok) {
         error(tr("Failed to parse Palace model file:\n%1").arg(res.error));
         return;
     }
@@ -3004,13 +2124,16 @@ void MainWindow::loadPythonModel(const QString &fileName)
     else
         simKey = QStringLiteral("palace");
 
-    int idxSim = m_ui->cbxSimTool->findData(simKey);
+    const int idxSim = m_ui->cbxSimTool->findData(simKey);
     if (idxSim >= 0 && m_ui->cbxSimTool->isEnabled())
         m_ui->cbxSimTool->setCurrentIndex(idxSim);
 
     rebuildSimulationSettingsFromPalace(res.settings, res.settingTips);
 
     const QDir modelDir(fi.absolutePath());
+
+    m_modelGdsKey.clear();
+    m_modelXmlKey.clear();
 
     if (!res.gdsFilename.isEmpty())
     {
@@ -3019,8 +2142,14 @@ void MainWindow::loadPythonModel(const QString &fileName)
             gdsPath = modelDir.filePath(gdsPath);
 
         m_ui->txtGdsFile->setText(gdsPath);
-        m_simSettings["GdsFile"] = gdsPath;
-        m_sysSettings["GdsDir"]  = QFileInfo(gdsPath).absolutePath();
+
+        m_modelGdsKey = !res.gdsSettingKey.isEmpty() ? res.gdsSettingKey
+                        : !res.gdsLegacyVar.isEmpty()  ? res.gdsLegacyVar
+                                                      : QStringLiteral("GdsFile");
+
+        m_simSettings[m_modelGdsKey] = gdsPath;
+        m_simSettings[QStringLiteral("GdsFile")] = gdsPath; // keep canonical for existing code
+        m_sysSettings["GdsDir"] = QFileInfo(gdsPath).absolutePath();
     }
 
     if (!res.xmlFilename.isEmpty())
@@ -3030,13 +2159,18 @@ void MainWindow::loadPythonModel(const QString &fileName)
             subPath = modelDir.filePath(subPath);
 
         m_ui->txtSubstrate->setText(subPath);
-        m_simSettings["SubstrateFile"] = subPath;
-        m_sysSettings["SubstrateDir"]  = QFileInfo(subPath).absolutePath();
+
+        m_modelXmlKey = !res.xmlSettingKey.isEmpty() ? res.xmlSettingKey
+                        : !res.xmlLegacyVar.isEmpty()  ? res.xmlLegacyVar
+                                                      : QStringLiteral("SubstrateFile");
+
+        m_simSettings[m_modelXmlKey] = subPath;
+        m_simSettings[QStringLiteral("SubstrateFile")] = subPath; // keep canonical for existing code
+        m_sysSettings["SubstrateDir"] = QFileInfo(subPath).absolutePath();
     }
 
     updateSubLayerNamesCheckboxState();
 
-    // Use already-read script text instead of reopening the file
     {
         QSignalBlocker blocker(m_ui->editRunPythonScript);
         m_ui->editRunPythonScript->setPlainText(text);
@@ -3056,506 +2190,282 @@ void MainWindow::loadPythonModel(const QString &fileName)
         if (QFileInfo(runDir).isRelative())
             runDir = modelDir.filePath(runDir);
 
-        QDir().mkpath(runDir);
-        m_simSettings["RunDir"] = fi.absolutePath();;
+        m_simSettings["RunDir"] = fi.absolutePath();
     }
 
     setStateSaved();
 }
 
 /*!*******************************************************************************************************************
- * \brief Rebuilds the "Simulation Settings" property group using values parsed from a Palace Python model.
- *
- * This method is called when a Palace model file is opened and parsed successfully.
- * All existing OpenEMS-related properties within the "Simulation Settings" group are removed,
- * and new properties are created dynamically for each key–value pair found in the parsed data.
- *
- * The property type (bool, int, double, string) is inferred from the QVariant type of each value.
- * This allows arbitrary Palace configuration keys to be displayed and edited directly
- * in the QtPropertyBrowser without predefined structure.
- *
- * \param settings  Map of key–value pairs extracted from the Palace Python model.
- **********************************************************************************************************************/
-void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings,
-                                                     const QMap<QString, QString>& tips)
-{
-    if (!m_simSettingsGroup || !m_variantManager)
-        return;
-
-    {
-        const auto children = m_simSettingsGroup->subProperties();
-        for (QtProperty* child : children) {
-            delete child;
-        }
-    }
-
-    const QString simTool = m_ui->cbxSimTool->currentText().trimmed();
-
-    const QString boundariesKey = [&settings]() -> QString {
-        for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
-            if (it.key().compare(QLatin1String("Boundaries"), Qt::CaseInsensitive) == 0 ||
-                it.key().compare(QLatin1String("Boundary"),   Qt::CaseInsensitive) == 0) {
-                return it.key();
-            }
-        }
-        return QString();
-    }();
-
-    if (!boundariesKey.isEmpty()) {
-        const QVariant v = settings.value(boundariesKey);
-        QStringList items;
-        const QStringList sides{ QStringLiteral("X-"), QStringLiteral("X+"),
-                                QStringLiteral("Y-"), QStringLiteral("Y+"),
-                                QStringLiteral("Z-"), QStringLiteral("Z+") };
-
-        if (v.type() == QVariant::String) {
-            QString expr = v.toString().trimmed();
-            if (expr.startsWith('[') && expr.endsWith(']'))
-                expr = expr.mid(1, expr.size() - 2);
-
-            QRegularExpression itemRe(R"(['"]([^'"]+)['"])");
-            auto itItems = itemRe.globalMatch(expr);
-            while (itItems.hasNext()) {
-                QRegularExpressionMatch m = itItems.next();
-                items << m.captured(1).trimmed();
-            }
-        }
-        else if (v.type() == QVariant::Map) {
-            const QVariantMap m = v.toMap();
-            for (const QString& s : sides)
-                items << m.value(s, QStringLiteral("PEC")).toString();
-        }
-
-        if (items.size() == 6) {
-            QtProperty* boundariesGroup = nullptr;
-            const auto topProps = m_propertyBrowser->properties();
-            for (QtProperty* top : topProps) {
-                if (top->propertyName() == QLatin1String("Boundaries")) {
-                    boundariesGroup = top;
-                    break;
-                }
-            }
-
-            if (boundariesGroup) {
-                const auto subProps = boundariesGroup->subProperties();
-                for (QtProperty* sub : subProps) {
-                    const QString sideName = sub->propertyName();
-                    int idx = sides.indexOf(sideName);
-                    if (idx < 0 || idx >= items.size())
-                        continue;
-
-                    QString valueStr = items.at(idx);
-                    QString mappedValue = valueStr;
-
-                    if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0) {
-                        if (mappedValue.compare(QLatin1String("MUR"), Qt::CaseInsensitive) == 0 ||
-                            mappedValue.compare(QLatin1String("PML_8"), Qt::CaseInsensitive) == 0 ||
-                            mappedValue.compare(QLatin1String("ABC"), Qt::CaseInsensitive) == 0) {
-                            mappedValue = QStringLiteral("Absorbing");
-                        }
-                    } else if (simTool.compare(QLatin1String("OpenEMS"), Qt::CaseInsensitive) == 0) {
-                        if (mappedValue.compare(QLatin1String("Absorbing"), Qt::CaseInsensitive) == 0) {
-                            mappedValue = QStringLiteral("MUR");
-                        }
-                    }
-
-                    items[idx] = mappedValue;
-
-                    const QStringList enumNames =
-                        m_variantManager->attributeValue(sub, QLatin1String("enumNames")).toStringList();
-                    int enumIndex = enumNames.indexOf(mappedValue);
-                    if (enumIndex >= 0)
-                        m_variantManager->setValue(sub, enumIndex);
-                }
-            }
-
-            QVariantMap bndMap;
-            for (int i = 0; i < items.size() && i < sides.size(); ++i)
-                bndMap[sides.at(i)] = items.at(i);
-            m_simSettings[QStringLiteral("Boundaries")] = bndMap;
-        }
-    }
-
-    for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
-        const QString& key = it.key();
-        const QVariant& val = it.value();
-
-        if (key.compare(QLatin1String("Boundaries"), Qt::CaseInsensitive) == 0 ||
-            key.compare(QLatin1String("Boundary"),   Qt::CaseInsensitive) == 0)
-        {
-            continue;
-        }
-
-#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
-        const QMetaType::Type t = static_cast<QMetaType::Type>(val.typeId());
-        const bool isString = (t == QMetaType::QString);
-        const bool isBool   = (t == QMetaType::Bool);
-        const bool isIntish = (t == QMetaType::Int) || (t == QMetaType::UInt) ||
-                              (t == QMetaType::LongLong) || (t == QMetaType::ULongLong);
-        const bool isDouble = (t == QMetaType::Double);
-#else
-        const QVariant::Type t = val.type();
-        const bool isString = (t == QVariant::String);
-        const bool isBool   = (t == QVariant::Bool);
-        const bool isIntish = (t == QVariant::Int) || (t == QVariant::UInt) ||
-                              (t == QVariant::LongLong) || (t == QVariant::ULongLong);
-        const bool isDouble = (t == QVariant::Double);
-#endif
-
-        int propType = QVariant::String;
-        QVariant finalValue;
-        int decimals = 12;
-        double step = 0.0;
-
-        if (isBool) {
-            propType = QVariant::Bool;
-            finalValue = val.toBool();
-        }
-        else if (isString) {
-            const QString s = val.toString().trimmed();
-            if (s.isEmpty()) {
-                propType = QVariant::String;
-                finalValue = s;
-            } else {
-                bool ok = false;
-                const double d = QLocale::c().toDouble(s, &ok);
-                if (ok) {
-                    propType = QVariant::Double;
-                    finalValue = d;
-
-                    // If string has no '.' and no 'e/E' -> treat like integer
-                    const bool stringLooksInt =
-                        !s.contains(QLatin1Char('.')) &&
-                        !s.contains(QLatin1Char('e'), Qt::CaseInsensitive);
-
-                    if (stringLooksInt) {
-                        decimals = 0;
-                        step = 1.0;
-                    } else {
-                        decimals = 12;
-                        step = 0.0;
-                    }
-                } else {
-                    propType = QVariant::String;
-                    finalValue = s;
-                }
-            }
-        }
-        else if (isIntish || isDouble) {
-            // Force ALL numeric types to Double so SciDoubleSpinBox is used
-            propType = QVariant::Double;
-            finalValue = val.toDouble();
-
-            if (isIntish) {
-                decimals = 0;
-                step = 1.0;
-            } else {
-                decimals = 12;
-                step = 0.0;
-            }
-        }
-        else {
-            propType = QVariant::String;
-            finalValue = val.toString();
-        }
-
-        if (propType == QVariant::String) {
-            if (key == finalValue.toString() || finalValue.toString().contains(".")) {
-                continue;
-            }
-        }
-
-        QtVariantProperty* prop = m_variantManager->addProperty(propType, key);
-        if (!prop)
-            continue;
-
-        auto itTip = tips.constFind(key);
-        if (itTip != tips.constEnd()) {
-            const QString tip = itTip.value();
-            prop->setToolTip(tip);
-        }
-
-        if (propType == QVariant::Double) {
-            prop->setAttribute(QLatin1String("decimals"), decimals);
-            prop->setAttribute(QLatin1String("minimum"), -std::numeric_limits<double>::max());
-            prop->setAttribute(QLatin1String("maximum"),  std::numeric_limits<double>::max());
-            prop->setAttribute(QLatin1String("singleStep"), step);
-        }
-
-        prop->setValue(finalValue);
-        m_simSettingsGroup->addSubProperty(prop);
-    }
-}
-
-/*!*******************************************************************************************************************
  * \brief Ensures that a valid Python model file path exists, invoking "Save As" if necessary.
  *
- * This function is intended to unify the save logic between regular Save and Save As actions.
- * If the current Python script path is empty or not yet defined, the user is prompted with the
- * "Save Python Model As" dialog to choose a target file and directory.
+ * If \a forceDialog is false and a script path is already set, the function returns immediately.
+ * Otherwise it prepares a suggested directory and file name, runs a Save As dialog, validates the
+ * selected folder against simulation-specific requirements, and on success stores the path in UI
+ * and preferences.
  *
- * The function performs all checks implemented in the Save As workflow, including:
- *  - Suggesting a default file name (top cell name if available, otherwise "model.py")
- *  - Verifying simulation-specific folder requirements
- *    (e.g. "modules" for OpenEMS, "gds2palace" for Palace)
- *  - Allowing the user to choose another directory, save anyway, or cancel
- *
- * If the user successfully selects a file, the internal script path and preferences
- * are updated accordingly.
- *
- * \return true if a valid Python script path is available after the call,
- *         false if the user cancels the operation.
+ * \param forceDialog If true, always opens the Save As dialog even if a path is already present.
+ * \return True if a valid Python script path is available after the call; false if the user cancels.
  **********************************************************************************************************************/
 bool MainWindow::ensurePythonScriptPathBySaveAs(bool forceDialog)
 {
-    const QString currentPath = m_ui->txtRunPythonScript->text().trimmed();
-
+    const QString currentPath = currentPythonScriptPath().trimmed();
     if (!forceDialog && !currentPath.isEmpty())
         return true;
 
-    const QString prefPath = m_preferences.value("PALACE_MODEL_FILE").toString().trimmed();
-
     QString startDir;
     QString suggestedName;
-
-    if (!currentPath.isEmpty()) {
-        QFileInfo cfi(currentPath);
-        startDir      = cfi.absolutePath();
-        suggestedName = cfi.fileName();
-    } else if (!prefPath.isEmpty()) {
-        QFileInfo pfi(prefPath);
-        startDir = pfi.absolutePath();
-
-        QString gdsPath;
-        if (m_ui->txtGdsFile)
-            gdsPath = m_ui->txtGdsFile->text().trimmed();
-
-        if (!gdsPath.isEmpty() && QFileInfo::exists(gdsPath)) {
-            QFileInfo gdsFi(gdsPath);
-            startDir = gdsFi.absolutePath();
-        } else {
-            startDir = QDir::homePath();
-        }
-
-        QString topCell =
-            m_simSettings.value("TopCell").toString().trimmed();
-        if (topCell.isEmpty() && m_ui->cbxTopCell)
-            topCell = m_ui->cbxTopCell->currentText().trimmed();
-
-        suggestedName = !topCell.isEmpty()
-                            ? (topCell + QStringLiteral(".py"))
-                            : pfi.fileName();
-    } else {
-        QString gdsPath;
-        if (m_ui->txtGdsFile)
-            gdsPath = m_ui->txtGdsFile->text().trimmed();
-
-        if (!gdsPath.isEmpty() && QFileInfo::exists(gdsPath)) {
-            QFileInfo gdsFi(gdsPath);
-            startDir = gdsFi.absolutePath();
-        } else {
-            startDir = QDir::homePath();
-        }
-
-        const QString topCell =
-            m_ui->cbxTopCell ? m_ui->cbxTopCell->currentText().trimmed() : QString();
-
-        suggestedName = !topCell.isEmpty()
-                            ? (topCell + QStringLiteral(".py"))
-                            : QStringLiteral("model.py");
-    }
+    initSaveAsSuggestion(currentPath, startDir, suggestedName);
 
     const QString simKey = currentSimToolKey().toLower();
 
-    auto requiredFolderForSim = [&](const QString &k) -> QString {
-        if (k == QLatin1String("openems"))
-            return QStringLiteral("modules");
-        if (k == QLatin1String("palace"))
-            return QStringLiteral("gds2palace");
-        return QString();
-    };
-
-    auto checkRequiredFolder = [&](const QString &dirPath, QString *missingName) -> bool {
-        const QString need = requiredFolderForSim(simKey);
-        if (need.isEmpty())
-            return true;
-
-        const QString reqPath = QDir(dirPath).filePath(need);
-        const bool ok = QDir(reqPath).exists();
-        if (!ok && missingName)
-            *missingName = need;
-        return ok;
-    };
-
-    while (true)
-    {
-        const QString defaultPath = QDir(startDir).filePath(suggestedName);
-
-        QString newPath = QFileDialog::getSaveFileName(
-            this,
-            tr("Save Python Model As"),
-            defaultPath,
-            tr("Python Files (*.py);;All Files (*)")
-            );
-
-        if (newPath.isEmpty())
+    while (true) {
+        QString chosenPath = showPythonModelSaveAsDialog(startDir, suggestedName);
+        if (chosenPath.isEmpty())
             return false;
 
-        QFileInfo fiNew(newPath);
-        if (fiNew.suffix().isEmpty())
-            newPath += QStringLiteral(".py");
+        chosenPath = ensurePySuffix(chosenPath);
 
-        QFileInfo chosenFi(newPath);
-        const QString chosenDir = chosenFi.absolutePath();
+        QString missingFolder;
+        if (!validateRequiredFolderForSim(QFileInfo(chosenPath).absolutePath(), simKey, &missingFolder)) {
+            const RequiredFolderDecision decision =
+                askMissingFolderDecision(simKey, missingFolder);
 
-        QString missing;
-        if (!checkRequiredFolder(chosenDir, &missing))
-        {
-            const QString simName =
-                (simKey == QLatin1String("openems")) ? QStringLiteral("OpenEMS") :
-                    (simKey == QLatin1String("palace"))  ? QStringLiteral("Palace")  :
-                    simKey;
-
-            QMessageBox msg(this);
-            msg.setIcon(QMessageBox::Warning);
-            msg.setWindowTitle(tr("Missing simulation modules"));
-            msg.setText(tr("The selected folder does not contain the required '%1' directory for %2.")
-                            .arg(missing, simName));
-            msg.setInformativeText(tr("Choose another folder, or save here anyway."));
-
-            QPushButton *btnChoose = msg.addButton(tr("Choose another directory"), QMessageBox::AcceptRole);
-            QPushButton *btnSave   = msg.addButton(tr("Save here anyway"), QMessageBox::DestructiveRole);
-            msg.addButton(QMessageBox::Cancel);
-
-            msg.exec();
-
-            if (msg.clickedButton() == btnChoose) {
-                startDir = chosenDir;
-                suggestedName = chosenFi.fileName();
+            if (decision == RequiredFolderDecision::ChooseAnotherDir) {
+                startDir = QFileInfo(chosenPath).absolutePath();
+                suggestedName = QFileInfo(chosenPath).fileName();
                 continue;
             }
-            if (msg.clickedButton() != btnSave)
+            if (decision == RequiredFolderDecision::Cancel)
                 return false;
+            // SaveAnyway -> continue saving
         }
 
-        m_ui->txtRunPythonScript->setText(QDir::toNativeSeparators(newPath));
-        m_preferences["PALACE_MODEL_FILE"] = newPath;
-
-        setLineEditPalette(m_ui->txtRunPythonScript, newPath);
+        commitChosenPythonModelPath(chosenPath);
         return true;
     }
 }
 
 /*!*******************************************************************************************************************
- * \brief Saves the current Python script, re-parses it and updates the simulation setup.
- *
- * Writes the contents of the embedded Python editor to the file referenced by
- * txtRunPythonScript, then runs PythonParser on that file and rebuilds the
- * simulation-related GUI state (simulation settings, GDS/substrate paths,
- * run directory and internal m_simSettings entries) from the parsed result.
- *
- * The editor document is marked unmodified on success so that further tab
- * changes do not trigger an unnecessary apply prompt.
- *
- * \return true on successful save and parse, false otherwise.
+ * \brief Returns the current Python script path from the UI (trimmed).
+ * \return Current script path string (may be empty).
  **********************************************************************************************************************/
-bool MainWindow::applyPythonScriptFromEditor()
+QString MainWindow::currentPythonScriptPath() const
 {
-    QString filePath = m_ui->txtRunPythonScript->text().trimmed();
-
-    info(filePath, true);
-
-    if (filePath.isEmpty()) {
-        if (!ensurePythonScriptPathBySaveAs(false))
-            return false;
-        filePath = m_ui->txtRunPythonScript->text().trimmed();
-        if (filePath.isEmpty())
-            return false;
-    }
-
-    if (filePath.isEmpty()) {
-        error(tr("No Python script file specified."), false);
-        return false;
-    }
-
-    QFile f(filePath);
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        error(tr("Failed to save Python script:\n%1").arg(f.errorString()), false);
-        return false;
-    }
-
-    QTextStream out(&f);
-    out << m_ui->editRunPythonScript->toPlainText();
-    f.close();
-
-    m_preferences["PALACE_MODEL_FILE"] = filePath;
-
-    PythonParser::Result res = PythonParser::parseSettings(filePath);
-    if (!res.ok) {
-        error(tr("Failed to parse Python model file:\n%1").arg(res.error), false);
-        return false;
-    }
-
-    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips);
-
-    QFileInfo fi(filePath);
-    const QDir modelDir(fi.absolutePath());
-
-    if (!res.gdsFilename.isEmpty()) {
-        QString gdsPath = fromWslPath(res.gdsFilename);
-        if (QFileInfo(gdsPath).isRelative())
-            gdsPath = modelDir.filePath(gdsPath);
-
-        m_ui->txtGdsFile->setText(gdsPath);
-        m_simSettings["GdsFile"] = gdsPath;
-        m_sysSettings["GdsDir"]  = QFileInfo(gdsPath).absolutePath();
-    }
-
-    if (!res.xmlFilename.isEmpty()) {
-        QString subPath = fromWslPath(res.xmlFilename);
-        if (QFileInfo(subPath).isRelative())
-            subPath = modelDir.filePath(subPath);
-
-        m_ui->txtSubstrate->setText(subPath);
-        m_simSettings["SubstrateFile"] = subPath;
-        m_sysSettings["SubstrateDir"]  = QFileInfo(subPath).absolutePath();
-    }
-
-    if (!res.simPath.isEmpty()) {
-        QString runDir = res.simPath;
-        if (QFileInfo(runDir).isRelative())
-            runDir = modelDir.filePath(runDir);
-
-        QDir().mkpath(runDir);
-        m_simSettings["RunDir"] = runDir;
-    }
-
-    m_simSettings["RunPythonScript"] = filePath;
-    m_ui->editRunPythonScript->document()->setModified(false);
-
-    setLineEditPalette(m_ui->txtRunPythonScript, filePath);
-
-    updateSimulationSettings();
-
-    return true;
+    return m_ui->txtRunPythonScript ? m_ui->txtRunPythonScript->text().trimmed() : QString();
 }
 
 /*!*******************************************************************************************************************
- * \brief Automatically enables the "SubLayer Names" option when substrate and ports are available.
+ * \brief Initializes the starting directory and suggested file name for "Save Python Model As".
  *
- * This helper checks whether a substrate file is loaded and at least one port
- * is defined in the ports table. If both conditions are met, the checkbox
- * controlling the use of substrate layer names (cbSubLayerNames) is enabled
- * automatically. This improves workflow by ensuring correct layer-name mapping
- * without requiring manual user action.
+ * The function chooses a sensible folder and filename suggestion based on:
+ *  - current script path (if present),
+ *  - last saved model path from preferences,
+ *  - GDS file location (if present),
+ *  - top cell name (if available),
+ *  - otherwise falls back to the user home directory and "model.py".
+ *
+ * \param currentPath    Current script path from UI (may be empty).
+ * \param[out] startDir  Output directory used as dialog стартовая папка.
+ * \param[out] suggestedName Output file name suggestion (e.g. "<TopCell>.py" or "model.py").
  **********************************************************************************************************************/
-void MainWindow::updateSubLayerNamesAutoCheck()
+void MainWindow::initSaveAsSuggestion(const QString &currentPath,
+                                      QString &startDir,
+                                      QString &suggestedName) const
 {
-    const bool hasSubstrate = !m_ui->txtSubstrate->text().trimmed().isEmpty();
-    const bool hasPorts     = (m_ui->tblPorts->rowCount() > 0);
+    const QString prefPath = m_preferences.value("PALACE_MODEL_FILE").toString().trimmed();
 
-    if (hasSubstrate && hasPorts)
-        m_ui->cbSubLayerNames->setChecked(true);
+    if (!currentPath.isEmpty()) {
+        const QFileInfo cfi(currentPath);
+        startDir = cfi.absolutePath();
+        suggestedName = cfi.fileName();
+        return;
+    }
+
+    // Prefer directory from GDS if possible, otherwise from prefPath, otherwise home.
+    startDir = bestDefaultModelDirectory(prefPath);
+
+    const QString topCell = bestTopCellName();
+    if (!topCell.isEmpty()) {
+        suggestedName = topCell + QStringLiteral(".py");
+        return;
+    }
+
+    if (!prefPath.isEmpty()) {
+        suggestedName = QFileInfo(prefPath).fileName();
+        if (suggestedName.isEmpty())
+            suggestedName = QStringLiteral("model.py");
+        return;
+    }
+
+    suggestedName = QStringLiteral("model.py");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Chooses the best default directory for saving a Python model.
+ *
+ * Prefers the directory of an existing GDS file (if set), otherwise falls back to the directory of
+ * \a prefPath (if non-empty), and finally to the user's home directory.
+ *
+ * \param prefPath Preference-stored model file path (may be empty).
+ * \return Directory path to use as Save As dialog start directory.
+ **********************************************************************************************************************/
+QString MainWindow::bestDefaultModelDirectory(const QString &prefPath) const
+{
+    QString gdsPath;
+    if (m_ui->txtGdsFile)
+        gdsPath = m_ui->txtGdsFile->text().trimmed();
+
+    if (!gdsPath.isEmpty() && QFileInfo::exists(gdsPath))
+        return QFileInfo(gdsPath).absolutePath();
+
+    if (!prefPath.isEmpty())
+        return QFileInfo(prefPath).absolutePath();
+
+    return QDir::homePath();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Returns the best available top cell name for file name suggestion.
+ *
+ * Uses m_simSettings["TopCell"] if set; otherwise falls back to the UI top cell combo box.
+ *
+ * \return Top cell name or empty string if none is available.
+ **********************************************************************************************************************/
+QString MainWindow::bestTopCellName() const
+{
+    QString topCell = m_simSettings.value("TopCell").toString().trimmed();
+    if (topCell.isEmpty() && m_ui->cbxTopCell)
+        topCell = m_ui->cbxTopCell->currentText().trimmed();
+    return topCell;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Shows the "Save Python Model As" dialog.
+ *
+ * Builds the default dialog path from \a startDir and \a suggestedName and opens QFileDialog::getSaveFileName().
+ *
+ * \param startDir Starting directory for the dialog.
+ * \param suggestedName Suggested file name to prefill.
+ * \return Selected path or empty string if the user cancels.
+ **********************************************************************************************************************/
+QString MainWindow::showPythonModelSaveAsDialog(const QString &startDir,
+                                                const QString &suggestedName) const
+{
+    const QString defaultPath = QDir(startDir).filePath(suggestedName);
+
+    return QFileDialog::getSaveFileName(
+        const_cast<MainWindow*>(this),
+        tr("Save Python Model As"),
+        defaultPath,
+        tr("Python Files (*.py);;All Files (*)"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Ensures that the given path has a ".py" suffix.
+ *
+ * If the user provided a file name without extension, ".py" is appended.
+ *
+ * \param path Chosen file path.
+ * \return Path with ".py" extension enforced.
+ **********************************************************************************************************************/
+QString MainWindow::ensurePySuffix(QString path) const
+{
+    QFileInfo fi(path);
+    if (fi.suffix().isEmpty())
+        path += QStringLiteral(".py");
+    return path;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Returns the required folder name for a given simulation backend key.
+ *
+ * OpenEMS expects the model to be located in a folder containing "modules".
+ * Palace expects the model to be located in a folder containing "gds2palace".
+ *
+ * \param simKeyLower Simulation key in lower case ("openems" / "palace").
+ * \return Required folder name or empty string if no requirement applies.
+ **********************************************************************************************************************/
+QString MainWindow::requiredFolderForSim(const QString &simKeyLower) const
+{
+    if (simKeyLower == QLatin1String("openems"))
+        return QStringLiteral("modules");
+    if (simKeyLower == QLatin1String("palace"))
+        return QStringLiteral("gds2palace");
+    return QString();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Validates that a directory contains simulation-specific required subfolder (if any).
+ *
+ * \param dirPath       Directory chosen by the user for saving the model.
+ * \param simKeyLower   Simulation key in lower case ("openems"/"palace").
+ * \param[out] missingName Receives the required folder name if missing.
+ *
+ * \return True if the directory is acceptable; false if a required folder is missing.
+ **********************************************************************************************************************/
+bool MainWindow::validateRequiredFolderForSim(const QString &dirPath,
+                                              const QString &simKeyLower,
+                                              QString *missingName) const
+{
+    const QString need = requiredFolderForSim(simKeyLower);
+    if (need.isEmpty())
+        return true;
+
+    const bool ok = QDir(QDir(dirPath).filePath(need)).exists();
+    if (!ok && missingName)
+        *missingName = need;
+    return ok;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Asks the user what to do if the selected directory misses required simulation modules folder.
+ *
+ * \param simKeyLower Simulation key in lower case ("openems"/"palace").
+ * \param missingFolder Required folder name that is missing in the selected directory.
+ * \return User decision: choose another directory, save anyway, or cancel.
+ **********************************************************************************************************************/
+MainWindow::RequiredFolderDecision
+MainWindow::askMissingFolderDecision(const QString &simKeyLower,
+                                     const QString &missingFolder) const
+{
+    const QString simName =
+        (simKeyLower == QLatin1String("openems")) ? QStringLiteral("OpenEMS") :
+            (simKeyLower == QLatin1String("palace"))  ? QStringLiteral("Palace")  :
+            simKeyLower;
+
+    QMessageBox msg(const_cast<MainWindow*>(this));
+    msg.setIcon(QMessageBox::Warning);
+    msg.setWindowTitle(tr("Missing simulation modules"));
+    msg.setText(tr("The selected folder does not contain the required '%1' directory for %2.")
+                    .arg(missingFolder, simName));
+    msg.setInformativeText(tr("Choose another folder, or save here anyway."));
+
+    QPushButton *btnChoose = msg.addButton(tr("Choose another directory"), QMessageBox::AcceptRole);
+    QPushButton *btnSave   = msg.addButton(tr("Save here anyway"), QMessageBox::DestructiveRole);
+    QPushButton *btnCancel = msg.addButton(QMessageBox::Cancel);
+
+    msg.exec();
+
+    if (msg.clickedButton() == btnChoose) return RequiredFolderDecision::ChooseAnotherDir;
+    if (msg.clickedButton() == btnSave)   return RequiredFolderDecision::SaveAnyway;
+    Q_UNUSED(btnCancel);
+    return RequiredFolderDecision::Cancel;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Stores the chosen Python model path into UI and preferences and updates UI palette.
+ *
+ * \param path Absolute file path to the selected Python model.
+ **********************************************************************************************************************/
+void MainWindow::commitChosenPythonModelPath(const QString &path)
+{
+    const QString native = QDir::toNativeSeparators(path);
+
+    m_ui->txtRunPythonScript->setText(native);
+    m_preferences["PALACE_MODEL_FILE"] = path;
+
+    setLineEditPalette(m_ui->txtRunPythonScript, path);
 }
 
 /*!*******************************************************************************************************************
@@ -3631,7 +2541,6 @@ void MainWindow::initRecentMenu()
 
     updateRecentMenu();
 }
-
 
 /*!*******************************************************************************************************************
  * \brief Updates the "Recent" menu entries for Python model files.

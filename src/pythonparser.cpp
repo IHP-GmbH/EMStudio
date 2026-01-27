@@ -161,37 +161,54 @@ static void parseSettingsAssignments(const QString& content, PythonParser::Resul
 }
 
 /*!*******************************************************************************************************************
- * \brief Parse legacy GDS and substrate file variables from a Python script.
+ * \brief Parse legacy top-level file variables (any name) from a Python script.
  *
- * Extracts assignments of the form:
- *     gds_filename = "..."
- *     XML_filename = "..."
+ * Scans simple assignments of the form:
+ *     name = "path/to/file.gds"
+ *     name = 'path/to/file.xml'
  *
- * These variables are treated as explicit file definitions and stored
- * directly in the result structure.
+ * The variable name may be arbitrary. If the assigned string value ends with .gds or .xml
+ * (case-insensitive), it is treated as a GDS or substrate XML path candidate.
+ *
+ * NOTE: These are considered "legacy" file vars and should be overridden by explicit
+ * settings['GdsFile']/settings['SubstrateFile'] (or other settings-based inference) if present.
  *
  * \param content Full Python script text.
- * \param result  Result structure to be updated with parsed filenames.
+ * \param result  Result structure to be updated with parsed filenames and variable names.
  **********************************************************************************************************************/
 static void parseLegacyFileVars(const QString& content, PythonParser::Result& result)
 {
-    QRegularExpression fileRe(
-        R"(^\s*(gds_filename|XML_filename)\s*=\s*(.+)$)",
+    auto endsWithCi = [](const QString& s, const QString& suf) -> bool {
+        return s.trimmed().toLower().endsWith(suf);
+    };
+
+    QRegularExpression assignRe(
+        R"(^\s*([A-Za-z_]\w*)\s*=\s*(.+)$)",
         QRegularExpression::MultilineOption);
 
-    auto it = fileRe.globalMatch(content);
+    auto it = assignRe.globalMatch(content);
     while (it.hasNext()) {
-        QRegularExpressionMatch m = it.next();
-        const QString var = m.captured(1);
+        const QRegularExpressionMatch m = it.next();
+        const QString varName = m.captured(1).trimmed();
         QString valueExpr = m.captured(2).trimmed();
 
         valueExpr = stripInlineHashComment(valueExpr);
         valueExpr = unquoteIfQuoted(valueExpr);
 
-        if (var == QLatin1String("gds_filename"))
-            result.gdsFilename = valueExpr;
-        else if (var == QLatin1String("XML_filename"))
-            result.xmlFilename = valueExpr;
+        if (valueExpr.isEmpty())
+            continue;
+
+        if (result.gdsFilename.trimmed().isEmpty() && endsWithCi(valueExpr, QStringLiteral(".gds"))) {
+            result.gdsFilename  = valueExpr;
+            result.gdsLegacyVar = varName;
+            continue;
+        }
+
+        if (result.xmlFilename.trimmed().isEmpty() && endsWithCi(valueExpr, QStringLiteral(".xml"))) {
+            result.xmlFilename  = valueExpr;
+            result.xmlLegacyVar = varName;
+            continue;
+        }
     }
 }
 
@@ -217,16 +234,38 @@ static void inferFilesFromSettings(PythonParser::Result& result)
         return (v.type() == QVariant::String) ? v.toString() : QString();
     };
 
-    if (result.gdsFilename.trimmed().isEmpty() && result.settings.contains(QStringLiteral("GdsFile"))) {
-        const QString s = vToString(result.settings.value(QStringLiteral("GdsFile")));
-        if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".gds")))
-            result.gdsFilename = s;
+    auto findKeyCi = [&](const QString& wanted) -> QString {
+        for (auto it = result.settings.constBegin(); it != result.settings.constEnd(); ++it) {
+            if (it.key().compare(wanted, Qt::CaseInsensitive) == 0)
+                return it.key(); // return real key as in file
+        }
+        return QString();
+    };
+
+    // Explicit settings keys (highest priority)
+
+    {
+        const QString k = findKeyCi(QStringLiteral("GdsFile"));
+        if (!k.isEmpty()) {
+            const QString s = vToString(result.settings.value(k));
+            if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".gds"))) {
+                result.gdsFilename    = s;
+                result.gdsSettingKey  = k;
+                result.gdsLegacyVar.clear(); // settings override legacy
+            }
+        }
     }
 
-    if (result.xmlFilename.trimmed().isEmpty() && result.settings.contains(QStringLiteral("SubstrateFile"))) {
-        const QString s = vToString(result.settings.value(QStringLiteral("SubstrateFile")));
-        if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".xml")))
-            result.xmlFilename = s;
+    {
+        const QString k = findKeyCi(QStringLiteral("SubstrateFile"));
+        if (!k.isEmpty()) {
+            const QString s = vToString(result.settings.value(k));
+            if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".xml"))) {
+                result.xmlFilename    = s;
+                result.xmlSettingKey  = k;
+                result.xmlLegacyVar.clear(); // settings override legacy
+            }
+        }
     }
 
     for (auto it = result.settings.constBegin(); it != result.settings.constEnd(); ++it) {
@@ -234,11 +273,17 @@ static void inferFilesFromSettings(PythonParser::Result& result)
         if (s.isEmpty())
             continue;
 
-        if (result.gdsFilename.trimmed().isEmpty() && endsWithCi(s, QStringLiteral(".gds")))
-            result.gdsFilename = s;
+        if (result.gdsFilename.trimmed().isEmpty() && endsWithCi(s, QStringLiteral(".gds"))) {
+            result.gdsFilename   = s;
+            result.gdsSettingKey = it.key();
+            result.gdsLegacyVar.clear();
+        }
 
-        if (result.xmlFilename.trimmed().isEmpty() && endsWithCi(s, QStringLiteral(".xml")))
-            result.xmlFilename = s;
+        if (result.xmlFilename.trimmed().isEmpty() && endsWithCi(s, QStringLiteral(".xml"))) {
+            result.xmlFilename   = s;
+            result.xmlSettingKey = it.key();
+            result.xmlLegacyVar.clear();
+        }
 
         if (!result.gdsFilename.trimmed().isEmpty() && !result.xmlFilename.trimmed().isEmpty())
             break;

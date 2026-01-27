@@ -40,6 +40,11 @@ public:
 
         QMap<QString, QString>      settingTips;
 
+        QString                     gdsSettingKey;
+        QString                     xmlSettingKey;
+        QString                     gdsLegacyVar;
+        QString                     xmlLegacyVar;
+
         QString getGdsFilename() const { return gdsFilename; }
         QString getXmlFilename() const { return xmlFilename; }
 

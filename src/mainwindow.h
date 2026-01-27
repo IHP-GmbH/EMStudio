@@ -24,6 +24,7 @@
 #include <QMap>
 #include <QSet>
 #include <QPair>
+#include <QVariant>
 #include <QMainWindow>
 
 class QProcess;
@@ -62,6 +63,7 @@ class MainWindow : public QMainWindow
 
     enum class ModelType { Palace, OpenEMS, Unknown };
     enum class PalacePhase { None, PythonModel, PalaceSolver };
+    enum class RequiredFolderDecision { ChooseAnotherDir, SaveAnyway, Cancel };
 
     /*!*******************************************************************************************************************
     * \brief PortInfo representation of a simulation_port(...) call extracted from a Python script.
@@ -76,6 +78,44 @@ class MainWindow : public QMainWindow
         QString     fromLayer;
         QString     toLayer;
         QString     direction;
+    };
+
+    struct PalacePropInfo
+    {
+        int         propType = QVariant::String;
+        QVariant    value;
+        int         decimals = 12;
+        double      step = 0.0;
+    };
+
+    struct PalaceRunContext
+    {
+        QString simKeyLower;
+
+        QString modelWin;
+        QString launcherWin;
+        int     runMode = 0;
+
+        QString baseName;
+        QString runDirGuessWin;
+
+        QString palaceRoot;
+
+#ifdef Q_OS_WIN
+        QString distro;
+#endif
+
+        QString pythonCmd;
+
+        QString palaceExeLinux;
+        QString modelDirLinux;
+        QString modelLinux;
+
+        QString detectedRunDirWin;
+        QString searchDirWin;
+
+        QString configPathWin;
+        QString configLinux;
     };
 
 public:
@@ -154,6 +194,21 @@ private:
 
     void                            loadPythonScriptToEditor(const QString &filePath);
     void                            setLineEditPalette(QLineEdit* lineEdit, const QString& path);
+    void                            applySimSettingsToScript(QString &script, const QString &simKeyLower);
+    bool                            variantToPythonLiteral(const QVariant &v, QString *outLiteral);
+    bool                            keyIsExcludedForPalace(const QString &key);
+    void                            applyOpenEmsSettings(QString &script);
+    void                            applyPalaceSettings(QString &script);
+    void                            applyBoundaries(QString &script, bool alsoTopLevelAssignment);
+    void                            applyGdsAndXmlPaths(QString &script, const QString &simKeyLower);
+    QString                         makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const;
+    void                            ensurePortsTableInitializedFromScript(const QString &script);
+    QString                         buildPortCodeFromGuiTable() const;
+    QVector<QPair<int,int>>         findPortBlocks(const QString &script);
+    void                            replaceOrInsertPortSection(QString &script, const QString &portCode);
+    void                            setEditorScriptPreservingState(const QString &script);
+
+    QString                         loadOrReusePythonScriptText(const QString &filePath);
 
     bool                            readTextFileUtf8(const QString &fileName, QString &outText);
 
@@ -164,9 +219,37 @@ private:
     void                            applySubLayerNamesToPorts(bool toNames);
     bool                            ensurePythonScriptPathBySaveAs(bool forceDialog);
 
+    QString                         currentPythonScriptPath() const;
+    void                            initSaveAsSuggestion(const QString &currentPath,
+                                                         QString &startDir,
+                                                         QString &suggestedName) const;
+    QString                         bestDefaultModelDirectory(const QString &prefPath) const;
+    QString                         bestTopCellName() const;
+    QString                         showPythonModelSaveAsDialog(const QString &startDir,
+                                                                const QString &suggestedName) const;
+    QString                         ensurePySuffix(QString path) const;
+    QString                         requiredFolderForSim(const QString &simKeyLower) const;
+    bool                            validateRequiredFolderForSim(const QString &dirPath,
+                                                                 const QString &simKeyLower,
+                                                                 QString *missingName) const;
+    RequiredFolderDecision          askMissingFolderDecision(const QString &simKeyLower,
+                                                             const QString &missingFolder) const;
+    void                            commitChosenPythonModelPath(const QString &path);
+
+
     void                            updateSubLayerNamesAutoCheck();
     void                            rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings,
                                                                         const QMap<QString, QString>& tips);
+
+    void                            clearSimSettingsGroup();
+    QString                         findBoundariesKeyCaseInsensitive(const QMap<QString, QVariant> &settings) const;
+    QStringList                     parseBoundariesItems(const QVariant &v) const;
+    void                            applyBoundariesToUiAndSettings(const QStringList &items, const QString &simTool);
+    bool                            shouldSkipPalaceSettingKey(const QString &key) const;
+    PalacePropInfo                  inferPalacePropertyInfo(const QString &key, const QVariant &val) const;
+    bool                            shouldSkipStringSelfReference(const QString &key, const PalacePropInfo &info) const;
+    void                            applyTipIfAny(QtVariantProperty *prop, const QString &key, const QMap<QString, QString> &tips) const;
+    void                            setupDoubleAttributes(QtVariantProperty *prop, const PalacePropInfo &info) const;
 
     bool                            isStateChanged() const;
 
@@ -179,6 +262,28 @@ private:
 
     void                            runOpenEMS();
     void                            runPalace();
+
+    bool                            buildPalaceRunContext(PalaceRunContext &ctx, QString &outError);
+    void                            logPalaceStartupInfo(const PalaceRunContext &ctx);
+
+    void                            startPalacePythonStage(const PalaceRunContext &ctx);
+    void                            startPalaceSolverStage(PalaceRunContext &ctx); // ctx gets config paths filled
+
+    void                            connectPalaceProcessIo();
+    void                            onPalaceProcessFinished(int exitCode);
+
+    void                            appendToSimulationLog(const QByteArray &data);
+    QString                         detectRunDirFromLog() const;
+
+    QString                         guessDefaultPalaceRunDir(const QString &modelFile, const QString &baseName) const;
+    QString                         chooseSearchDir(const QString &detectedRunDir, const QString &defaultRunDir) const;
+
+    QString                         findPalaceConfigJson(const QString &runDir) const;
+
+#ifdef Q_OS_WIN
+    bool                            ensureWslAvailable(QString &outError) const;
+    QString                         wslToWinPath(const QString &p) const;
+#endif
 
     void                            refreshSimToolOptions();
     bool                            pathLooksValid(const QString &path, const QString &relativeExe = QString()) const;
@@ -193,6 +298,8 @@ private:
     QStringList                     m_tabTitles;
     QMap<QString, int>              m_tabMap;
 
+    QString                         m_modelGdsKey;
+    QString                         m_modelXmlKey;
     QString                         m_palacePythonOutput;
 
     QStringList                     m_cells;

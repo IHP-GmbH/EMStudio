@@ -289,6 +289,7 @@ private:
 
     void                            refreshSimToolOptions();
     bool                            pathLooksValid(const QString &path, const QString &relativeExe = QString()) const;
+    bool                            fileLooksValid(const QString &path) const;
 
     QVector<PortInfo>               parsePortsFromScript(const QString& script);
     void                            appendParsedPortsToTable(const QVector<PortInfo>& ports);

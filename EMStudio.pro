@@ -103,9 +103,11 @@ isEmpty(OUT_SUBDIR) {
 }
 
 SCRIPTS_DST_DIR =
-equals($$clean_path($$OUT_PWD), $$clean_path($$PWD)) {
+equals(OUT_PWD_CLEAN, $$PWD_CLEAN) {
+    # in-source build (make in repo root)
     SCRIPTS_DST_DIR = $$clean_path($$OUT_PWD/scripts)
 } else {
+    # shadow build (QtCreator)
     isEmpty(OUT_SUBDIR) {
         SCRIPTS_DST_DIR = $$clean_path($$OUT_PWD/scripts)
     } else {
@@ -124,12 +126,12 @@ win32 {
 }
 
 unix {
-    !equals($$clean_path($$OUT_PWD), $$clean_path($$PWD)) {
+    !equals(OUT_PWD_CLEAN, $$PWD_CLEAN) {
         QMAKE_POST_LINK += $$quote(echo "[EMStudio] Copy scripts: $$SCRIPTS_SRC_DIR to $$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
         QMAKE_POST_LINK += $$quote(mkdir -p "$$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
         QMAKE_POST_LINK += $$quote(cp -R "$$SCRIPTS_SRC_DIR"/. "$$SCRIPTS_DST_DIR"/) $$escape_expand(\\n\\t)
     } else {
-        QMAKE_POST_LINK += $$quote(echo "[EMStudio] In-source build detected, using existing scripts directory") $$escape_expand(\\n\\t)
+        QMAKE_POST_LINK += $$quote(echo "[EMStudio] In-source build: scripts already in $$SCRIPTS_SRC_DIR") $$escape_expand(\\n\\t)
     }
 }
 

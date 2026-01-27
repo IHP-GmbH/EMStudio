@@ -251,12 +251,12 @@ void MainWindow::refreshSimToolOptions()
 
     const QString openemsPath     = m_preferences.value("OPENEMS_INSTALL_PATH").toString();
     const QString palacePath      = m_preferences.value("PALACE_INSTALL_PATH").toString();
-    const QString palaceScriptPath = m_preferences.value("PALACE_SCRIPT_PATH").toString(); // NEW
+    const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString();
 
     const bool hasOpenEMS = pathLooksValid(openemsPath);
 
     const bool hasPalaceInstall = pathLooksValid(palacePath, "bin/palace");
-    const bool hasPalaceScript  = pathLooksValid(palaceScriptPath); // or a dedicated check below
+    const bool hasPalaceScript  = fileLooksValid(palaceScriptPath);
 
     const bool hasPalace = hasPalaceInstall || hasPalaceScript;
 
@@ -334,6 +334,23 @@ bool MainWindow::pathLooksValid(const QString &path, const QString &relativeExe)
 
     return true;
 }
+
+/*!*******************************************************************************************************************
+ * \brief Validates that a given path points to an existing regular file.
+ *
+ * Checks that \p path is non-empty, exists on the local filesystem, and refers to a regular file.
+ * This is intended for validating script or executable file paths that must be directly accessible
+ * from the current process (e.g. launcher scripts).
+ *
+ * \param path The file path to validate.
+ * \return \c true if the path exists and refers to a regular file, otherwise \c false.
+ **********************************************************************************************************************/
+bool MainWindow::fileLooksValid(const QString &path) const
+{
+    QFileInfo fi(path.trimmed());
+    return fi.exists() && fi.isExecutable();
+}
+
 
 /*!*******************************************************************************************************************
  * \brief Converts a Windows path (e.g. "C:\foo\bar") to a WSL path ("/mnt/c/foo/bar").

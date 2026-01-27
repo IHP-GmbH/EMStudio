@@ -22,26 +22,20 @@ import numpy as np
 # ======================== workflow settings ================================
 settings = {}
 
-# preview model/mesh only?
-# postprocess existing data without re-running simulation?
-settings['preview_only'] = False
-settings['postprocess_only'] = False
+
+settings['preview_only'] = False  # @brief Enable this to preview model/mesh only, without starting simulation
+settings['postprocess_only'] = False # @brief Enable this to show existing results only, without starting simulation
 
 # ===================== input files and path settings =======================
 
-gds_filename = "%1"   # geometries
-cellname = "%3"  # optional, set empty string "" to use top cell from GDS
+gds_filename = ""
+cellname = ""  # optional, set empty string "" to use top cell
 
-XML_filename = "%2"   # stackup
+XML_filename = ""
 
-# which GDSII data type is evaluated? Values in [] can be separated by comma
-settings['purpose'] = [0]
-
-# preprocess GDSII for safe handling of cutouts/holes?
-settings['preprocess_gds'] = False
-
-# merge via polygons with distance less than .. microns, set to 0 to disable via merging.
-settings['merge_polygon_size'] = 0
+settings['purpose'] = [0] # @brief Which GDSII data type is evaluated? Values in [] can be separated by comma
+settings['preprocess_gds'] = True  # @brief  Preprocess GDSII for safe handling of cutouts/holes?
+settings['merge_polygon_size'] = 0.5 #  @brief  Merge via polygons with distance less than .. microns, set to 0 to disable via merging.
 
 
 # get path for this simulation file
@@ -57,14 +51,14 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # ======================== simulation settings ================================
 
-settings['unit']   = 1e-6  # geometry is in microns
-settings['margin'] = 50    # distance in microns from GDSII geometry boundary to simulation boundary
+settings['unit']   = 1e-06  # @brief Geometry units, 1E-6 is in microns
+settings['margin'] = 50    # @brief Distance from GDSII geometry boundary to simulation boundary, in project units 
 
-settings['fstart']   = 0e9
-settings['fstop']    = 110e9
-settings['numfreq']  = 401
+settings['fstart']   = 0e9  # @brief start frequency [Hz]
+settings['fstop']    = 110000000000 # @brief stop frequency [Hz]
+settings['numfreq']  = 401  # @brief number of frequency steps [Hz]
 
-settings['refined_cellsize'] = 2  # mesh cell size in conductor region
+settings['refined_cellsize'] = 2  # @brief mesh cell size in conductor region, in project units
 
 # choices for boundary:
 # 'PEC' : perfect electric conductor (default)
@@ -73,29 +67,11 @@ settings['refined_cellsize'] = 2  # mesh cell size in conductor region
 # 'PML_8' : PML absorbing boundary conditions
 settings['Boundaries'] = ['PEC', 'PEC', 'PEC', 'PEC', 'PEC', 'PEC']
 
-settings['cells_per_wavelength'] = 20   # how many mesh cells per wavelength, must be 10 or more
-settings['energy_limit'] = -40          # end criteria for residual energy (dB)
+settings['cells_per_wavelength'] = 20   # @brief how many mesh cells per wavelength, must be 10 or more
+settings['energy_limit'] = -40          # @brief end criteria for residual energy (dB), default is -40
 
 # port configuration, port geometry is read from GDSII file on the specified layer
 simulation_ports = simulation_setup.all_simulation_ports()
-
-# in-plane port is specified with target_layername= and direction x or y
-# via port is specified with from_layername= and to_layername= and direction z
-simulation_ports.add_port(simulation_setup.simulation_port(portnumber=1,
-                                                           voltage=1,
-                                                           port_Z0=50,
-                                                           source_layernum=201,
-                                                           from_layername='Metal1',
-                                                           to_layername='TopMetal2',
-                                                           direction='z'))
-
-simulation_ports.add_port(simulation_setup.simulation_port(portnumber=2,
-                                                           voltage=1,
-                                                           port_Z0=50,
-                                                           source_layernum=202,
-                                                           from_layername='Metal1',
-                                                           to_layername='TopMetal2',
-                                                           direction='z'))
 
 # ======================== simulation ================================
 

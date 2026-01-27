@@ -463,6 +463,36 @@ QString MainWindow::queryWslCpuCores(const QString &distro) const
 }
 
 /*!*******************************************************************************************************************
+ * \brief Detects the number of available CPU cores for MPI execution.
+ *
+ * On Windows, queries the core count via WSL using \c nproc.
+ * On Linux, executes \c nproc directly.
+ *
+ * If detection fails, returns "1" as a safe fallback.
+ *
+ * \param distro WSL distribution name (used only on Windows).
+ * \return Number of available CPU cores as string.
+ **********************************************************************************************************************/
+QString MainWindow::detectMpiCoreCount(const QString &distro) const
+{
+    QProcess p;
+
+#ifdef Q_OS_WIN
+    QStringList args;
+    args << "-d" << distro << "--" << "nproc";
+    p.start("wsl", args);
+#else
+    p.start("nproc");
+#endif
+
+    if (!p.waitForFinished(2000))
+        return QStringLiteral("1");
+
+    const QString out = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+    return out.isEmpty() ? QStringLiteral("1") : out;
+}
+
+/*!*******************************************************************************************************************
  * \brief Starts the Palace solver stage.
  *
  * Determines the Palace configuration file to use and launches the solver
@@ -548,7 +578,11 @@ void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
 
     appendToSimulationLog(QString("[Palace solver command]\n  %1\n").arg(cmd).toUtf8());
 
-    const QString cores = queryWslCpuCores(distro);
+#ifdef Q_OS_WIN
+    const QString cores = detectMpiCoreCount(distro);
+#else
+    const QString cores = detectMpiCoreCount(QString());
+#endif
 
     if (!cores.isEmpty()) {
         appendToSimulationLog(QString("[MPI cores]\n  np = %1\n").arg(cores).toUtf8());

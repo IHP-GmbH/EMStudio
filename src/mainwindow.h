@@ -269,6 +269,7 @@ private:
     void                            startPalacePythonStage(const PalaceRunContext &ctx);
     void                            startPalaceSolverStage(PalaceRunContext &ctx);
     QString                         queryWslCpuCores(const QString &distro) const;
+    QString                         detectMpiCoreCount(const QString &distro) const;
 
     void                            connectPalaceProcessIo();
     void                            onPalaceProcessFinished(int exitCode);

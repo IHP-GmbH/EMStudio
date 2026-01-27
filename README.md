@@ -342,7 +342,7 @@ This project contains:
 
 ### Using with EMStudio
 
-Only the XML stackups from this repository are compatible with EMStudio. Example models provided in this repository do **not** use the `settings[]=value` syntax and **can not** be imported into EMStudio. You need to create models from scratch using the openEMS template provided with EMStudio. 
+XML stackups for openEMS from this repository are compatible with EMStudio. Example models provided in this repository do **not yet** use the `settings[]=value` syntax and **can not** be imported into EMStudio. You need to create models from scratch using the openEMS template provided with EMStudio, or convert them manually to `settings[]=value` syntax before importing to EMStudio.
 
 ---
 

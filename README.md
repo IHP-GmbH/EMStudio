@@ -301,11 +301,11 @@ In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangl
 
 ## Simulate
 
-On the Simulate tab, you can generate and run the simulation model. 
+On the Simulate tab, you can run the model script to generate the EM solver input files and start the simulation model. 
 
 <img src="./doc/png/simulate1.png" alt="simulate" width="700">
 
-When you start simulation, the simulation model script will be executed, using the Python interpreter that you defined using Setup > Preferences. For openEMS, simulation only starts when setting `preview_only=True` in the simulation model. 
+When you press the run button, the simulation model script will be executed, using the Python interpreter that you defined using Setup > Preferences. For openEMS, simulation only starts when setting `preview_only=True` in the simulation model. 
 
 <img src="./doc/png/simulate2.png" alt="simulate" width="700">
 
@@ -313,7 +313,7 @@ When you start simulation, the simulation model script will be executed, using t
 
 ## Switching between openEMS and Palace
 
-At present, EMStudio does *not* allow to switch the simulator in an existing model. The simulator choice is fixed when choosing the template.
+At present, EMStudio does **not** allow to switch the simulator for an existing model. The simulator choice is fixed after choosing the template.
 
 ---
 

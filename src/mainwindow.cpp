@@ -249,11 +249,16 @@ void MainWindow::refreshSimToolOptions()
 {
     QSignalBlocker blocker(m_ui->cbxSimTool);
 
-    const QString openemsPath = m_preferences.value("OPENEMS_INSTALL_PATH").toString();
-    const QString palacePath  = m_preferences.value("PALACE_INSTALL_PATH").toString();
+    const QString openemsPath     = m_preferences.value("OPENEMS_INSTALL_PATH").toString();
+    const QString palacePath      = m_preferences.value("PALACE_INSTALL_PATH").toString();
+    const QString palaceScriptPath = m_preferences.value("PALACE_SCRIPT_PATH").toString(); // NEW
 
     const bool hasOpenEMS = pathLooksValid(openemsPath);
-    const bool hasPalace  = pathLooksValid(palacePath, "bin/palace");
+
+    const bool hasPalaceInstall = pathLooksValid(palacePath, "bin/palace");
+    const bool hasPalaceScript  = pathLooksValid(palaceScriptPath); // or a dedicated check below
+
+    const bool hasPalace = hasPalaceInstall || hasPalaceScript;
 
     m_ui->cbxSimTool->clear();
 
@@ -270,7 +275,7 @@ void MainWindow::refreshSimToolOptions()
     if (items == 0) {
         m_ui->cbxSimTool->addItem("No simulation tool configured");
         m_ui->cbxSimTool->setEnabled(false);
-        info("No valid simulation tools found. Set OPENEMS_INSTALL_PATH and/or PALACE_INSTALL_PATH in Preferences.");
+        info("No valid simulation tools found. Set OPENEMS_INSTALL_PATH and/or PALACE_INSTALL_PATH / PALACE_SCRIPT_PATH in Preferences.");
     } else {
         m_ui->cbxSimTool->setEnabled(true);
         m_ui->cbxSimTool->setCurrentIndex(0);

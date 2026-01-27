@@ -149,7 +149,7 @@ scripts/klEmsDriver.py
 "<path>\klayout_app.exe" -e -rm "<path>\EMStudio\scripts\klEmsDriver.py"
 ```
 
-# Desktop Shortcut (Windows)
+## Desktop Shortcut (Windows)
 
 1. Right-click → **New → Shortcut**
 2. Set target:

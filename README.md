@@ -72,7 +72,7 @@ make -j$(nproc)
 ```cmd
 cd \path\to\EMStudio
 qmake EMStudio.pro
-nmake
+nmake 
 .\release\EMStudio.exe
 ```
 
@@ -102,15 +102,6 @@ Parallel finite-element electromagnetic solver.
 
 ---
 
-## Build from command line (Windows / MSVC)
-
-```cmd
-qmake EMStudio.pro
-nmake release\EMStudio.exe
-```
-
----
-
 # Running EMStudio (Standalone)
 
 You can launch **EMStudio.exe** directly or via terminal:
@@ -128,7 +119,7 @@ EMStudio.exe [options] [run_file.json]
   Top-level GDS cell
 
 - **`run_file.json` (optional)**  
-  If provided, its settings override CLI arguments.  
+  If provided, its settings override other commandline arguments.  
   If omitted, EMStudio automatically loads `<topcell>.json`  
   from the same folder as the GDS file (if it exists).
 
@@ -140,7 +131,7 @@ EMStudio.exe -gdsfile "C:/Work/design.gds" -topcell "top"
 
 ---
 
-# KLayout Integration
+# KLayout Integration (method 1)
 
 EMStudio can be launched directly from **KLayout** through the helper script:
 
@@ -148,7 +139,7 @@ EMStudio can be launched directly from **KLayout** through the helper script:
 scripts/klEmsDriver.py
 ```
 
-## Usage
+## Usage on Linux
 
 1. Save `klEmsDriver.py` inside your EMStudio installation directory.  
 2. (Optional) Add EMStudio directory to your system PATH.  
@@ -157,14 +148,6 @@ scripts/klEmsDriver.py
 ```bash
 "<path>\klayout_app.exe" -e -rm "<path>\EMStudio\scripts\klEmsDriver.py"
 ```
-
-### What happens when executed?
-
-- EMStudio receives the currently opened GDS layout  
-- The top cell name is passed automatically  
-- If `<topcell>.json` exists next to the GDS, EMStudio loads it  
-
----
 
 # Desktop Shortcut (Windows)
 
@@ -177,6 +160,25 @@ scripts/klEmsDriver.py
 
 3. Name it e.g. **EMStudio via KLayout**  
 4. *(Optional)* Change the icon: `icons/logo.ico`
+
+# KLayout Integration (method 2)
+
+EMStudio can be launched directly from **KLayout** if you start KLayout using one of the scripts provided in the EMStudio scripts directory:
+- `KLayout.bat` for Windows
+- `KLayout.sh` for Linux
+
+This will find your KLayout installation by searching the PATH, and then start KLayout with EMStudio integration.
+
+<img src="./doc/png/klayout_plugin.png" alt="klayout" width="700">
+
+### What happens when executed?
+
+- EMStudio receives the currently opened GDS layout  
+- The top cell name is passed automatically  
+- If you had already created a simulation model for this layout, you can load it from the history list in File menu
+
+
+
 
 ---
 
@@ -248,20 +250,26 @@ The main tab is where you configure the layout input file (*.gds) and the main s
 
 <img src="./doc/png/main1.png" alt="main" width="700">
 
-When you start from scratch, the settings grid is almost empty. You can now load a project template using **File > Load Python Model ...** or you can go to the **Python** tab, choose the **simulator** that you want to use and then press **Generate Default**.
+When you start from scratch, the settings grid is almost empty. You can now load a project template using **File > Load Python Model ...** or you can go to the **Python** tab, choose the **simulator** that you want to use and then press **Generate Default**. Before leaving the tab, save your changes using File > Save or Ctrl+S 
 
 <img src="./doc/png/generate1.png" alt="generate" width="700">
 
-For the meaning of settings, please refer to the documentation of the IHP openEMS workflow:
+When a valid model is loaded or created from the template, the main tab will look as shown below. Scripts parameters defined using the `settings[]=value` syntax will be shown in the settings grid and can be modified, with bi-directional synchronization to the built-in Python script editor. If the script line provides additional information in a comment, this will be shown as "flyout help" when moving the mouse over that item in the settings grid.
+
+<img src="./doc/png/main2.png" alt="main" width="700">
+
+Not all possible settings are included in the template. Adding an additional setting is possible using the script editor on the Python tab. For a full list of available settings[] and their meaning, please refer to the documentation of the IHP openEMS workflow:
 https://github.com/VolkerMuehlhaus/openems_ihp_sg13g2/blob/main/doc/Using_OpenEMS_Python_with_IHP_SG13G2_v2.pdf
 and IHP Palace workflow gds2palace:
 https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/blob/main/doc/gds2palace_workflow_userguide.pdf
 
-After loading the GDSII file, EMStudio uses that information in the background to prepare some other configuration tabs, so please use the tabs in "top down" order as shown in the "Run Control" window.
+Before leaving any tab, save your changes using File > Save or Ctrl+S 
 
 ## Substrate
 
 The substrate tab is where you select the XML stackup file to be used for simulation. EMStudio shows a cross section of the substrate file, and in the background, it prepares the Ports configuration tab using the layer names found in the stackup.
+
+Before leaving any tab, save your changes using File > Save or Ctrl+S 
 
 <img src="./doc/png/substrate1.png" alt="substrate" width="700">
 
@@ -269,40 +277,51 @@ The substrate tab is where you select the XML stackup file to be used for simula
 
 On the Python tab, you can see the Python model code that is used to run openEMS or Palace workflows. When you start EMStudio, you will see an empty editor window. You can now generate a default model code (Button "Generate Default") or you can load an existing model code (Menu: File > Load Python Model ...). 
 
-The model code will be synchronized automatically with settings on the "Main" tab, where you can editor your simulation settings. Synchronization works both ways, you can apply changes in the editor on the "Python" tab or in the Settings grid on the "Main" tab.
+Python model templates are read from the  `scripts` folder in EMStudio, with one template each for openEMS and Plaace. You could modify these files if required.
+
+The model code will be synchronized automatically with settings on the "Main" tab, where you can edit your simulation settings. Synchronization works both ways, you can apply changes in the editor on the "Python" tab or in the Settings grid on the "Main" tab.
+
+Before leaving any tab, save your changes using File > Save or Ctrl+S 
 
 <img src="./doc/png/python1.png" alt="python" width="700">
 
 ## Ports 
 
-On the ports tab, you need to configure simulation ports. It is expected that ports are included in the GDSII file on special layers, one layer per port, as described in the documentation of the IHP EM workflows. The EM workflows support in-plane ports (in xy plane) and vertical via ports (z direction). The direction of current flow in the port must be set by the user: X,Y,Z or -X,-Y,-Z for reverse polarity. Port polaritry matters when multiple ports are connected to the same return path.
+On the ports tab, you need to configure simulation ports. It is expected that ports are included in the GDSII file on special layers, one layer per port, as described in the documentation of the IHP EM workflows. The EM workflows support in-plane ports (in xy plane) and vertical via ports (z direction). The direction of current flow in the port must be set by the user: `x`,`y`,`z` or `-x`,`-y`,`-z` for reverse polarity. Port polarity matters when multiple ports are connected to the same return path.
+
+Before leaving any tab, save your changes using File > Save or Ctrl+S 
 
 <img src="./doc/png/ports1.png" alt="ports" width="700">
 
-EMStudio will read the GDSII file and scan for polygon layers 201 and above, which is the recommended layer range to create ports for IHP EM workflows. If these layers are detected, a port configuration will be added for these layers, with Z direction as the default layer and Metal1 to TopMetal2 as the default layer span for the via port. Note that these settings must be checked and updated by the user, there is NO automatic detection if these default values are valid for your model!
+EMStudio will read the GDSII file and scan for polygon layers 201 and above, which is the recommended layer range to create ports for IHP EM workflows. 
 
 When creating ports entries from scratch, there is a checkbox "Use Substrate Layer Names" of the left bottom side of the Window. This will tell EMStudio to use layer names from the XML stackup file for the layer dropdown boxes.
 
-In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area.
+In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area. 
 
 ## Simulate
 
-On the Simulate tab, you define where the resulting simulation model code (*.py) will be stored, and you can also start simulation from here. 
-
-Note that this simulation model output is different from the Python script  that you selected on the Python tab - that file was loaded as a template only, and should not be overwritten with the newly created model.
+On the Simulate tab, you can generate and run the simulation model. 
 
 <img src="./doc/png/simulate1.png" alt="simulate" width="700">
 
-When you start simulation, the simulation model script will be executed, using the Python interpreter that you defined using Setup > Preferences.
+When you start simulation, the simulation model script will be executed, using the Python interpreter that you defined using Setup > Preferences. For openEMS, simulation only starts when setting `preview_only=True` in the simulation model. 
 
 <img src="./doc/png/simulate2.png" alt="simulate" width="700">
 
+--
+
+## Switching between openEMS and Palace
+
+At present, EMStudio does *not* allow to switch the simulator in an existing model. The simulator choice is fixed when choosing the template.
 
 ---
 
+
+
 # Example Workflows & Reference Projects
 
-EMStudio is fully compatible with publicly available example projects that demonstrate complete EM simulation flows based on **IHP SG13G2** technology.
+EMStudio is compatible with some publicly available example projects that demonstrate complete EM simulation flows based on **IHP SG13G2** technology.
 
 These repositories provide real-world examples for both **OpenEMS** and **Palace**, including GDS layouts, stackup files, simulation scripts, and S‑parameter extraction.
 
@@ -323,20 +342,7 @@ This project contains:
 
 ### Using with EMStudio
 
-Open the provided Python model:
-
-```
-File → Open Python Model…
-```
-
-EMStudio will:
-
-- Parse `settings[...]`
-- Load GDS + substrate XML
-- Import ports
-- Render the SG13G2 stack & layer mapping
-- Allow editing simulation parameters
-- Regenerate updated Python code + JSON config
+Only the XML stackups from this repository are compatible with EMStudio. Example models provided in this repository do **not** use the `settings[]=value` syntax and **can not** be imported into EMStudio. You need to create models from scratch using the openEMS template provided with EMStudio. 
 
 ---
 

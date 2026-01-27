@@ -34,9 +34,13 @@ SOURCES += \
     src/mainwindow.cpp \
     src/material.cpp \
     src/preferences.cpp \
+    src/pythonToEditor.cpp \
+    src/pythonToStudio.cpp \
     src/pythoneditor.cpp \
     src/pythonparser.cpp \
     src/pythonsyntaxhighlighter.cpp \
+    src/runOpenEms.cpp \
+    src/runPalace.cpp \
     src/substrate.cpp \
     src/substrateview.cpp \
     src/xmlreader.cpp
@@ -85,8 +89,11 @@ RESOURCES += \
 
 SCRIPTS_SRC_DIR = $$clean_path($$PWD/scripts)
 
-# Determine output subdir (debug/release)
+# Determine output subdir (debug/release) for cases where it's actually used
 OUT_SUBDIR = $$DESTDIR
+isEmpty(OUT_SUBDIR): OUT_SUBDIR = .
+equals(OUT_SUBDIR, .): OUT_SUBDIR =
+
 isEmpty(OUT_SUBDIR) {
     CONFIG(debug, debug|release) {
         OUT_SUBDIR = debug
@@ -95,26 +102,36 @@ isEmpty(OUT_SUBDIR) {
     }
 }
 
-SCRIPTS_DST_DIR = $$clean_path($$OUT_PWD/$$OUT_SUBDIR/scripts)
+SCRIPTS_DST_DIR =
+equals(OUT_PWD_CLEAN, $$PWD_CLEAN) {
+    # in-source build (make in repo root)
+    SCRIPTS_DST_DIR = $$clean_path($$OUT_PWD/scripts)
+} else {
+    # shadow build (QtCreator)
+    isEmpty(OUT_SUBDIR) {
+        SCRIPTS_DST_DIR = $$clean_path($$OUT_PWD/scripts)
+    } else {
+        SCRIPTS_DST_DIR = $$clean_path($$OUT_PWD/$$OUT_SUBDIR/scripts)
+    }
+}
 
 win32 {
     SRC_WIN = $$shell_path($$SCRIPTS_SRC_DIR)
     DST_WIN = $$shell_path($$SCRIPTS_DST_DIR)
 
-    QMAKE_POST_LINK += $$quote(cmd /c echo [EMStudio] Copy scripts: "$$SRC_WIN" ^> "$$DST_WIN") $$escape_expand(\\n\\t)
-
-    # If destination exists as a FILE (not a dir), remove it (otherwise mkdir/xcopy fails)
+    QMAKE_POST_LINK += $$quote(cmd /c echo [EMStudio] Copy scripts: "$$SRC_WIN" to "$$DST_WIN") $$escape_expand(\\n\\t)
     QMAKE_POST_LINK += $$quote(cmd /c if exist "$$DST_WIN" if not exist "$$DST_WIN\\NUL" del /F /Q "$$DST_WIN") $$escape_expand(\\n\\t)
-
-    QMAKE_POST_LINK += $$quote(cmd /c if not exist "$$DST_WIN" mkdir "$$DST_WIN") $$escape_expand(\\n\\t)
-
-    # Copy folder contents recursively
-    QMAKE_POST_LINK += $$quote(cmd /c xcopy /E /I /H /K /Y "$$SRC_WIN\\*" "$$DST_WIN\\" ^>nul) $$escape_expand(\\n\\t)
+    QMAKE_POST_LINK += $$quote(cmd /c if not exist "$$DST_WIN\\NUL" mkdir "$$DST_WIN") $$escape_expand(\\n\\t)
+    QMAKE_POST_LINK += $$quote(cmd /c echo D ^| xcopy /E /I /H /K /Y "$$SRC_WIN\\*" "$$DST_WIN\\" ^>nul) $$escape_expand(\\n\\t)
 }
 
 unix {
-    SCRIPTS_DST_DIR = $$clean_path($$OUT_PWD/$$OUT_SUBDIR/scripts)
-    QMAKE_POST_LINK += $$quote(echo "[EMStudio] Copy scripts: $$SCRIPTS_SRC_DIR -> $$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(mkdir -p "$$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(cp -R "$$SCRIPTS_SRC_DIR"/. "$$SCRIPTS_DST_DIR"/) $$escape_expand(\\n\\t)
+    !equals(OUT_PWD_CLEAN, $$PWD_CLEAN) {
+        QMAKE_POST_LINK += $$quote(echo "[EMStudio] Copy scripts: $$SCRIPTS_SRC_DIR to $$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
+        QMAKE_POST_LINK += $$quote(mkdir -p "$$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
+        QMAKE_POST_LINK += $$quote(cp -R "$$SCRIPTS_SRC_DIR"/. "$$SCRIPTS_DST_DIR"/) $$escape_expand(\\n\\t)
+    } else {
+        QMAKE_POST_LINK += $$quote(echo "[EMStudio] In-source build: scripts already in $$SCRIPTS_SRC_DIR") $$escape_expand(\\n\\t)
+    }
 }
+

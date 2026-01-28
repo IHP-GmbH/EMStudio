@@ -22,10 +22,10 @@ run_command = ['./run_sim']
 
 # ===================== input files and path settings =======================
 
-gds_filename = "line_simple_viaport.gds"   # geometries
+gds_filename = ""   # geometries
 gds_cellname = ""       # optional name of cell, empty string to load always top cell
 
-XML_filename = "SG13G2_nosub.xml"          # stackup
+XML_filename = ""          # stackup
 
 # get path for this simulation file
 script_path = utilities.get_script_path(__file__)

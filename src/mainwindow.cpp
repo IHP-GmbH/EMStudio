@@ -21,6 +21,7 @@
 #include <QMenu>
 #include <QFile>
 #include <QDebug>
+#include <QTimer>
 #include <QAction>
 #include <QProcess>
 #include <QFileInfo>
@@ -835,6 +836,8 @@ void MainWindow::on_actionSave_triggered()
 
     saveSettings();
     setStateSaved();
+
+    info("All changes saved successfully.", true);
 }
 
 /*!*******************************************************************************************************************
@@ -1497,16 +1500,24 @@ QString MainWindow::currentSimToolKey() const
  **********************************************************************************************************************/
 void MainWindow::on_btnStop_clicked()
 {
-    if (m_simProcess && m_simProcess->state() == QProcess::Running) {
-        m_simProcess->kill();
-        m_simProcess->waitForFinished();
-        info("Simulation stopped by user.", false);
-        m_simProcess->deleteLater();
-        m_simProcess = nullptr;
-    } else {
+    if (!m_simProcess) {
         info("No simulation is currently running.", false);
+        return;
     }
+
+    m_palacePhase = PalacePhase::None;
+
+    info("Stopping simulation...", false);
+
+    m_simProcess->terminate();
+
+    QProcess *p = m_simProcess;
+    QTimer::singleShot(1500, this, [p]() {
+        if (p && p->state() != QProcess::NotRunning)
+            p->kill();
+    });
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Sets the GDS file path in the UI and updates related UI state.
@@ -1932,15 +1943,11 @@ bool MainWindow::readTextFileUtf8(const QString &fileName, QString &outText)
 QString MainWindow::createDefaultPalaceScript()
 {
     QString gdsFile = m_ui->txtGdsFile->text().trimmed();
-    if (gdsFile.isEmpty())
-        gdsFile = QStringLiteral("line_simple_viaport.gds");
-    else
+    if (!gdsFile.isEmpty())
         gdsFile = toWslPath(QDir::fromNativeSeparators(gdsFile));
 
     QString xmlFile = m_ui->txtSubstrate->text().trimmed();
-    if (xmlFile.isEmpty())
-        xmlFile = QStringLiteral("SG13G2_nosub.xml");
-    else
+    if (!xmlFile.isEmpty())
         xmlFile = toWslPath(QDir::fromNativeSeparators(xmlFile));
 
     // Top cell (gds_cellname) support
@@ -1983,15 +1990,11 @@ QString MainWindow::createDefaultPalaceScript()
 QString MainWindow::createDefaultOpenemsScript()
 {
     QString gdsFile = m_ui->txtGdsFile->text().trimmed();
-    if (gdsFile.isEmpty())
-        gdsFile = QStringLiteral("line_simple_viaport.gds");
-    else
+    if (!gdsFile.isEmpty())
         gdsFile = QDir::fromNativeSeparators(gdsFile);
 
     QString xmlFile = m_ui->txtSubstrate->text().trimmed();
-    if (xmlFile.isEmpty())
-        xmlFile = QStringLiteral("SG13G2_nosub.xml");
-    else
+    if (!xmlFile.isEmpty())
         xmlFile = QDir::fromNativeSeparators(xmlFile);
 
     QString topCell = m_ui->cbxTopCell->currentText().trimmed();

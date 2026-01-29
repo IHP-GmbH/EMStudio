@@ -35,6 +35,7 @@ public:
         QString                     error;
 
         QString                     simPath;
+        QString                     cellName;
         QString                     gdsFilename;
         QString                     xmlFilename;
 
@@ -45,6 +46,7 @@ public:
         QString                     gdsLegacyVar;
         QString                     xmlLegacyVar;
 
+        QString getCellName()    const { return cellName; }
         QString getGdsFilename() const { return gdsFilename; }
         QString getXmlFilename() const { return xmlFilename; }
 

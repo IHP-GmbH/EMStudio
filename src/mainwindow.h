@@ -203,7 +203,7 @@ private:
     void                            setLineEditPalette(QLineEdit* lineEdit, const QString& path);
     void                            applySimSettingsToScript(QString &script, const QString &simKeyLower);
     bool                            variantToPythonLiteral(const QVariant &v, QString *outLiteral);
-    bool                            keyIsExcludedForPalace(const QString &key);
+    bool                            keyIsExcludedForEm(const QString &key);
     void                            applyOpenEmsSettings(QString &script);
     void                            applyPalaceSettings(QString &script);
     void                            applyBoundaries(QString &script, bool alsoTopLevelAssignment);
@@ -285,7 +285,9 @@ private:
                                                               QString &outCores);
 
     bool                            runPalaceSolverWindows(const PalaceRunContext &ctx, const QString &cmd);
-    bool                            runPalaceSolverLinux(const PalaceRunContext &ctx, const QString &workDirLinux);
+    bool                            runPalaceSolverLinux(const PalaceRunContext &ctx,
+                                                         const QString &workDirLinux,
+                                                         const QString &cmd);
 
     QString                         queryWslCpuCores(const QString &distro) const;
     CoreCountResult                 detectMpiCoreCount() const;

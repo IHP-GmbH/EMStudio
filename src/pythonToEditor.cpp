@@ -323,26 +323,24 @@ bool MainWindow::variantToPythonLiteral(const QVariant &v, QString *outLiteral)
  **********************************************************************************************************************/
 void MainWindow::applyOpenEmsSettings(QString &script)
 {
-    const QStringList keysToReplace = {
-        "unit", "margin", "fstart", "fstop", "numfreq", "refined_cellsize",
-        "preview_only", "postprocess_only"
-    };
+    for (auto it = m_simSettings.constBegin(); it != m_simSettings.constEnd(); ++it) {
+        const QString  &key = it.key();
+        const QVariant &val = it.value();
 
-    for (const QString &key : keysToReplace) {
-        if (!m_simSettings.contains(key))
+        if (keyIsExcludedForEm(key))
             continue;
 
         QString pyValue;
-        if (!variantToPythonLiteral(m_simSettings.value(key), &pyValue))
+        if (!variantToPythonLiteral(val, &pyValue))
             continue;
 
-        // OpenEMS scripts sometimes use top-level assignments and sometimes dict-style.
         replaceTopLevelVar(script, key, pyValue);
         replaceAnyDictVar(script, key, pyValue);
     }
 
     applyBoundaries(script, /*alsoTopLevelAssignment=*/true);
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Checks whether a given setting key should be skipped for Palace parameter replacement.
@@ -354,7 +352,7 @@ void MainWindow::applyOpenEmsSettings(QString &script)
  *
  * \return \c true if the key must be excluded from generic Palace replacements.
  **********************************************************************************************************************/
-bool MainWindow::keyIsExcludedForPalace(const QString &key)
+bool MainWindow::keyIsExcludedForEm(const QString &key)
 {
     return key == QLatin1String("Boundaries") ||
            key == QLatin1String("Ports") ||
@@ -377,7 +375,7 @@ void MainWindow::applyPalaceSettings(QString &script)
         const QString &key = it.key();
         const QVariant& val = it.value();
 
-        if (keyIsExcludedForPalace(key))
+        if (keyIsExcludedForEm(key))
             continue;
 
         QString pyValue;
@@ -474,9 +472,14 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
     if (m_simSettings.contains("GdsFile")) {
         QString gdsPath = makeScriptPathForPython(m_simSettings.value("GdsFile").toString(), simKeyLower);
 
-        QRegularExpression re("^gds_filename\\s*=.*$",
-                              QRegularExpression::MultilineOption);
+        QRegularExpression re("^gds_filename\\s*=.*$", QRegularExpression::MultilineOption);
         script.replace(re, QStringLiteral("gds_filename = \"%1\"").arg(gdsPath));
+    }
+
+    const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
+    if (!topCell.isEmpty()) {
+        QRegularExpression re(R"(^\s*gds_cellname\s*=.*$)",  QRegularExpression::MultilineOption);
+        script.replace(re, QStringLiteral("gds_cellname = \"%1\"").arg(topCell));
     }
 
     if (m_simSettings.contains("SubstrateFile")) {

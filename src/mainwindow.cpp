@@ -2160,6 +2160,18 @@ void MainWindow::loadPythonModel(const QString &fileName)
     m_modelGdsKey.clear();
     m_modelXmlKey.clear();
 
+    if (!res.getCellName().isEmpty())
+    {
+        const QString cellName = res.getCellName();
+
+        const int idx = m_ui->cbxTopCell->findText(cellName);
+        if (idx >= 0) {
+            m_ui->cbxTopCell->setCurrentIndex(idx);
+            m_simSettings[QStringLiteral("gds_cellname")] = cellName;
+        }
+    }
+
+
     if (!res.gdsFilename.isEmpty())
     {
         QString gdsPath = fromWslPath(res.gdsFilename);

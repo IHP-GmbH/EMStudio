@@ -731,7 +731,7 @@ void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
     if (!runPalaceSolverWindows(ctx, cmd))
         failPalaceSolver(QString(), false);
 #else
-    if (!runPalaceSolverLinux(ctx, workDirLinux))
+    if (!runPalaceSolverLinux(ctx, workDirLinux, cmd))
         failPalaceSolver(QString(), false);
 #endif
 }
@@ -883,7 +883,9 @@ bool MainWindow::runPalaceSolverWindows(const PalaceRunContext &ctx, const QStri
  *
  * \return True if the solver process was started successfully; false otherwise.
  **********************************************************************************************************************/
-bool MainWindow::runPalaceSolverLinux(const PalaceRunContext &ctx, const QString &workDirLinux)
+bool MainWindow::runPalaceSolverLinux(const PalaceRunContext &ctx,
+                                      const QString &workDirLinux,
+                                      const QString &cmd)
 {
     Q_UNUSED(ctx);
 
@@ -891,17 +893,14 @@ bool MainWindow::runPalaceSolverLinux(const PalaceRunContext &ctx, const QString
 
     m_palacePhase = PalacePhase::PalaceSolver;
 
-    const QString configBase = QFileInfo(ctx.configLinux).fileName();
-
-    const QString palaceExe = QDir(ctx.palaceRoot).filePath("bin/palace");
-
     m_simProcess->setWorkingDirectory(workDirLinux);
-    m_simProcess->start(palaceExe, QStringList() << configBase);
+    m_simProcess->start(QStringLiteral("bash"), QStringList() << "-lc" << cmd);
 
     if (!m_simProcess->waitForStarted(3000)) {
         error("Failed to start Palace solver.", false);
         return false;
     }
+
     return true;
 }
 

@@ -124,7 +124,7 @@ static QString parsePhysicalCoresFromLscpuCsv(QString out)
  **********************************************************************************************************************/
 void MainWindow::runPalace()
 {
-    if (m_simProcess) {
+    if (m_simProcess && m_simProcess->state() == QProcess::Running) {
         info("Simulation is already running.", true);
         return;
     }

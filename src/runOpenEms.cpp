@@ -44,7 +44,7 @@
  **********************************************************************************************************************/
 void MainWindow::runOpenEMS()
 {
-    if (m_simProcess) {
+    if (m_simProcess && m_simProcess->state() == QProcess::Running) {
         info("Simulation is already running.", true);
         return;
     }

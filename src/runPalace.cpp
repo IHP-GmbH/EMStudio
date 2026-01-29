@@ -29,6 +29,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+#ifdef Q_OS_WIN
 /*!*******************************************************************************************************************
  * \brief Executes a command inside a WSL distribution and captures its standard output.
  *
@@ -107,6 +108,7 @@ static QString parsePhysicalCoresFromLscpuCsv(QString out)
 
     return cores.isEmpty() ? QString() : QString::number(cores.size());
 }
+#endif
 
 /*!*******************************************************************************************************************
  * \brief Executes the Palace simulation workflow.
@@ -830,6 +832,7 @@ bool MainWindow::preparePalaceSolverLaunch(PalaceRunContext &ctx,
     return true;
 }
 
+#ifdef Q_OS_WIN
 /*!*******************************************************************************************************************
  * \brief Starts the Palace solver stage under Windows using WSL.
  *
@@ -863,6 +866,7 @@ bool MainWindow::runPalaceSolverWindows(const PalaceRunContext &ctx, const QStri
     }
     return true;
 }
+#endif
 
 /*!*******************************************************************************************************************
  * \brief Starts the Palace solver stage natively on Linux.

@@ -118,6 +118,13 @@ class MainWindow : public QMainWindow
         QString configLinux;
     };
 
+    struct CoreCountResult
+    {
+        QString cores;
+        QString source;  // "physical (lscpu)" / "logical (nproc)"
+    };
+
+
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
@@ -281,10 +288,11 @@ private:
     bool                            runPalaceSolverLinux(const PalaceRunContext &ctx, const QString &workDirLinux);
 
     QString                         queryWslCpuCores(const QString &distro) const;
-    QString                         detectMpiCoreCount() const;
+    CoreCountResult                 detectMpiCoreCount() const;
 
     void                            connectPalaceProcessIo();
     void                            onPalaceProcessFinished(int exitCode);
+    QString                         detectPhysicalCoreCountLinux() const;
 
     void                            appendToSimulationLog(const QByteArray &data);
     QString                         detectRunDirFromLog() const;

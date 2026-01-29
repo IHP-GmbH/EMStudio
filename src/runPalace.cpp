@@ -30,6 +30,85 @@
 #include "ui_mainwindow.h"
 
 /*!*******************************************************************************************************************
+ * \brief Executes a command inside a WSL distribution and captures its standard output.
+ *
+ * Runs the given command using \c wsl.exe in the specified WSL distribution and returns
+ * the captured standard output as a UTF-8 string.
+ *
+ * The function waits synchronously for completion and returns an empty string if:
+ *  - the process fails to start,
+ *  - the timeout expires,
+ *  - the command exits with a non-zero status.
+ *
+ * \param distro    Name of the WSL distribution (e.g. "Ubuntu").
+ * \param cmd       Command and arguments to execute inside WSL.
+ * \param timeoutMs Maximum time to wait for process completion, in milliseconds.
+ *
+ * \return Captured standard output on success; empty string on failure.
+ **********************************************************************************************************************/
+static QString runWslCmdCapture(const QString &distro, const QStringList &cmd, int timeoutMs)
+{
+    QProcess p;
+
+    QStringList args;
+    args << "-d" << distro << "--";
+    args << cmd;
+
+    p.start(QStringLiteral("wsl"), args);
+
+    if (!p.waitForStarted(timeoutMs))
+        return QString();
+
+    if (!p.waitForFinished(timeoutMs))
+        return QString();
+
+    if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
+        return QString();
+
+    return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Parses physical CPU core count from \c lscpu CSV output.
+ *
+ * Interprets the output of \c lscpu -p=CORE,SOCKET and counts unique
+ * (socket, core) pairs, effectively determining the number of
+ * physical CPU cores without hyper-threading.
+ *
+ * Comment lines (starting with '#') and malformed entries are ignored.
+ *
+ * \param out Raw CSV output produced by \c lscpu -p=CORE,SOCKET.
+ *
+ * \return Number of detected physical CPU cores as a string,
+ *         or an empty string if parsing fails.
+ **********************************************************************************************************************/
+static QString parsePhysicalCoresFromLscpuCsv(QString out)
+{
+    out.replace('\r', "");
+
+    QSet<QString> cores; // "socket:core"
+    const QStringList lines = out.split('\n', Qt::SkipEmptyParts);
+
+    for (const QString &line : lines) {
+        if (line.startsWith('#'))
+            continue;
+
+        const QStringList parts = line.split(',', Qt::KeepEmptyParts);
+        if (parts.size() < 2)
+            continue;
+
+        const QString core   = parts.at(0).trimmed();
+        const QString socket = parts.at(1).trimmed();
+        if (core.isEmpty() || socket.isEmpty())
+            continue;
+
+        cores.insert(socket + ":" + core);
+    }
+
+    return cores.isEmpty() ? QString() : QString::number(cores.size());
+}
+
+/*!*******************************************************************************************************************
  * \brief Executes the Palace simulation workflow.
  *
  * Runs the Palace simulation in two stages:
@@ -467,27 +546,118 @@ QString MainWindow::queryWslCpuCores(const QString &distro) const
  * \param distro WSL distribution name (used only on Windows).
  * \return Number of available CPU cores as string.
  **********************************************************************************************************************/
-QString MainWindow::detectMpiCoreCount() const
+MainWindow::CoreCountResult MainWindow::detectMpiCoreCount() const
 {
-    QProcess p;
+    CoreCountResult r;
 
 #ifdef Q_OS_WIN
     const QString distro = m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed();
 
-    QStringList args;
-    args << "-d" << distro << "--" << "nproc";
-    p.start(QStringLiteral("wsl"), args);
+    const QString lscpuOut = runWslCmdCapture(distro, QStringList() << "lscpu" << "-p=CORE,SOCKET", 2000);
+    const QString phys = parsePhysicalCoresFromLscpuCsv(lscpuOut).trimmed();
+    if (!phys.isEmpty()) {
+        r.cores  = phys;
+        r.source = QStringLiteral("physical (lscpu)");
+        return r;
+    }
+
+    const QString nprocOut = runWslCmdCapture(distro, QStringList() << "nproc", 2000).trimmed();
+    if (!nprocOut.isEmpty()) {
+        r.cores  = nprocOut;
+        r.source = QStringLiteral("logical (nproc)");
+        return r;
+    }
+
+    r.cores  = QStringLiteral("1");
+    r.source = QStringLiteral("fallback");
+    return r;
 #else
+    const QString phys = detectPhysicalCoreCountLinux().trimmed();
+    if (!phys.isEmpty()) {
+        r.cores  = phys;
+        r.source = QStringLiteral("physical (lscpu)");
+        return r;
+    }
+
+    QProcess p;
     p.start(QStringLiteral("nproc"), QStringList());
+
+    if (p.waitForFinished(2000)) {
+        const QString out = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+        if (!out.isEmpty()) {
+            r.cores  = out;
+            r.source = QStringLiteral("logical (nproc)");
+            return r;
+        }
+    }
+
+    r.cores  = QStringLiteral("1");
+    r.source = QStringLiteral("fallback");
+    return r;
 #endif
-
-    if (!p.waitForFinished(2000))
-        return QStringLiteral("1");
-
-    const QString out = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
-    return out.isEmpty() ? QStringLiteral("1") : out;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Detects the number of physical CPU cores on Linux.
+ *
+ * Determines the number of hardware cores (without Hyper-Threading / SMT) by
+ * parsing the output of \c lscpu -p=CORE,SOCKET and counting unique (socket,core)
+ * pairs. This value is suitable for CPU-bound MPI runs where oversubscribing
+ * logical threads is undesirable.
+ *
+ * \return Number of physical CPU cores as string, or an empty string if detection fails.
+ **********************************************************************************************************************/
+QString MainWindow::detectPhysicalCoreCountLinux() const
+{
+    QProcess p;
+    p.start(QStringLiteral("lscpu"), QStringList() << "-p=CORE,SOCKET");
+
+    if (!p.waitForFinished(2000))
+        return QString();
+
+    if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
+        return QString();
+
+    const QString out = QString::fromUtf8(p.readAllStandardOutput());
+
+    QSet<QString> cores; // "socket:core"
+    const QStringList lines = out.split('\n', Qt::SkipEmptyParts);
+
+    for (const QString &line : lines) {
+        if (line.startsWith('#'))
+            continue;
+
+        const QStringList parts = line.split(',', Qt::KeepEmptyParts);
+        if (parts.size() < 2)
+            continue;
+
+        const QString core   = parts.at(0).trimmed();
+        const QString socket = parts.at(1).trimmed();
+        if (core.isEmpty() || socket.isEmpty())
+            continue;
+
+        cores.insert(socket + ":" + core);
+    }
+
+    if (cores.isEmpty())
+        return QString();
+
+    return QString::number(cores.size());
+}
+
+/*!*******************************************************************************************************************
+ * \brief Stops the current Palace run and resets internal solver state.
+ *
+ * Reports the given error message (optionally via dialog), schedules the active
+ * simulation process for deletion, clears the process pointer, and resets the
+ * Palace phase to \c PalacePhase::None.
+ *
+ * This helper is intended to be used as a single exit path for all Palace stage
+ * failures to keep cleanup consistent.
+ *
+ * \param message    Error message to report. If empty, no error is shown.
+ * \param showDialog If true, show the error in a dialog; otherwise log it only.
+ **********************************************************************************************************************/
 void MainWindow::failPalaceSolver(const QString &message, bool showDialog)
 {
     if (!message.isEmpty())
@@ -646,9 +816,11 @@ bool MainWindow::preparePalaceSolverLaunch(PalaceRunContext &ctx,
 
     outWorkDirLinux = configDirLinux;
 
-    outCores = detectMpiCoreCount();
-    if (outCores.isEmpty())
-        outCores = QStringLiteral("1");
+    const CoreCountResult cc = detectMpiCoreCount();
+    outCores = cc.cores;
+
+    appendToSimulationLog(
+        QString("[MPI cores detected] np = %1 (%2)\n").arg(outCores, cc.source).toUtf8());
 
     const QString palaceCmd =
         QString("\"%1\" --launcher-args --oversubscribe -np %2 \"%3\"")

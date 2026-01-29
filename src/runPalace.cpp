@@ -723,9 +723,9 @@ void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
     }
 
     appendToSimulationLog(
-        QString("[Palace solver command]\n  %1\n").arg(cmd).toUtf8());
+        QString("[Palace solver command] %1\n").arg(cmd).toUtf8());
     appendToSimulationLog(
-        QString("[MPI cores]\n  np = %1\n").arg(cores).toUtf8());
+        QString("[MPI cores] np = %1\n").arg(cores).toUtf8());
 
 #ifdef Q_OS_WIN
     if (!runPalaceSolverWindows(ctx, cmd))

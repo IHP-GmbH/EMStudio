@@ -1500,7 +1500,7 @@ QString MainWindow::currentSimToolKey() const
  **********************************************************************************************************************/
 void MainWindow::on_btnStop_clicked()
 {
-    if (!m_simProcess && m_simProcess->state() == QProcess::Running) {
+    if (!m_simProcess || m_simProcess->state() != QProcess::Running) {
         info("No simulation is currently running.", false);
         return;
     }
@@ -1517,7 +1517,6 @@ void MainWindow::on_btnStop_clicked()
             p->kill();
     });
 }
-
 
 /*!*******************************************************************************************************************
  * \brief Sets the GDS file path in the UI and updates related UI state.

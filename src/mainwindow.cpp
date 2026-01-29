@@ -1500,7 +1500,7 @@ QString MainWindow::currentSimToolKey() const
  **********************************************************************************************************************/
 void MainWindow::on_btnStop_clicked()
 {
-    if (!m_simProcess) {
+    if (!m_simProcess && m_simProcess->state() == QProcess::Running) {
         info("No simulation is currently running.", false);
         return;
     }

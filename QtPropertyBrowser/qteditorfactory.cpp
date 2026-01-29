@@ -937,13 +937,6 @@ QWidget *QtDoubleSpinBoxFactory::createEditor(QtDoublePropertyManager *manager,
     connect(editor, SIGNAL(destroyed(QObject *)),
                 this, SLOT(slotEditorDestroyed(QObject *)));
 
-    connect(editor, qOverload<double>(&QDoubleSpinBox::valueChanged),
-            this, [editor](double v){
-                qDebug() << "valueChanged ->" << v
-                         << "range" << editor->minimum() << editor->maximum()
-                         << "text"  << editor->text();
-            });
-
     return editor;
 }
 

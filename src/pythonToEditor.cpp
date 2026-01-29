@@ -334,7 +334,7 @@ void MainWindow::applyOpenEmsSettings(QString &script)
         if (!variantToPythonLiteral(val, &pyValue))
             continue;
 
-        replaceTopLevelVar(script, key, pyValue);
+        //replaceTopLevelVar(script, key, pyValue);
         replaceAnyDictVar(script, key, pyValue);
     }
 

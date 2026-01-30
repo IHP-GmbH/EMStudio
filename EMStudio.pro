@@ -116,8 +116,8 @@ equals(OUT_PWD_CLEAN, $$PWD_CLEAN) {
 }
 
 win32 {
-    SRC_WIN = $$shell_path($$SCRIPTS_SRC_DIR)
-    DST_WIN = $$shell_path($$SCRIPTS_DST_DIR)
+    SRC_WIN = $$system_path($$SCRIPTS_SRC_DIR)
+    DST_WIN = $$system_path($$SCRIPTS_DST_DIR)
 
     QMAKE_POST_LINK += $$quote(cmd /c echo [EMStudio] Copy scripts: "$$SRC_WIN" to "$$DST_WIN") $$escape_expand(\\n\\t)
     QMAKE_POST_LINK += $$quote(cmd /c if exist "$$DST_WIN" if not exist "$$DST_WIN\\NUL" del /F /Q "$$DST_WIN") $$escape_expand(\\n\\t)

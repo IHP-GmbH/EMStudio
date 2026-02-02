@@ -623,14 +623,13 @@ QString MainWindow::buildPortCodeFromGuiTable() const
 QVector<QPair<int,int>> MainWindow::findPortBlocks(const QString &script)
 {
     auto isAddPortLine = [](const QString& t) -> bool {
-        return t.startsWith("simulation_ports.add_port");
+        return t.startsWith(QStringLiteral("simulation_ports.add_port"));
     };
 
     QVector<QPair<int,int>> blocks;
 
     QRegularExpression startRe(
-        R"(simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\s*\n?)",
-        QRegularExpression::MultilineOption);
+        R"((?m)^[ \t]*simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\s*(?:#.*)?\r?\n?)");
 
     int searchPos = 0;
     while (true) {
@@ -641,15 +640,16 @@ QVector<QPair<int,int>> MainWindow::findPortBlocks(const QString &script)
         const int blockStart = m.capturedStart();
         int scan = m.capturedEnd();
 
-        // Scan forward while lines are empty or add_port
+        // Scan forward while lines belong to the port block
         while (scan < script.size()) {
             int lineEnd = script.indexOf('\n', scan);
-            if (lineEnd < 0) lineEnd = script.size();
+            if (lineEnd < 0)
+                lineEnd = script.size();
 
             const QString line = script.mid(scan, lineEnd - scan);
             const QString t = line.trimmed();
 
-            if (t.isEmpty() || isAddPortLine(t)) {
+            if (t.isEmpty() || t.startsWith('#') || isAddPortLine(t)) {
                 scan = (lineEnd < script.size()) ? (lineEnd + 1) : lineEnd;
                 continue;
             }

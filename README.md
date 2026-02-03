@@ -295,9 +295,7 @@ Before leaving any tab, save your changes using File > Save or Ctrl+S
 
 <img src="./doc/png/ports1.png" alt="ports" width="700">
 
-EMStudio will read the GDSII file and scan for polygon layers 201 and above, which is the recommended layer range to create ports for IHP EM workflows. 
-
-When creating ports entries from scratch, there is a checkbox "Use Substrate Layer Names" of the left bottom side of the Window. This will tell EMStudio to use layer names from the XML stackup file for the layer dropdown boxes.
+When creating ports entries from scratch, there is a checkbox "Use Substrate Layer Names" of the left bottom side of the Window. This will tell EMStudio to use layer names from the XML stackup file for the layer dropdown boxes. Of course, you need to set the XML stackup file **before**, so that layer mappings are available.
 
 In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area. 
 

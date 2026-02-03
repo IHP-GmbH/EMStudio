@@ -321,7 +321,7 @@ At present, EMStudio does **not** allow to switch the simulator for an existing 
 
 # Example Workflows & Reference Projects
 
-EMStudio is compatible with some publicly available example projects that demonstrate complete EM simulation flows based on **IHP SG13G2** technology.
+EMStudio is compatible with most publicly available example projects that demonstrate complete EM simulation flows based on **IHP SG13G2** technology.
 
 These repositories provide real-world examples for both **OpenEMS** and **Palace**, including GDS layouts, stackup files, simulation scripts, and S‑parameter extraction.
 
@@ -342,7 +342,19 @@ This project contains:
 
 ### Using with EMStudio
 
-XML stackups for openEMS from this repository are compatible with EMStudio. Example models provided in this repository do **not yet** use the `settings[]=value` syntax and **can not** be imported into EMStudio. You need to create models from scratch using the openEMS template provided with EMStudio, or convert them manually to `settings[]=value` syntax before importing to EMStudio.
+Load the Python script via:
+
+```
+File → Open Python Model…
+```
+
+EMStudio will:
+
+- Parse openEMS simulation settings  
+- Import GDS + XML files  
+- Load ports and boundaries  
+- Provide full editing of simulation parameters  
+- Export updated openEMS Python script  
 
 ---
 

@@ -100,7 +100,9 @@ bool MainWindow::applyPythonScriptFromEditor()
         return false;
     }
 
-    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips);
+    m_curPythonData = res;
+
+    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips, res.topLevel);
 
     QFileInfo fi(filePath);
     const QDir modelDir(fi.absolutePath());
@@ -149,7 +151,8 @@ bool MainWindow::applyPythonScriptFromEditor()
  * \param tips      Optional map of tooltips for each key.
  **********************************************************************************************************************/
 void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings,
-                                                     const QMap<QString, QString>& tips)
+                                                     const QMap<QString, QString>& tips,
+                                                     const QMap<QString, QVariant>& topLevelVars)
 {
     if (!m_simSettingsGroup || !m_variantManager)
         return;
@@ -168,10 +171,14 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
             applyBoundariesToUiAndSettings(items, simTool);
     }
 
+    QMap<QString, QVariant> merged = topLevelVars; // low priority
+    for (auto it = settings.constBegin(); it != settings.constEnd(); ++it)
+        merged[it.key()] = it.value();             // overwrite => high priority
+
     // -------------------------------------------------------------------------------------------------
     // Generic settings
     // -------------------------------------------------------------------------------------------------
-    for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
+    for (auto it = merged.constBegin(); it != merged.constEnd(); ++it) {
         const QString& key = it.key();
         const QVariant& val = it.value();
 

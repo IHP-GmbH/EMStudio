@@ -322,24 +322,73 @@ bool MainWindow::variantToPythonLiteral(const QVariant &v, QString *outLiteral)
  **********************************************************************************************************************/
 void MainWindow::applyOpenEmsSettings(QString &script)
 {
+    const QString simKeyLower = QStringLiteral("openems");
+
     for (auto it = m_simSettings.constBegin(); it != m_simSettings.constEnd(); ++it) {
-        const QString  &key = it.key();
-        const QVariant &val = it.value();
-
-        if (keyIsExcludedForEm(key))
-            continue;
-
-        QString pyValue;
-        if (!variantToPythonLiteral(val, &pyValue))
-            continue;
-
-        replaceTopLevelVar(script, key, pyValue);
-        replaceAnyDictVar(script, key, pyValue);
+        applyOneSettingToScript(script, it.key(), it.value(), simKeyLower);
     }
 
     applyBoundaries(script, /*alsoTopLevelAssignment=*/true);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Applies a single simulation setting to the Python script using the parser-defined write mode.
+ *
+ * Updates exactly one setting identified by \a key in the given Python script according to the
+ * write policy inferred by \c PythonParser:
+ * - \c TopLevel   → replaces a top-level assignment (\c key = value)
+ * - \c DictAssign → replaces a dictionary-style assignment (\c someDict['key'] = value)
+ *
+ * The function:
+ * - Skips keys excluded by \c keyIsExcludedForEm()
+ * - Skips keys that were not found during parsing (not present in \c writeMode),
+ *   emitting an informational message in this case
+ * - Converts values to appropriate Python literals (numeric, boolean, or quoted paths)
+ *
+ * The actual replacement strategy is fully driven by parsed script structure and
+ * does not depend on the active simulation backend.
+ *
+ * \param script       Python script text to be modified in-place.
+ * \param key          Simulation setting key to apply.
+ * \param val          Value to serialize and write into the script.
+ * \param simKeyLower  Current simulation tool key (reserved for future use).
+ **********************************************************************************************************************/
+void MainWindow::applyOneSettingToScript(QString &script,
+                                         const QString &key,
+                                         const QVariant &val,
+                                         const QString &simKeyLower)
+{
+    Q_UNUSED(simKeyLower);
+
+    if (keyIsExcludedForEm(key))
+        return;
+
+    auto itMode = m_curPythonData.writeMode.constFind(key);
+    if (itMode == m_curPythonData.writeMode.constEnd()) {
+        info(QString("Python write: skip key '%1' (not found in script)").arg(key), false);
+        return;
+    }
+
+    const auto mode = itMode.value();
+
+    QString pyValue;
+    if (isFilePathSetting(key, val)) {
+        pyValue = toPythonQuotedPath(val.toString());
+    } else {
+        if (!variantToPythonLiteral(val, &pyValue))
+            return;
+    }
+
+    switch (mode) {
+    case PythonParser::SettingWriteMode::TopLevel:
+        replaceTopLevelVar(script, key, pyValue);
+        break;
+
+    case PythonParser::SettingWriteMode::DictAssign:
+        replaceAnyDictVar(script, key, pyValue);
+        break;
+    }
+}
 
 /*!*******************************************************************************************************************
  * \brief Checks whether a given setting key should be skipped for Palace parameter replacement.
@@ -370,27 +419,18 @@ bool MainWindow::keyIsExcludedForEm(const QString &key)
  **********************************************************************************************************************/
 void MainWindow::applyPalaceSettings(QString &script)
 {
+    const QString simKeyLower = QStringLiteral("palace");
+
     for (auto it = m_simSettings.constBegin(); it != m_simSettings.constEnd(); ++it) {
-        const QString &key = it.key();
-        const QVariant& val = it.value();
+        const QString  &key = it.key();
+        const QVariant &val = it.value();
 
-        if (keyIsExcludedForEm(key))
-            continue;
-
-        QString pyValue;
-
-        if (isFilePathSetting(key, val)) {
-            pyValue = toPythonQuotedPath(val.toString());
-        } else {
-            if (!variantToPythonLiteral(val, &pyValue))
-                continue;
-        }
-
-        replacePalaceDictVar(script, key, pyValue);
+        applyOneSettingToScript(script, key, val, simKeyLower);
     }
 
     applyBoundaries(script, /*alsoTopLevelAssignment=*/false);
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Updates the "Boundaries" assignment in the script from \c m_simSettings.

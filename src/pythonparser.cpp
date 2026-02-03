@@ -31,6 +31,23 @@
 namespace
 {
 
+/*!*******************************************************************************************************************
+ * \brief Parses a simple Python literal into a QVariant.
+ *
+ * Supports a limited subset of Python literals that are safe and unambiguous
+ * to map to Qt types:
+ *  - Boolean values: \c True, \c False
+ *  - String literals enclosed in single or double quotes (no multiline support)
+ *    with basic escape handling (\\, \", \')
+ *  - Numeric values parsed as \c double using C locale (including scientific notation)
+ *
+ * Any other constructs (expressions, function calls, lists, dicts, etc.)
+ * are intentionally rejected.
+ *
+ * \param s    Input string representing the Python literal.
+ * \param out  Output QVariant receiving the parsed value.
+ * \return     True if the literal was successfully parsed; false otherwise.
+ **********************************************************************************************************************/
 static bool parsePyLiteral(const QString& s, QVariant* out)
 {
     if (!out) return false;
@@ -64,6 +81,26 @@ static bool parsePyLiteral(const QString& s, QVariant* out)
     return false;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Extracts simple top-level Python assignments from a script.
+ *
+ * Scans the script for assignments of the form:
+ * \code
+ *   name = literal
+ * \endcode
+ *
+ * Only assignments whose right-hand side can be parsed by parsePyLiteral()
+ * are collected. More complex constructs (function calls, expressions,
+ * lists, dicts, attribute access, etc.) are ignored.
+ *
+ * A predefined set of variable names is explicitly skipped, as they represent
+ * structural or non-setting entities (e.g. GDS inputs, port containers).
+ *
+ * The function is multiline-safe and ignores inline comments.
+ *
+ * \param script  Full Python script text to scan.
+ * \param outMap  Output map receiving parsed variable names and values.
+ **********************************************************************************************************************/
 static void parseTopLevelAssignments(const QString& script,
                                      QMap<QString, QVariant>* outMap)
 {
@@ -99,7 +136,6 @@ static void parseTopLevelAssignments(const QString& script,
         (*outMap)[name] = v;
     }
 }
-
 
 /*!*******************************************************************************************************************
  * \brief Finds a setting key in a map using case-insensitive comparison.
@@ -786,6 +822,25 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     parseSettingTips(content, result);
     parseTopLevelAssignments(content, &result.topLevel);
     finalizeResult(scriptDir, baseName, contextForErrors, result);
+
+    for (auto it = result.topLevel.begin(); it != result.topLevel.end(); ++it) {
+        const QString key = it.key();
+        result.writeMode[key] = PythonParser::SettingWriteMode::TopLevel;
+    }
+
+    for (auto it = result.settings.begin(); it != result.settings.end(); ++it) {
+        const QString key = it.key();
+
+        if (result.writeMode.contains(key)) {
+            /*info(QString(
+                     "Setting '%1' found both as top-level variable and dict entry. "
+                     "Using dict assignment (settings['%1']).")
+                     .arg(key), false);*/
+        }
+
+        result.writeMode[key] = PythonParser::SettingWriteMode::DictAssign;
+    }
+
 
     return result;
 }

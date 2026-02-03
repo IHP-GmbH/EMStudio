@@ -28,6 +28,12 @@
 class PythonParser
 {
 public:
+    enum class SettingWriteMode {
+        Unknown = 0,
+        TopLevel,
+        DictAssign
+    };
+
     struct Result
     {
         bool                        ok = false;
@@ -46,6 +52,9 @@ public:
         QString                     xmlSettingKey;
         QString                     gdsLegacyVar;
         QString                     xmlLegacyVar;
+
+        QHash<QString,
+              SettingWriteMode>     writeMode;
 
         QString getCellName()    const { return cellName; }
         QString getGdsFilename() const { return gdsFilename; }

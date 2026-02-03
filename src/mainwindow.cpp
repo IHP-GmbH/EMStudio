@@ -227,6 +227,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_ui->btnRunPythonScript->setVisible(false);
     m_ui->txtRunPythonScript->setVisible(false);
 
+    setupWindowMenuDocks();
+
     setStateSaved();
 }
 
@@ -236,6 +238,33 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete m_ui;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Connects Window menu actions with dock widgets and keeps their visibility in sync.
+ *
+ * Binds checkable actions from the "Window" menu to their corresponding QDockWidget
+ * instances (Run Control and Log). The action state reflects the current dock visibility,
+ * and toggling the action shows or hides the dock. Closing a dock via its title bar
+ * button also updates the associated menu action.
+ *
+ * This ensures that dock widgets can always be restored after being closed.
+ **********************************************************************************************************************/
+void MainWindow::setupWindowMenuDocks()
+{
+    auto bind = [](QAction* act, QDockWidget* dock)
+    {
+        if (!act || !dock) return;
+
+        act->setChecked(dock->isVisible());
+        QObject::connect(act, &QAction::toggled,
+                         dock, &QDockWidget::setVisible);
+        QObject::connect(dock, &QDockWidget::visibilityChanged,
+                         act, &QAction::setChecked);
+    };
+
+    bind(m_ui->actionRun_Control, m_ui->dockRunControl);
+    bind(m_ui->actionLog,         m_ui->dockLog);
 }
 
 /*!*******************************************************************************************************************
@@ -1971,8 +2000,10 @@ QString MainWindow::createDefaultPalaceScript()
                                .arg(gdsFile, xmlFile, pyEscape(topCell));
 
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
-    if (parseResult.ok)
-        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips);
+    if (parseResult.ok) {
+        m_curPythonData = parseResult;
+        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips, parseResult.topLevel);
+    }
 
     return script;
 }
@@ -2016,8 +2047,10 @@ QString MainWindow::createDefaultOpenemsScript()
                                .arg(gdsFile, xmlFile, pyEscape(topCell));
 
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
-    if (parseResult.ok)
-        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips);
+    if (parseResult.ok) {
+        m_curPythonData = parseResult;
+        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips, parseResult.topLevel);
+    }
 
     return script;
 }
@@ -2140,6 +2173,8 @@ void MainWindow::loadPythonModel(const QString &fileName)
         return;
     }
 
+    m_curPythonData = res;
+
     QString simKey;
     if (modelType == QLatin1String("openems"))
         simKey = QStringLiteral("openems");
@@ -2152,7 +2187,7 @@ void MainWindow::loadPythonModel(const QString &fileName)
     if (idxSim >= 0 && m_ui->cbxSimTool->isEnabled())
         m_ui->cbxSimTool->setCurrentIndex(idxSim);
 
-    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips);
+    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips, res.topLevel);
 
     const QDir modelDir(fi.absolutePath());
 

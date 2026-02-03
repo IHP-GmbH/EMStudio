@@ -27,6 +27,8 @@
 #include <QVariant>
 #include <QMainWindow>
 
+#include "pythonparser.h"
+
 class QProcess;
 class QLineEdit;
 class QComboBox;
@@ -215,6 +217,11 @@ private:
     void                            replaceOrInsertPortSection(QString &script, const QString &portCode);
     void                            setEditorScriptPreservingState(const QString &script);
 
+    void                            applyOneSettingToScript(QString &script,
+                                                            const QString &key,
+                                                            const QVariant &val,
+                                                            const QString &simKeyLower);
+
     QString                         loadOrReusePythonScriptText(const QString &filePath);
 
     bool                            readTextFileUtf8(const QString &fileName, QString &outText);
@@ -246,7 +253,8 @@ private:
 
     void                            updateSubLayerNamesAutoCheck();
     void                            rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings,
-                                                                        const QMap<QString, QString>& tips);
+                                                                        const QMap<QString, QString>& tips,
+                                                                        const QMap<QString, QVariant>& topLevelVars);
 
     void                            clearSimSettingsGroup();
     QString                         findBoundariesKeyCaseInsensitive(const QMap<QString, QVariant> &settings) const;
@@ -309,6 +317,8 @@ private:
     QString                         wslToWinPath(const QString &p) const;
 #endif
 
+    void                            setupWindowMenuDocks();
+
     void                            refreshSimToolOptions();
     bool                            pathLooksValid(const QString &path, const QString &relativeExe = QString()) const;
     bool                            fileLooksValid(const QString &path) const;
@@ -350,6 +360,8 @@ private:
 
     QMenu*                          m_menuRecent = nullptr;
     QVector<QAction*>               m_recentModelActions;
+
+    PythonParser::Result            m_curPythonData;
 
     PalacePhase                     m_palacePhase = PalacePhase::None;
 

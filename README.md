@@ -289,7 +289,7 @@ Before leaving any tab, save your changes using File > Save or Ctrl+S
 
 On the ports tab, you need to configure simulation ports. It is expected that ports are included in the GDSII file on special layers, one layer per port, as described in the documentation of the IHP EM workflows. The EM workflows support in-plane ports (in xy plane) and vertical via ports (z direction). The direction of current flow in the port must be set by the user: `x`,`y`,`z` or `-x`,`-y`,`-z` for reverse polarity. Port polarity matters when multiple ports are connected to the same return path.
 
-For in-plane ports, specify only the "To Layer" field, and leave the "From Layer" field. 
+For in-plane ports, specify only the "To Layer" field, and leave the "From Layer" field empty. This will create the correct port configuration in the Python model script.
 
 Before leaving any tab, save your changes using File > Save or Ctrl+S 
 

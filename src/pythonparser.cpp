@@ -674,10 +674,14 @@ static void finalizeResult(const QString& scriptDir,
         result.simPath = QDir(scriptDir).filePath(baseName);
 
     if (result.settings.isEmpty()) {
-        if (!contextForErrors.isEmpty())
+        if (!contextForErrors.isEmpty()) {
             result.error = QStringLiteral("No settings-like assignments found in %1").arg(contextForErrors);
-        else
+            result.ok = true;
+        }
+        else {
             result.error = QStringLiteral("No settings-like assignments found in input text.");
+            result.ok = true;
+        }
     } else {
         result.ok = true;
     }

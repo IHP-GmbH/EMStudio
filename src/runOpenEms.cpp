@@ -26,6 +26,7 @@
 #include <QStandardPaths>
 #include <QTextCursor>
 #include <QTextStream>
+#include <QMessageBox>
 
 #include "extension/variantmanager.h"
 #include "extension/variantfactory.h"
@@ -59,16 +60,15 @@ void MainWindow::runOpenEMS()
         return;
     }
 
-    QString runDir = m_simSettings.value("RunDir").toString();
-    if (runDir.isEmpty() || !QDir(runDir).exists()) {
-        error("Run directory not found or not specified.", true);
-        return;
-    }
-
     const QString scriptPath = m_simSettings.value("RunPythonScript").toString().trimmed();
     if (scriptPath.isEmpty() || !QFileInfo::exists(scriptPath)) {
         error(QString("Python file '%1' does not exist.").arg(scriptPath), true);
         return;
+    }
+
+    QString runDir = m_simSettings.value("RunDir").toString();
+    if (runDir.isEmpty() || !QDir(runDir).exists()) {
+        runDir = QFileInfo(scriptPath).absolutePath();
     }
 
     m_simProcess = new QProcess(this);
@@ -145,7 +145,8 @@ void MainWindow::runOpenEMS()
     m_ui->editSimulationLog->insertPlainText("Starting OpenEMS simulation...\n");
 
     m_ui->editSimulationLog->insertPlainText(QString("[RUN] %1 %2\n")
-                                                 .arg(pythonPath, QDir::toNativeSeparators(scriptPath)));
+                                                 .arg(QDir::toNativeSeparators(pythonPath),
+                                                  QDir::toNativeSeparators(scriptPath)));
 
     m_simProcess->start(pythonPath, QStringList() << scriptPath);
     if (!m_simProcess->waitForStarted(3000)) {

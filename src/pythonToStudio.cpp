@@ -125,14 +125,22 @@ bool MainWindow::applyPythonScriptFromEditor()
         m_sysSettings["SubstrateDir"]  = QFileInfo(subPath).absolutePath();
     }
 
+    const QString simKey = currentSimToolKey().toLower();
     if (!res.simPath.isEmpty()) {
         QString runDir = res.simPath;
         if (QFileInfo(runDir).isRelative())
             runDir = modelDir.filePath(runDir);
 
-        QDir().mkpath(runDir);
+        if (simKey == QLatin1String("palace")) {
+            if (!QDir().mkpath(runDir)) {
+                error(tr("Failed to create run directory:\n%1").arg(runDir), false);
+                return false;
+            }
+        }
+
         m_simSettings["RunDir"] = runDir;
     }
+
 
     m_simSettings["RunPythonScript"] = filePath;
     m_ui->editRunPythonScript->document()->setModified(false);

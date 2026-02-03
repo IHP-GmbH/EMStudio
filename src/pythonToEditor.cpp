@@ -122,15 +122,14 @@ static QString toPythonQuotedPath(QString s)
  * \param key     Variable name to replace (left-hand side of assignment).
  * \param pyValue New Python literal/expression to put on the right-hand side.
  **********************************************************************************************************************/
-/*static void replaceTopLevelVar(QString &script, const QString &key, const QString &pyValue)
+static void replaceTopLevelVar(QString &script, const QString &key, const QString &pyValue)
 {
     QRegularExpression reVar(
-        QString(R"(^(\s*%1\s*=\s*)([^#\n]*?)(\s*#.*)?$)")
-            .arg(QRegularExpression::escape(key)),
-        QRegularExpression::MultilineOption);
+        QString(R"((?m)^([ \t]*%1\b[ \t]*=[ \t]*)([^#\r\n]*?)([ \t]*#.*)?$)")
+            .arg(QRegularExpression::escape(key)));
 
     script.replace(reVar, QStringLiteral("\\1%1\\3").arg(pyValue));
-}*/
+}
 
 /*!*******************************************************************************************************************
  * \brief Replaces any dict-style Python assignment for a given key with a new value.
@@ -334,7 +333,7 @@ void MainWindow::applyOpenEmsSettings(QString &script)
         if (!variantToPythonLiteral(val, &pyValue))
             continue;
 
-        //replaceTopLevelVar(script, key, pyValue);
+        replaceTopLevelVar(script, key, pyValue);
         replaceAnyDictVar(script, key, pyValue);
     }
 

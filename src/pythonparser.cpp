@@ -21,13 +21,85 @@
 #include "pythonparser.h"
 
 #include <QDir>
+#include <QSet>
 #include <QFile>
+#include <QLocale>
 #include <QFileInfo>
 
 #include <QRegularExpression>
 
 namespace
 {
+
+static bool parsePyLiteral(const QString& s, QVariant* out)
+{
+    if (!out) return false;
+
+    const QString t = s.trimmed();
+    if (t.isEmpty())
+        return false;
+
+    if (t == QLatin1String("True"))  { *out = true;  return true; }
+    if (t == QLatin1String("False")) { *out = false; return true; }
+
+    // String literal (single/double quotes, without multiline)
+    if ((t.startsWith('"') && t.endsWith('"')) ||
+        (t.startsWith('\'') && t.endsWith('\'')))
+    {
+        QString inner = t.mid(1, t.size() - 2);
+        inner.replace(QStringLiteral("\\\""), QStringLiteral("\""));
+        inner.replace(QStringLiteral("\\'"),  QStringLiteral("'"));
+        inner.replace(QStringLiteral("\\\\"), QStringLiteral("\\"));
+        *out = inner;
+        return true;
+    }
+
+    bool ok = false;
+    const double d = QLocale::c().toDouble(t, &ok);
+    if (ok) {
+        *out = d;
+        return true;
+    }
+
+    return false;
+}
+
+static void parseTopLevelAssignments(const QString& script,
+                                     QMap<QString, QVariant>* outMap)
+{
+    if (!outMap) return;
+
+    QRegularExpression re(
+        R"((?m)^[ \t]*([A-Za-z_]\w*)[ \t]*=[ \t]*([^#\r\n]+)(?:[ \t]*#.*)?$)");
+
+    auto it = re.globalMatch(script);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        const QString name = m.captured(1).trimmed();
+        const QString rhs  = m.captured(2).trimmed();
+
+        // skip names you never want to treat as settings-like parameters
+        static const QSet<QString> kSkip = {
+            QStringLiteral("gds_filename"),
+            QStringLiteral("XML_filename"),
+            QStringLiteral("cellname"),
+            QStringLiteral("gds_cellname"),
+            QStringLiteral("layernumbers"),
+            QStringLiteral("metals_list"),
+            QStringLiteral("allpolygons"),
+            QStringLiteral("simulation_ports"),
+        };
+        if (kSkip.contains(name))
+            continue;
+
+        QVariant v;
+        if (!parsePyLiteral(rhs, &v))
+            continue; // skip expressions, function calls, dict refs, lists, etc.
+
+        (*outMap)[name] = v;
+    }
+}
+
 
 /*!*******************************************************************************************************************
  * \brief Finds a setting key in a map using case-insensitive comparison.
@@ -712,6 +784,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     parseLegacyFileVars(content, result);
     inferFilesFromSettings(result);
     parseSettingTips(content, result);
+    parseTopLevelAssignments(content, &result.topLevel);
     finalizeResult(scriptDir, baseName, contextForErrors, result);
 
     return result;
@@ -747,6 +820,7 @@ PythonParser::Result PythonParser::parseSettings(const QString &filePath)
 
     return parseSettingsImpl(content, scriptDir, baseName, filePath);
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Parse "settings-like" key/value pairs from an in-memory Python script.

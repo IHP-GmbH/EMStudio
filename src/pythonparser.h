@@ -39,6 +39,7 @@ public:
         QString                     gdsFilename;
         QString                     xmlFilename;
 
+        QMap<QString, QVariant>     topLevel;
         QMap<QString, QString>      settingTips;
 
         QString                     gdsSettingKey;

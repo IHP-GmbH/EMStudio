@@ -379,8 +379,18 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
 
         // detect run dir from log (optional)
         const QString detectedRunDir = detectRunDirFromLog();
-        if (!detectedRunDir.isEmpty())
+        if (!detectedRunDir.isEmpty()) {
             m_simSettings["RunDir"] = detectedRunDir;
+        }
+        else {
+            const QString scriptPath = m_simSettings.value("RunPythonScript").toString().trimmed();
+            if (scriptPath.isEmpty() || !QFileInfo::exists(scriptPath)) {
+                error(QString("Python file '%1' does not exist.").arg(scriptPath), true);
+                return;
+            }
+
+            m_simSettings["RunDir"] = QFileInfo(scriptPath).absolutePath();
+        }
 
         appendToSimulationLog("\n[Palace Python preprocessing finished successfully, searching for config...]\n");
 

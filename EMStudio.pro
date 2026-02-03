@@ -116,14 +116,21 @@ equals(OUT_PWD_CLEAN, $$PWD_CLEAN) {
 }
 
 win32 {
-    SRC_WIN = $$shell_path($$SCRIPTS_SRC_DIR)
-    DST_WIN = $$shell_path($$SCRIPTS_DST_DIR)
+    SRC_WIN = $$system_path($$SCRIPTS_SRC_DIR)
+    DST_WIN = $$system_path($$SCRIPTS_DST_DIR)
 
     QMAKE_POST_LINK += $$quote(cmd /c echo [EMStudio] Copy scripts: "$$SRC_WIN" to "$$DST_WIN") $$escape_expand(\\n\\t)
+
+    # if DST exists and is a file -> delete it
     QMAKE_POST_LINK += $$quote(cmd /c if exist "$$DST_WIN" if not exist "$$DST_WIN\\NUL" del /F /Q "$$DST_WIN") $$escape_expand(\\n\\t)
+
+    # ensure directory exists
     QMAKE_POST_LINK += $$quote(cmd /c if not exist "$$DST_WIN\\NUL" mkdir "$$DST_WIN") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(cmd /c echo D ^| xcopy /E /I /H /K /Y "$$SRC_WIN\\*" "$$DST_WIN\\" ^>nul) $$escape_expand(\\n\\t)
+
+    # copy (note: no unquoted trailing backslash argument)
+    QMAKE_POST_LINK += $$quote(cmd /c xcopy /E /I /H /K /Y "$$SRC_WIN\\*" "$$DST_WIN" >nul) $$escape_expand(\\n\\t)
 }
+
 
 unix {
     !equals(OUT_PWD_CLEAN, $$PWD_CLEAN) {

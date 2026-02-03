@@ -26,17 +26,89 @@
 #include <QStandardPaths>
 #include <QTextCursor>
 
-#include "extension/variantmanager.h"
-#include "extension/variantfactory.h"
-
-#include "QtPropertyBrowser/qtvariantproperty.h"
-#include "QtPropertyBrowser/qttreepropertybrowser.h"
-
 #include "mainwindow.h"
-#include "preferences.h"
 #include "ui_mainwindow.h"
-#include "substrateview.h"
-#include "pythonparser.h"
+
+#ifdef Q_OS_WIN
+/*!*******************************************************************************************************************
+ * \brief Executes a command inside a WSL distribution and captures its standard output.
+ *
+ * Runs the given command using \c wsl.exe in the specified WSL distribution and returns
+ * the captured standard output as a UTF-8 string.
+ *
+ * The function waits synchronously for completion and returns an empty string if:
+ *  - the process fails to start,
+ *  - the timeout expires,
+ *  - the command exits with a non-zero status.
+ *
+ * \param distro    Name of the WSL distribution (e.g. "Ubuntu").
+ * \param cmd       Command and arguments to execute inside WSL.
+ * \param timeoutMs Maximum time to wait for process completion, in milliseconds.
+ *
+ * \return Captured standard output on success; empty string on failure.
+ **********************************************************************************************************************/
+static QString runWslCmdCapture(const QString &distro, const QStringList &cmd, int timeoutMs)
+{
+    QProcess p;
+
+    QStringList args;
+    args << "-d" << distro << "--";
+    args << cmd;
+
+    p.start(QStringLiteral("wsl"), args);
+
+    if (!p.waitForStarted(timeoutMs))
+        return QString();
+
+    if (!p.waitForFinished(timeoutMs))
+        return QString();
+
+    if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
+        return QString();
+
+    return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Parses physical CPU core count from \c lscpu CSV output.
+ *
+ * Interprets the output of \c lscpu -p=CORE,SOCKET and counts unique
+ * (socket, core) pairs, effectively determining the number of
+ * physical CPU cores without hyper-threading.
+ *
+ * Comment lines (starting with '#') and malformed entries are ignored.
+ *
+ * \param out Raw CSV output produced by \c lscpu -p=CORE,SOCKET.
+ *
+ * \return Number of detected physical CPU cores as a string,
+ *         or an empty string if parsing fails.
+ **********************************************************************************************************************/
+static QString parsePhysicalCoresFromLscpuCsv(QString out)
+{
+    out.replace('\r', "");
+
+    QSet<QString> cores; // "socket:core"
+    const QStringList lines = out.split('\n', Qt::SkipEmptyParts);
+
+    for (const QString &line : lines) {
+        if (line.startsWith('#'))
+            continue;
+
+        const QStringList parts = line.split(',', Qt::KeepEmptyParts);
+        if (parts.size() < 2)
+            continue;
+
+        const QString core   = parts.at(0).trimmed();
+        const QString socket = parts.at(1).trimmed();
+        if (core.isEmpty() || socket.isEmpty())
+            continue;
+
+        cores.insert(socket + ":" + core);
+    }
+
+    return cores.isEmpty() ? QString() : QString::number(cores.size());
+}
+#endif
 
 /*!*******************************************************************************************************************
  * \brief Executes the Palace simulation workflow.
@@ -52,7 +124,7 @@
  **********************************************************************************************************************/
 void MainWindow::runPalace()
 {
-    if (m_simProcess) {
+    if (m_simProcess && m_simProcess->state() == QProcess::Running) {
         info("Simulation is already running.", true);
         return;
     }
@@ -125,6 +197,7 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
 
     ctx.runMode = m_preferences.value("PALACE_RUN_MODE", 0).toInt();
 
+    bool isScriptMode = false;
     if (ctx.runMode == 1) {
         ctx.launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
         if (ctx.launcherWin.isEmpty() || !QFileInfo::exists(ctx.launcherWin)) {
@@ -137,6 +210,8 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
             outError = QStringLiteral("PALACE_RUN_SCRIPT must point to an executable file.");
             return false;
         }
+
+        isScriptMode = true;
     }
 
     const QFileInfo fi(ctx.modelWin);
@@ -150,7 +225,7 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
                              .filePath(QStringLiteral("palace_model/%1_data").arg(ctx.baseName));
 
     ctx.palaceRoot = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
-    if (ctx.palaceRoot.isEmpty()) {
+    if (ctx.palaceRoot.isEmpty() && isScriptMode == false) {
         outError = QStringLiteral("PALACE_INSTALL_PATH is not configured in Preferences.");
         return false;
     }
@@ -304,8 +379,18 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
 
         // detect run dir from log (optional)
         const QString detectedRunDir = detectRunDirFromLog();
-        if (!detectedRunDir.isEmpty())
+        if (!detectedRunDir.isEmpty()) {
             m_simSettings["RunDir"] = detectedRunDir;
+        }
+        else {
+            const QString scriptPath = m_simSettings.value("RunPythonScript").toString().trimmed();
+            if (scriptPath.isEmpty() || !QFileInfo::exists(scriptPath)) {
+                error(QString("Python file '%1' does not exist.").arg(scriptPath), true);
+                return;
+            }
+
+            m_simSettings["RunDir"] = QFileInfo(scriptPath).absolutePath();
+        }
 
         appendToSimulationLog("\n[Palace Python preprocessing finished successfully, searching for config...]\n");
 
@@ -473,60 +558,263 @@ QString MainWindow::queryWslCpuCores(const QString &distro) const
  * \param distro WSL distribution name (used only on Windows).
  * \return Number of available CPU cores as string.
  **********************************************************************************************************************/
-QString MainWindow::detectMpiCoreCount(const QString &distro) const
+MainWindow::CoreCountResult MainWindow::detectMpiCoreCount() const
 {
-#ifndef Q_OS_WIN
-    Q_UNUSED(distro);
-#endif
-
-    QProcess p;
+    CoreCountResult r;
 
 #ifdef Q_OS_WIN
-    QStringList args;
-    args << "-d" << distro << "--" << "nproc";
-    p.start(QStringLiteral("wsl"), args);
+    const QString distro = m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed();
+
+    const QString lscpuOut = runWslCmdCapture(distro, QStringList() << "lscpu" << "-p=CORE,SOCKET", 2000);
+    const QString phys = parsePhysicalCoresFromLscpuCsv(lscpuOut).trimmed();
+    if (!phys.isEmpty()) {
+        r.cores  = phys;
+        r.source = QStringLiteral("physical (lscpu)");
+        return r;
+    }
+
+    const QString nprocOut = runWslCmdCapture(distro, QStringList() << "nproc", 2000).trimmed();
+    if (!nprocOut.isEmpty()) {
+        r.cores  = nprocOut;
+        r.source = QStringLiteral("logical (nproc)");
+        return r;
+    }
+
+    r.cores  = QStringLiteral("1");
+    r.source = QStringLiteral("fallback");
+    return r;
 #else
+    const QString phys = detectPhysicalCoreCountLinux().trimmed();
+    if (!phys.isEmpty()) {
+        r.cores  = phys;
+        r.source = QStringLiteral("physical (lscpu)");
+        return r;
+    }
+
+    QProcess p;
     p.start(QStringLiteral("nproc"), QStringList());
+
+    if (p.waitForFinished(2000)) {
+        const QString out = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+        if (!out.isEmpty()) {
+            r.cores  = out;
+            r.source = QStringLiteral("logical (nproc)");
+            return r;
+        }
+    }
+
+    r.cores  = QStringLiteral("1");
+    r.source = QStringLiteral("fallback");
+    return r;
 #endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Detects the number of physical CPU cores on Linux.
+ *
+ * Determines the number of hardware cores (without Hyper-Threading / SMT) by
+ * parsing the output of \c lscpu -p=CORE,SOCKET and counting unique (socket,core)
+ * pairs. This value is suitable for CPU-bound MPI runs where oversubscribing
+ * logical threads is undesirable.
+ *
+ * \return Number of physical CPU cores as string, or an empty string if detection fails.
+ **********************************************************************************************************************/
+QString MainWindow::detectPhysicalCoreCountLinux() const
+{
+    QProcess p;
+    p.start(QStringLiteral("lscpu"), QStringList() << "-p=CORE,SOCKET");
 
     if (!p.waitForFinished(2000))
-        return QStringLiteral("1");
+        return QString();
 
-    const QString out = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
-    return out.isEmpty() ? QStringLiteral("1") : out;
+    if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
+        return QString();
+
+    const QString out = QString::fromUtf8(p.readAllStandardOutput());
+
+    QSet<QString> cores; // "socket:core"
+    const QStringList lines = out.split('\n', Qt::SkipEmptyParts);
+
+    for (const QString &line : lines) {
+        if (line.startsWith('#'))
+            continue;
+
+        const QStringList parts = line.split(',', Qt::KeepEmptyParts);
+        if (parts.size() < 2)
+            continue;
+
+        const QString core   = parts.at(0).trimmed();
+        const QString socket = parts.at(1).trimmed();
+        if (core.isEmpty() || socket.isEmpty())
+            continue;
+
+        cores.insert(socket + ":" + core);
+    }
+
+    if (cores.isEmpty())
+        return QString();
+
+    return QString::number(cores.size());
+}
+
+/*!*******************************************************************************************************************
+ * \brief Stops the current Palace run and resets internal solver state.
+ *
+ * Reports the given error message (optionally via dialog), schedules the active
+ * simulation process for deletion, clears the process pointer, and resets the
+ * Palace phase to \c PalacePhase::None.
+ *
+ * This helper is intended to be used as a single exit path for all Palace stage
+ * failures to keep cleanup consistent.
+ *
+ * \param message    Error message to report. If empty, no error is shown.
+ * \param showDialog If true, show the error in a dialog; otherwise log it only.
+ **********************************************************************************************************************/
+void MainWindow::failPalaceSolver(const QString &message, bool showDialog)
+{
+    if (!message.isEmpty())
+        error(message, showDialog);
+
+    if (m_simProcess) {
+        m_simProcess->deleteLater();
+        m_simProcess = nullptr;
+    }
+
+    m_palacePhase = PalacePhase::None;
 }
 
 /*!*******************************************************************************************************************
  * \brief Starts the Palace solver stage.
  *
- * Determines the Palace configuration file to use and launches the solver
- * either via an external launcher script or directly using the Palace binary
- * (natively or under WSL).
+ * Resolves the Palace configuration file, handles launcher mode if enabled,
+ * prepares the solver command and MPI core count, logs execution details,
+ * and dispatches solver execution to the platform-specific runner.
  *
- * Handles error reporting and internal phase transitions.
+ * All common logic is platform-independent; OS-specific code is isolated
+ * to the final execution step.
  *
  * \param[in,out] ctx Palace execution context, updated with resolved paths.
  **********************************************************************************************************************/
 void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
 {
-    const QString defRunDir = guessDefaultPalaceRunDir(m_ui->txtRunPythonScript->text(), m_ui->cbxTopCell->currentText());
-    ctx.searchDirWin = chooseSearchDir(ctx.detectedRunDirWin, defRunDir);
+    const QString defRunDir = guessDefaultPalaceRunDir(
+        m_ui->txtRunPythonScript->text(),
+        m_ui->cbxTopCell->currentText());
 
+    ctx.searchDirWin = chooseSearchDir(ctx.detectedRunDirWin, defRunDir);
     if (ctx.searchDirWin.isEmpty()) {
-        error("Cannot determine Palace run directory to search for config.", true);
-        m_simProcess->deleteLater();
-        m_simProcess = nullptr;
-        m_palacePhase = PalacePhase::None;
+        failPalaceSolver("Cannot determine Palace run directory to search for config.", true);
         return;
     }
 
     ctx.configPathWin = findPalaceConfigJson(ctx.searchDirWin);
     if (ctx.configPathWin.isEmpty()) {
-        error(QString("No Palace config (*.json) found in run directory: %1").arg(ctx.searchDirWin), true);
-        m_simProcess->deleteLater();
-        m_simProcess = nullptr;
-        m_palacePhase = PalacePhase::None;
+        failPalaceSolver(QString("No Palace config (*.json) found in run directory: %1")
+                                 .arg(ctx.searchDirWin),
+                         true);
         return;
+    }
+
+    appendToSimulationLog(QString("[Using Palace config: %1]\n").arg(QDir::toNativeSeparators(ctx.configPathWin)).toUtf8());
+
+    if (ctx.runMode == 1) {
+        if (!startPalaceLauncherStage(ctx))
+            failPalaceSolver(QString(), false);
+        return;
+    }
+
+    QString workDirLinux;
+    QString cmd;
+    QString cores;
+
+    if (!preparePalaceSolverLaunch(ctx, workDirLinux, cmd, cores)) {
+        failPalaceSolver(QString(), true);
+        return;
+    }
+
+    appendToSimulationLog(
+        QString("[Palace solver command] %1\n").arg(cmd).toUtf8());
+    appendToSimulationLog(
+        QString("[MPI cores] np = %1\n").arg(cores).toUtf8());
+
+#ifdef Q_OS_WIN
+    if (!runPalaceSolverWindows(ctx, cmd))
+        failPalaceSolver(QString(), false);
+#else
+    if (!runPalaceSolverLinux(ctx, workDirLinux, cmd))
+        failPalaceSolver(QString(), false);
+#endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Starts the Palace solver using an external launcher script.
+ *
+ * Executes the user-configured Palace launcher script instead of invoking the
+ * Palace binary directly. The launcher is started in the directory containing
+ * the Palace configuration file.
+ *
+ * This mode bypasses internal MPI command construction and delegates all
+ * execution details (including core count and environment setup) to the
+ * external script.
+ *
+ * On success, switches the internal state to \c PalacePhase::PalaceSolver.
+ * On failure, reports an error and leaves the solver inactive.
+ *
+ * \param[in,out] ctx Palace execution context containing launcher path and
+ *                    resolved configuration file.
+ *
+ * \return True if the launcher process was started successfully; false otherwise.
+ **********************************************************************************************************************/
+bool MainWindow::startPalaceLauncherStage(PalaceRunContext &ctx)
+{
+    appendToSimulationLog("\n[Starting Palace via external launcher script...]\n");
+
+    m_palacePhase = PalacePhase::PalaceSolver;
+
+    QString workDir = ctx.searchDirWin;
+    if (workDir.isEmpty())
+        workDir = QFileInfo(ctx.configPathWin).absolutePath();
+
+    m_simProcess->setWorkingDirectory(workDir);
+    m_simProcess->start(QDir::toNativeSeparators(ctx.launcherWin),
+                        QStringList() << QDir::toNativeSeparators(ctx.configPathWin));
+
+    if (!m_simProcess->waitForStarted(3000)) {
+        error("Failed to start Palace launcher script.", false);
+        return false;
+    }
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Prepares the Palace solver launch command and execution parameters.
+ *
+ * Resolves the Palace configuration path for the current platform, determines
+ * the working directory, detects the number of MPI cores, and constructs the
+ * full solver launch command.
+ *
+ * This function performs only preparation and validation. It does not start
+ * the solver process itself.
+ *
+ * On success, all output parameters are filled with valid values suitable for
+ * passing to the platform-specific solver runner.
+ *
+ * \param[in,out] ctx           Palace execution context, updated with resolved paths.
+ * \param[out]    outWorkDirLinux Working directory for the solver execution.
+ * \param[out]    outCmd         Full shell command used to start the Palace solver.
+ * \param[out]    outCores       Detected number of MPI cores to be used.
+ *
+ * \return True if the solver launch information was prepared successfully;
+ *         false if a required setting is missing or preparation fails.
+ **********************************************************************************************************************/
+bool MainWindow::preparePalaceSolverLaunch(PalaceRunContext &ctx,
+                                           QString &outWorkDirLinux,
+                                           QString &outCmd,
+                                           QString &outCores)
+{
+    if (ctx.configPathWin.isEmpty()) {
+        error("Internal error: Palace config path is empty.", true);
+        return false;
     }
 
 #ifdef Q_OS_WIN
@@ -535,89 +823,95 @@ void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
     ctx.configLinux = ctx.configPathWin;
 #endif
 
-    appendToSimulationLog(QString("[Using Palace config: %1]\n").arg(ctx.configPathWin).toUtf8());
-
-    // launcher mode
-    if (ctx.runMode == 1) {
-        appendToSimulationLog("\n[Starting Palace via external launcher script...]\n");
-
-        m_palacePhase = PalacePhase::PalaceSolver;
-
-        QString workDir = ctx.searchDirWin;
-        if (workDir.isEmpty())
-            workDir = QFileInfo(ctx.configPathWin).absolutePath();
-
-        m_simProcess->setWorkingDirectory(workDir);
-        m_simProcess->start(QDir::toNativeSeparators(ctx.launcherWin),
-                            QStringList() << QDir::toNativeSeparators(ctx.configPathWin));
-
-        if (!m_simProcess->waitForStarted(3000)) {
-            error("Failed to start Palace launcher script.", false);
-            m_simProcess->deleteLater();
-            m_simProcess = nullptr;
-            m_palacePhase = PalacePhase::None;
-        }
-        return;
-    }
-
-    // normal solver mode
     const QString configDirLinux  = QFileInfo(ctx.configLinux).path();
     const QString configBaseLinux = QFileInfo(ctx.configLinux).fileName();
 
-    QString palaceRoot2 = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
-#ifdef Q_OS_WIN
-    if (!palaceRoot2.startsWith('/'))
-        palaceRoot2 = toWslPath(palaceRoot2);
-#endif
-    const QString palaceExeLinux2 = QDir(palaceRoot2).filePath("bin/palace");
+    outWorkDirLinux = configDirLinux;
+
+    const CoreCountResult cc = detectMpiCoreCount();
+    outCores = cc.cores;
+
+    appendToSimulationLog(
+        QString("[MPI cores detected] np = %1 (%2)\n").arg(outCores, cc.source).toUtf8());
+
+    const QString palaceCmd =
+        QString("\"%1\" --launcher-args --oversubscribe -np %2 \"%3\"")
+            .arg(ctx.palaceExeLinux, outCores, configBaseLinux);
+
+    outCmd = QString("cd \"%1\" && %2").arg(configDirLinux, palaceCmd);
+    return true;
+}
 
 #ifdef Q_OS_WIN
-    const QString distro = m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed();
-
-    const QString coreExpr = QStringLiteral("$(/usr/bin/nproc 2>/dev/null || nproc 2>/dev/null || echo 1)");
-    const QString palaceCmd = QString("\"%1\" --launcher-args --oversubscribe -np %2 \"%3\"")
-                                      .arg(palaceExeLinux2, coreExpr, configBaseLinux);
-
-    const QString cmd = QString("cd \"%1\" && %2").arg(configDirLinux, palaceCmd);
-
-    appendToSimulationLog(QString("[Palace solver command]\n  %1\n").arg(cmd).toUtf8());
-
-#ifdef Q_OS_WIN
-    const QString cores = detectMpiCoreCount(distro);
-#else
-    const QString cores = detectMpiCoreCount(QString());
-#endif
-
-    if (!cores.isEmpty()) {
-        appendToSimulationLog(QString("[MPI cores]\n  np = %1\n").arg(cores).toUtf8());
-    } else {
-        appendToSimulationLog("[MPI cores]\n  np = nproc (failed to query value)\n");
-    }
-
-    QStringList argsPalace;
-    argsPalace << "-d" << distro
-               << "--" << "bash" << "-lc" << cmd;
-
+/*!*******************************************************************************************************************
+ * \brief Starts the Palace solver stage under Windows using WSL.
+ *
+ * Launches the Palace solver inside the configured WSL distribution by executing
+ * the prepared shell command via \c wsl.exe. The function assumes that all paths
+ * and command strings are already validated and prepared.
+ *
+ * On success, switches the internal state to \c PalacePhase::PalaceSolver.
+ * On failure, reports an error and leaves the solver inactive.
+ *
+ * \param ctx Prepared Palace execution context (WSL distro is taken from it).
+ * \param cmd Full shell command to execute inside WSL.
+ *
+ * \return True if the solver process was started successfully; false otherwise.
+ **********************************************************************************************************************/
+bool MainWindow::runPalaceSolverWindows(const PalaceRunContext &ctx, const QString &cmd)
+{
     appendToSimulationLog("\n[Starting Palace solver in WSL...]\n");
+
     m_palacePhase = PalacePhase::PalaceSolver;
-    m_simProcess->start("wsl", argsPalace);
-#else
-    appendToSimulationLog("\n[Starting Palace solver (native)...]\n");
-    m_palacePhase = PalacePhase::PalaceSolver;
-    m_simProcess->setWorkingDirectory(configDirLinux);
-    m_simProcess->start(palaceExeLinux2, QStringList() << configBaseLinux);
-#endif
+
+    QStringList args;
+    args << "-d" << ctx.distro
+         << "--" << "bash" << "-lc" << cmd;
+
+    m_simProcess->start(QStringLiteral("wsl"), args);
 
     if (!m_simProcess->waitForStarted(3000)) {
-#ifdef Q_OS_WIN
         error("Failed to start Palace solver under WSL.", false);
-#else
-        error("Failed to start Palace solver.", false);
-#endif
-        m_simProcess->deleteLater();
-        m_simProcess = nullptr;
-        m_palacePhase = PalacePhase::None;
+        return false;
     }
+    return true;
+}
+#endif
+
+/*!*******************************************************************************************************************
+ * \brief Starts the Palace solver stage natively on Linux.
+ *
+ * Launches the Palace solver directly using the native Palace binary.
+ * The working directory is set to the directory containing the Palace
+ * configuration file.
+ *
+ * On success, switches the internal state to \c PalacePhase::PalaceSolver.
+ * On failure, reports an error and leaves the solver inactive.
+ *
+ * \param ctx Prepared Palace execution context (used to resolve config file name).
+ * \param workDirLinux Directory in which the solver should be executed.
+ *
+ * \return True if the solver process was started successfully; false otherwise.
+ **********************************************************************************************************************/
+bool MainWindow::runPalaceSolverLinux(const PalaceRunContext &ctx,
+                                      const QString &workDirLinux,
+                                      const QString &cmd)
+{
+    Q_UNUSED(ctx);
+
+    appendToSimulationLog("\n[Starting Palace solver (native)...]\n");
+
+    m_palacePhase = PalacePhase::PalaceSolver;
+
+    m_simProcess->setWorkingDirectory(workDirLinux);
+    m_simProcess->start(QStringLiteral("bash"), QStringList() << "-lc" << cmd);
+
+    if (!m_simProcess->waitForStarted(3000)) {
+        error("Failed to start Palace solver.", false);
+        return false;
+    }
+
+    return true;
 }
 
 #ifdef Q_OS_WIN

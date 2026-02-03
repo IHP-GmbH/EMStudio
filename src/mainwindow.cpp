@@ -21,6 +21,7 @@
 #include <QMenu>
 #include <QFile>
 #include <QDebug>
+#include <QTimer>
 #include <QAction>
 #include <QProcess>
 #include <QFileInfo>
@@ -226,6 +227,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_ui->btnRunPythonScript->setVisible(false);
     m_ui->txtRunPythonScript->setVisible(false);
 
+    setupWindowMenuDocks();
+
     setStateSaved();
 }
 
@@ -235,6 +238,33 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete m_ui;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Connects Window menu actions with dock widgets and keeps their visibility in sync.
+ *
+ * Binds checkable actions from the "Window" menu to their corresponding QDockWidget
+ * instances (Run Control and Log). The action state reflects the current dock visibility,
+ * and toggling the action shows or hides the dock. Closing a dock via its title bar
+ * button also updates the associated menu action.
+ *
+ * This ensures that dock widgets can always be restored after being closed.
+ **********************************************************************************************************************/
+void MainWindow::setupWindowMenuDocks()
+{
+    auto bind = [](QAction* act, QDockWidget* dock)
+    {
+        if (!act || !dock) return;
+
+        act->setChecked(dock->isVisible());
+        QObject::connect(act, &QAction::toggled,
+                         dock, &QDockWidget::setVisible);
+        QObject::connect(dock, &QDockWidget::visibilityChanged,
+                         act, &QAction::setChecked);
+    };
+
+    bind(m_ui->actionRun_Control, m_ui->dockRunControl);
+    bind(m_ui->actionLog,         m_ui->dockLog);
 }
 
 /*!*******************************************************************************************************************
@@ -835,6 +865,8 @@ void MainWindow::on_actionSave_triggered()
 
     saveSettings();
     setStateSaved();
+
+    info("All changes saved successfully.", true);
 }
 
 /*!*******************************************************************************************************************
@@ -1497,15 +1529,22 @@ QString MainWindow::currentSimToolKey() const
  **********************************************************************************************************************/
 void MainWindow::on_btnStop_clicked()
 {
-    if (m_simProcess && m_simProcess->state() == QProcess::Running) {
-        m_simProcess->kill();
-        m_simProcess->waitForFinished();
-        info("Simulation stopped by user.", false);
-        m_simProcess->deleteLater();
-        m_simProcess = nullptr;
-    } else {
+    if (!m_simProcess || m_simProcess->state() != QProcess::Running) {
         info("No simulation is currently running.", false);
+        return;
     }
+
+    m_palacePhase = PalacePhase::None;
+
+    info("Stopping simulation...", false);
+
+    m_simProcess->terminate();
+
+    QProcess *p = m_simProcess;
+    QTimer::singleShot(1500, this, [p]() {
+        if (p && p->state() != QProcess::NotRunning)
+            p->kill();
+    });
 }
 
 /*!*******************************************************************************************************************
@@ -1932,15 +1971,11 @@ bool MainWindow::readTextFileUtf8(const QString &fileName, QString &outText)
 QString MainWindow::createDefaultPalaceScript()
 {
     QString gdsFile = m_ui->txtGdsFile->text().trimmed();
-    if (gdsFile.isEmpty())
-        gdsFile = QStringLiteral("line_simple_viaport.gds");
-    else
+    if (!gdsFile.isEmpty())
         gdsFile = toWslPath(QDir::fromNativeSeparators(gdsFile));
 
     QString xmlFile = m_ui->txtSubstrate->text().trimmed();
-    if (xmlFile.isEmpty())
-        xmlFile = QStringLiteral("SG13G2_nosub.xml");
-    else
+    if (!xmlFile.isEmpty())
         xmlFile = toWslPath(QDir::fromNativeSeparators(xmlFile));
 
     // Top cell (gds_cellname) support
@@ -1965,8 +2000,10 @@ QString MainWindow::createDefaultPalaceScript()
                                .arg(gdsFile, xmlFile, pyEscape(topCell));
 
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
-    if (parseResult.ok)
-        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips);
+    if (parseResult.ok) {
+        m_curPythonData = parseResult;
+        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips, parseResult.topLevel);
+    }
 
     return script;
 }
@@ -1983,15 +2020,11 @@ QString MainWindow::createDefaultPalaceScript()
 QString MainWindow::createDefaultOpenemsScript()
 {
     QString gdsFile = m_ui->txtGdsFile->text().trimmed();
-    if (gdsFile.isEmpty())
-        gdsFile = QStringLiteral("line_simple_viaport.gds");
-    else
+    if (!gdsFile.isEmpty())
         gdsFile = QDir::fromNativeSeparators(gdsFile);
 
     QString xmlFile = m_ui->txtSubstrate->text().trimmed();
-    if (xmlFile.isEmpty())
-        xmlFile = QStringLiteral("SG13G2_nosub.xml");
-    else
+    if (!xmlFile.isEmpty())
         xmlFile = QDir::fromNativeSeparators(xmlFile);
 
     QString topCell = m_ui->cbxTopCell->currentText().trimmed();
@@ -2014,8 +2047,10 @@ QString MainWindow::createDefaultOpenemsScript()
                                .arg(gdsFile, xmlFile, pyEscape(topCell));
 
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
-    if (parseResult.ok)
-        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips);
+    if (parseResult.ok) {
+        m_curPythonData = parseResult;
+        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips, parseResult.topLevel);
+    }
 
     return script;
 }
@@ -2138,6 +2173,8 @@ void MainWindow::loadPythonModel(const QString &fileName)
         return;
     }
 
+    m_curPythonData = res;
+
     QString simKey;
     if (modelType == QLatin1String("openems"))
         simKey = QStringLiteral("openems");
@@ -2150,12 +2187,24 @@ void MainWindow::loadPythonModel(const QString &fileName)
     if (idxSim >= 0 && m_ui->cbxSimTool->isEnabled())
         m_ui->cbxSimTool->setCurrentIndex(idxSim);
 
-    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips);
+    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips, res.topLevel);
 
     const QDir modelDir(fi.absolutePath());
 
     m_modelGdsKey.clear();
     m_modelXmlKey.clear();
+
+    if (!res.getCellName().isEmpty())
+    {
+        const QString cellName = res.getCellName();
+
+        const int idx = m_ui->cbxTopCell->findText(cellName);
+        if (idx >= 0) {
+            m_ui->cbxTopCell->setCurrentIndex(idx);
+            m_simSettings[QStringLiteral("gds_cellname")] = cellName;
+        }
+    }
+
 
     if (!res.gdsFilename.isEmpty())
     {

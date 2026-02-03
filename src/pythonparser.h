@@ -28,6 +28,12 @@
 class PythonParser
 {
 public:
+    enum class SettingWriteMode {
+        Unknown = 0,
+        TopLevel,
+        DictAssign
+    };
+
     struct Result
     {
         bool                        ok = false;
@@ -35,9 +41,11 @@ public:
         QString                     error;
 
         QString                     simPath;
+        QString                     cellName;
         QString                     gdsFilename;
         QString                     xmlFilename;
 
+        QMap<QString, QVariant>     topLevel;
         QMap<QString, QString>      settingTips;
 
         QString                     gdsSettingKey;
@@ -45,6 +53,10 @@ public:
         QString                     gdsLegacyVar;
         QString                     xmlLegacyVar;
 
+        QHash<QString,
+              SettingWriteMode>     writeMode;
+
+        QString getCellName()    const { return cellName; }
         QString getGdsFilename() const { return gdsFilename; }
         QString getXmlFilename() const { return xmlFilename; }
 

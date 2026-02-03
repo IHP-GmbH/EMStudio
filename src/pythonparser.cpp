@@ -21,13 +21,305 @@
 #include "pythonparser.h"
 
 #include <QDir>
+#include <QSet>
 #include <QFile>
+#include <QLocale>
 #include <QFileInfo>
 
 #include <QRegularExpression>
 
 namespace
 {
+
+/*!*******************************************************************************************************************
+ * \brief Parses a simple Python literal into a QVariant.
+ *
+ * Supports a limited subset of Python literals that are safe and unambiguous
+ * to map to Qt types:
+ *  - Boolean values: \c True, \c False
+ *  - String literals enclosed in single or double quotes (no multiline support)
+ *    with basic escape handling (\\, \", \')
+ *  - Numeric values parsed as \c double using C locale (including scientific notation)
+ *
+ * Any other constructs (expressions, function calls, lists, dicts, etc.)
+ * are intentionally rejected.
+ *
+ * \param s    Input string representing the Python literal.
+ * \param out  Output QVariant receiving the parsed value.
+ * \return     True if the literal was successfully parsed; false otherwise.
+ **********************************************************************************************************************/
+static bool parsePyLiteral(const QString& s, QVariant* out)
+{
+    if (!out) return false;
+
+    const QString t = s.trimmed();
+    if (t.isEmpty())
+        return false;
+
+    if (t == QLatin1String("True"))  { *out = true;  return true; }
+    if (t == QLatin1String("False")) { *out = false; return true; }
+
+    // String literal (single/double quotes, without multiline)
+    if ((t.startsWith('"') && t.endsWith('"')) ||
+        (t.startsWith('\'') && t.endsWith('\'')))
+    {
+        QString inner = t.mid(1, t.size() - 2);
+        inner.replace(QStringLiteral("\\\""), QStringLiteral("\""));
+        inner.replace(QStringLiteral("\\'"),  QStringLiteral("'"));
+        inner.replace(QStringLiteral("\\\\"), QStringLiteral("\\"));
+        *out = inner;
+        return true;
+    }
+
+    bool ok = false;
+    const double d = QLocale::c().toDouble(t, &ok);
+    if (ok) {
+        *out = d;
+        return true;
+    }
+
+    return false;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Extracts simple top-level Python assignments from a script.
+ *
+ * Scans the script for assignments of the form:
+ * \code
+ *   name = literal
+ * \endcode
+ *
+ * Only assignments whose right-hand side can be parsed by parsePyLiteral()
+ * are collected. More complex constructs (function calls, expressions,
+ * lists, dicts, attribute access, etc.) are ignored.
+ *
+ * A predefined set of variable names is explicitly skipped, as they represent
+ * structural or non-setting entities (e.g. GDS inputs, port containers).
+ *
+ * The function is multiline-safe and ignores inline comments.
+ *
+ * \param script  Full Python script text to scan.
+ * \param outMap  Output map receiving parsed variable names and values.
+ **********************************************************************************************************************/
+static void parseTopLevelAssignments(const QString& script,
+                                     QMap<QString, QVariant>* outMap)
+{
+    if (!outMap) return;
+
+    QRegularExpression re(
+        R"((?m)^[ \t]*([A-Za-z_]\w*)[ \t]*=[ \t]*([^#\r\n]+)(?:[ \t]*#.*)?$)");
+
+    auto it = re.globalMatch(script);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        const QString name = m.captured(1).trimmed();
+        const QString rhs  = m.captured(2).trimmed();
+
+        // skip names you never want to treat as settings-like parameters
+        static const QSet<QString> kSkip = {
+            QStringLiteral("gds_filename"),
+            QStringLiteral("XML_filename"),
+            QStringLiteral("cellname"),
+            QStringLiteral("gds_cellname"),
+            QStringLiteral("layernumbers"),
+            QStringLiteral("metals_list"),
+            QStringLiteral("allpolygons"),
+            QStringLiteral("simulation_ports"),
+        };
+        if (kSkip.contains(name))
+            continue;
+
+        QVariant v;
+        if (!parsePyLiteral(rhs, &v))
+            continue; // skip expressions, function calls, dict refs, lists, etc.
+
+        (*outMap)[name] = v;
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Finds a setting key in a map using case-insensitive comparison.
+ *
+ * Searches through \a settings and returns the actual key name whose
+ * case-insensitive value matches \a wanted. This is useful when preserving
+ * the original key spelling as it appears in the parsed script.
+ *
+ * \param settings Map of simulation settings to search.
+ * \param wanted   Desired key name (case-insensitive).
+ *
+ * \return The matching key as stored in \a settings, or an empty string if not found.
+ **********************************************************************************************************************/
+static QString findKeyCi(const QMap<QString, QVariant>& settings,
+                         const QString& wanted)
+{
+    for (auto it = settings.constBegin(); it != settings.constEnd(); ++it) {
+        if (it.key().compare(wanted, Qt::CaseInsensitive) == 0)
+            return it.key();
+    }
+    return QString();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Converts a QVariant to a trimmed QString if it holds a string.
+ *
+ * Returns the contained string value when \a v is of type \c QVariant::String.
+ * For all other types, an empty string is returned.
+ *
+ * \param v Input QVariant.
+ *
+ * \return Trimmed string value, or an empty string if \a v is not a string.
+ **********************************************************************************************************************/
+static QString variantToStringIfString(const QVariant& v)
+{
+    return (v.type() == QVariant::String) ? v.toString().trimmed() : QString();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Checks whether a string ends with a given suffix (case-insensitive).
+ *
+ * Performs a case-insensitive comparison to determine whether \a s
+ * ends with \a suf.
+ *
+ * \param s   Input string.
+ * \param suf Suffix to test for.
+ *
+ * \return True if \a s ends with \a suf (case-insensitive), false otherwise.
+ **********************************************************************************************************************/
+static bool endsWithCi(const QString& s, const QString& suf)
+{
+    return s.toLower().endsWith(suf);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Infers the GDS filename from explicit simulation settings.
+ *
+ * Searches for a setting named \c GdsFile (case-insensitive) and, if present,
+ * extracts the GDS filename from its value. Explicit settings have the highest
+ * priority and override any previously inferred legacy values.
+ *
+ * \param result Reference to the parsing result structure to be updated.
+ **********************************************************************************************************************/
+static void inferExplicitGdsFromSettings(PythonParser::Result& result)
+{
+    const QString k = findKeyCi(result.settings, QStringLiteral("GdsFile"));
+    if (k.isEmpty())
+        return;
+
+    const QString s = variantToStringIfString(result.settings.value(k));
+    if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".gds"))) {
+        result.gdsFilename   = s;
+        result.gdsSettingKey = k;
+        result.gdsLegacyVar.clear();
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Infers the substrate XML filename from explicit simulation settings.
+ *
+ * Searches for a setting named \c SubstrateFile (case-insensitive) and, if present,
+ * extracts the XML filename from its value. Explicit settings have the highest
+ * priority and override any previously inferred legacy values.
+ *
+ * \param result Reference to the parsing result structure to be updated.
+ **********************************************************************************************************************/
+static void inferExplicitXmlFromSettings(PythonParser::Result& result)
+{
+    const QString k = findKeyCi(result.settings, QStringLiteral("SubstrateFile"));
+    if (k.isEmpty())
+        return;
+
+    const QString s = variantToStringIfString(result.settings.value(k));
+    if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".xml"))) {
+        result.xmlFilename   = s;
+        result.xmlSettingKey = k;
+        result.xmlLegacyVar.clear();
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Infers the GDS top-cell name from explicit simulation settings.
+ *
+ * Searches for a setting named \c gds_cellname (case-insensitive) and assigns
+ * its value as the top-level GDS cell name. No heuristic inference is applied;
+ * only the explicit setting is considered.
+ *
+ * \param result Reference to the parsing result structure to be updated.
+ **********************************************************************************************************************/
+static void inferExplicitCellNameFromSettings(PythonParser::Result& result)
+{
+    const QString k = findKeyCi(result.settings,
+                                QStringLiteral("gds_cellname"));
+    if (k.isEmpty())
+        return;
+
+    const QString s = variantToStringIfString(result.settings.value(k));
+    if (!s.isEmpty())
+        result.cellName = s;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Tries to infer GDS and XML filenames from a single simulation setting.
+ *
+ * Examines the provided setting value and checks whether it represents a GDS or
+ * substrate XML file based on its file extension. Inference is performed only
+ * if the corresponding filename has not been set yet.
+ *
+ * This function never overrides explicitly defined values.
+ *
+ * \param result Reference to the parsing result structure to be updated.
+ * \param key    Setting key name associated with \a value.
+ * \param value  Setting value to inspect.
+ *
+ * \return True if at least one filename was inferred and updated; false otherwise.
+ **********************************************************************************************************************/
+static bool inferHeuristicFilesFromOneSetting(PythonParser::Result& result,
+                                              const QString& key,
+                                              const QVariant& value)
+{
+    const QString s = variantToStringIfString(value);
+    if (s.isEmpty())
+        return false;
+
+    bool changed = false;
+
+    if (result.gdsFilename.isEmpty() && endsWithCi(s, QStringLiteral(".gds"))) {
+        result.gdsFilename   = s;
+        result.gdsSettingKey = key;
+        result.gdsLegacyVar.clear();
+        changed = true;
+    }
+
+    if (result.xmlFilename.isEmpty() && endsWithCi(s, QStringLiteral(".xml"))) {
+        result.xmlFilename   = s;
+        result.xmlSettingKey = key;
+        result.xmlLegacyVar.clear();
+        changed = true;
+    }
+
+    return changed;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Performs heuristic inference of GDS and XML filenames from all simulation settings.
+ *
+ * Iterates over all settings in \c result.settings and applies file-extension
+ * heuristics to determine missing GDS and XML filenames. The scan terminates
+ * early once both filenames have been inferred.
+ *
+ * Explicitly defined settings are never overridden.
+ *
+ * \param result Reference to the parsing result structure to be updated.
+ **********************************************************************************************************************/
+static void inferHeuristicFilesFromAllSettings(PythonParser::Result& result)
+{
+    for (auto it = result.settings.constBegin(); it != result.settings.constEnd(); ++it) {
+        inferHeuristicFilesFromOneSetting(result, it.key(), it.value());
+
+        if (!result.gdsFilename.isEmpty() &&
+            !result.xmlFilename.isEmpty())
+            break;
+    }
+}
 
 /*!*******************************************************************************************************************
  * \brief Remove trailing inline '#' comments from a Python expression.
@@ -226,68 +518,10 @@ static void parseLegacyFileVars(const QString& content, PythonParser::Result& re
  **********************************************************************************************************************/
 static void inferFilesFromSettings(PythonParser::Result& result)
 {
-    auto endsWithCi = [](const QString& s, const QString& suf) -> bool {
-        return s.trimmed().toLower().endsWith(suf);
-    };
-
-    auto vToString = [](const QVariant& v) -> QString {
-        return (v.type() == QVariant::String) ? v.toString() : QString();
-    };
-
-    auto findKeyCi = [&](const QString& wanted) -> QString {
-        for (auto it = result.settings.constBegin(); it != result.settings.constEnd(); ++it) {
-            if (it.key().compare(wanted, Qt::CaseInsensitive) == 0)
-                return it.key(); // return real key as in file
-        }
-        return QString();
-    };
-
-    // Explicit settings keys (highest priority)
-
-    {
-        const QString k = findKeyCi(QStringLiteral("GdsFile"));
-        if (!k.isEmpty()) {
-            const QString s = vToString(result.settings.value(k));
-            if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".gds"))) {
-                result.gdsFilename    = s;
-                result.gdsSettingKey  = k;
-                result.gdsLegacyVar.clear(); // settings override legacy
-            }
-        }
-    }
-
-    {
-        const QString k = findKeyCi(QStringLiteral("SubstrateFile"));
-        if (!k.isEmpty()) {
-            const QString s = vToString(result.settings.value(k));
-            if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".xml"))) {
-                result.xmlFilename    = s;
-                result.xmlSettingKey  = k;
-                result.xmlLegacyVar.clear(); // settings override legacy
-            }
-        }
-    }
-
-    for (auto it = result.settings.constBegin(); it != result.settings.constEnd(); ++it) {
-        const QString s = vToString(it.value());
-        if (s.isEmpty())
-            continue;
-
-        if (result.gdsFilename.trimmed().isEmpty() && endsWithCi(s, QStringLiteral(".gds"))) {
-            result.gdsFilename   = s;
-            result.gdsSettingKey = it.key();
-            result.gdsLegacyVar.clear();
-        }
-
-        if (result.xmlFilename.trimmed().isEmpty() && endsWithCi(s, QStringLiteral(".xml"))) {
-            result.xmlFilename   = s;
-            result.xmlSettingKey = it.key();
-            result.xmlLegacyVar.clear();
-        }
-
-        if (!result.gdsFilename.trimmed().isEmpty() && !result.xmlFilename.trimmed().isEmpty())
-            break;
-    }
+    inferExplicitGdsFromSettings(result);
+    inferExplicitXmlFromSettings(result);
+    inferExplicitCellNameFromSettings(result);
+    inferHeuristicFilesFromAllSettings(result);
 }
 
 /*!*******************************************************************************************************************
@@ -548,10 +782,14 @@ static void finalizeResult(const QString& scriptDir,
         result.simPath = QDir(scriptDir).filePath(baseName);
 
     if (result.settings.isEmpty()) {
-        if (!contextForErrors.isEmpty())
+        if (!contextForErrors.isEmpty()) {
             result.error = QStringLiteral("No settings-like assignments found in %1").arg(contextForErrors);
-        else
+            result.ok = true;
+        }
+        else {
             result.error = QStringLiteral("No settings-like assignments found in input text.");
+            result.ok = true;
+        }
     } else {
         result.ok = true;
     }
@@ -582,7 +820,27 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     parseLegacyFileVars(content, result);
     inferFilesFromSettings(result);
     parseSettingTips(content, result);
+    parseTopLevelAssignments(content, &result.topLevel);
     finalizeResult(scriptDir, baseName, contextForErrors, result);
+
+    for (auto it = result.topLevel.begin(); it != result.topLevel.end(); ++it) {
+        const QString key = it.key();
+        result.writeMode[key] = PythonParser::SettingWriteMode::TopLevel;
+    }
+
+    for (auto it = result.settings.begin(); it != result.settings.end(); ++it) {
+        const QString key = it.key();
+
+        if (result.writeMode.contains(key)) {
+            /*info(QString(
+                     "Setting '%1' found both as top-level variable and dict entry. "
+                     "Using dict assignment (settings['%1']).")
+                     .arg(key), false);*/
+        }
+
+        result.writeMode[key] = PythonParser::SettingWriteMode::DictAssign;
+    }
+
 
     return result;
 }
@@ -617,6 +875,7 @@ PythonParser::Result PythonParser::parseSettings(const QString &filePath)
 
     return parseSettingsImpl(content, scriptDir, baseName, filePath);
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Parse "settings-like" key/value pairs from an in-memory Python script.

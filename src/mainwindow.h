@@ -27,6 +27,8 @@
 #include <QVariant>
 #include <QMainWindow>
 
+#include "pythonparser.h"
+
 class QProcess;
 class QLineEdit;
 class QComboBox;
@@ -118,6 +120,13 @@ class MainWindow : public QMainWindow
         QString configLinux;
     };
 
+    struct CoreCountResult
+    {
+        QString cores;
+        QString source;  // "physical (lscpu)" / "logical (nproc)"
+    };
+
+
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
@@ -196,7 +205,7 @@ private:
     void                            setLineEditPalette(QLineEdit* lineEdit, const QString& path);
     void                            applySimSettingsToScript(QString &script, const QString &simKeyLower);
     bool                            variantToPythonLiteral(const QVariant &v, QString *outLiteral);
-    bool                            keyIsExcludedForPalace(const QString &key);
+    bool                            keyIsExcludedForEm(const QString &key);
     void                            applyOpenEmsSettings(QString &script);
     void                            applyPalaceSettings(QString &script);
     void                            applyBoundaries(QString &script, bool alsoTopLevelAssignment);
@@ -207,6 +216,11 @@ private:
     QVector<QPair<int,int>>         findPortBlocks(const QString &script);
     void                            replaceOrInsertPortSection(QString &script, const QString &portCode);
     void                            setEditorScriptPreservingState(const QString &script);
+
+    void                            applyOneSettingToScript(QString &script,
+                                                            const QString &key,
+                                                            const QVariant &val,
+                                                            const QString &simKeyLower);
 
     QString                         loadOrReusePythonScriptText(const QString &filePath);
 
@@ -239,7 +253,8 @@ private:
 
     void                            updateSubLayerNamesAutoCheck();
     void                            rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings,
-                                                                        const QMap<QString, QString>& tips);
+                                                                        const QMap<QString, QString>& tips,
+                                                                        const QMap<QString, QVariant>& topLevelVars);
 
     void                            clearSimSettingsGroup();
     QString                         findBoundariesKeyCaseInsensitive(const QMap<QString, QVariant> &settings) const;
@@ -268,11 +283,26 @@ private:
 
     void                            startPalacePythonStage(const PalaceRunContext &ctx);
     void                            startPalaceSolverStage(PalaceRunContext &ctx);
+
+    void                            failPalaceSolver(const QString &message, bool showDialog);
+
+    bool                            startPalaceLauncherStage(PalaceRunContext &ctx);
+    bool                            preparePalaceSolverLaunch(PalaceRunContext &ctx,
+                                                              QString &outWorkDirLinux,
+                                                              QString &outCmd,
+                                                              QString &outCores);
+
+    bool                            runPalaceSolverWindows(const PalaceRunContext &ctx, const QString &cmd);
+    bool                            runPalaceSolverLinux(const PalaceRunContext &ctx,
+                                                         const QString &workDirLinux,
+                                                         const QString &cmd);
+
     QString                         queryWslCpuCores(const QString &distro) const;
-    QString                         detectMpiCoreCount(const QString &distro) const;
+    CoreCountResult                 detectMpiCoreCount() const;
 
     void                            connectPalaceProcessIo();
     void                            onPalaceProcessFinished(int exitCode);
+    QString                         detectPhysicalCoreCountLinux() const;
 
     void                            appendToSimulationLog(const QByteArray &data);
     QString                         detectRunDirFromLog() const;
@@ -286,6 +316,8 @@ private:
     bool                            ensureWslAvailable(QString &outError) const;
     QString                         wslToWinPath(const QString &p) const;
 #endif
+
+    void                            setupWindowMenuDocks();
 
     void                            refreshSimToolOptions();
     bool                            pathLooksValid(const QString &path, const QString &relativeExe = QString()) const;
@@ -328,6 +360,8 @@ private:
 
     QMenu*                          m_menuRecent = nullptr;
     QVector<QAction*>               m_recentModelActions;
+
+    PythonParser::Result            m_curPythonData;
 
     PalacePhase                     m_palacePhase = PalacePhase::None;
 

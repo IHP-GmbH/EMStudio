@@ -125,9 +125,8 @@ static QString toPythonQuotedPath(QString s)
 static void replaceTopLevelVar(QString &script, const QString &key, const QString &pyValue)
 {
     QRegularExpression reVar(
-        QString(R"(^(\s*%1\s*=\s*)([^#\n]*?)(\s*#.*)?$)")
-            .arg(QRegularExpression::escape(key)),
-        QRegularExpression::MultilineOption);
+        QString(R"((?m)^([ \t]*%1\b[ \t]*=[ \t]*)([^#\r\n]*?)([ \t]*#.*)?$)")
+            .arg(QRegularExpression::escape(key)));
 
     script.replace(reVar, QStringLiteral("\\1%1\\3").arg(pyValue));
 }
@@ -323,25 +322,72 @@ bool MainWindow::variantToPythonLiteral(const QVariant &v, QString *outLiteral)
  **********************************************************************************************************************/
 void MainWindow::applyOpenEmsSettings(QString &script)
 {
-    const QStringList keysToReplace = {
-        "unit", "margin", "fstart", "fstop", "numfreq", "refined_cellsize",
-        "preview_only", "postprocess_only"
-    };
+    const QString simKeyLower = QStringLiteral("openems");
 
-    for (const QString &key : keysToReplace) {
-        if (!m_simSettings.contains(key))
-            continue;
-
-        QString pyValue;
-        if (!variantToPythonLiteral(m_simSettings.value(key), &pyValue))
-            continue;
-
-        // OpenEMS scripts sometimes use top-level assignments and sometimes dict-style.
-        replaceTopLevelVar(script, key, pyValue);
-        replaceAnyDictVar(script, key, pyValue);
+    for (auto it = m_simSettings.constBegin(); it != m_simSettings.constEnd(); ++it) {
+        applyOneSettingToScript(script, it.key(), it.value(), simKeyLower);
     }
 
     applyBoundaries(script, /*alsoTopLevelAssignment=*/true);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Applies a single simulation setting to the Python script using the parser-defined write mode.
+ *
+ * Updates exactly one setting identified by \a key in the given Python script according to the
+ * write policy inferred by \c PythonParser:
+ * - \c TopLevel   → replaces a top-level assignment (\c key = value)
+ * - \c DictAssign → replaces a dictionary-style assignment (\c someDict['key'] = value)
+ *
+ * The function:
+ * - Skips keys excluded by \c keyIsExcludedForEm()
+ * - Skips keys that were not found during parsing (not present in \c writeMode),
+ *   emitting an informational message in this case
+ * - Converts values to appropriate Python literals (numeric, boolean, or quoted paths)
+ *
+ * The actual replacement strategy is fully driven by parsed script structure and
+ * does not depend on the active simulation backend.
+ *
+ * \param script       Python script text to be modified in-place.
+ * \param key          Simulation setting key to apply.
+ * \param val          Value to serialize and write into the script.
+ * \param simKeyLower  Current simulation tool key (reserved for future use).
+ **********************************************************************************************************************/
+void MainWindow::applyOneSettingToScript(QString &script,
+                                         const QString &key,
+                                         const QVariant &val,
+                                         const QString &simKeyLower)
+{
+    Q_UNUSED(simKeyLower);
+
+    if (keyIsExcludedForEm(key))
+        return;
+
+    auto itMode = m_curPythonData.writeMode.constFind(key);
+    if (itMode == m_curPythonData.writeMode.constEnd()) {
+        info(QString("Python write: skip key '%1' (not found in script)").arg(key), false);
+        return;
+    }
+
+    const auto mode = itMode.value();
+
+    QString pyValue;
+    if (isFilePathSetting(key, val)) {
+        pyValue = toPythonQuotedPath(val.toString());
+    } else {
+        if (!variantToPythonLiteral(val, &pyValue))
+            return;
+    }
+
+    switch (mode) {
+    case PythonParser::SettingWriteMode::TopLevel:
+        replaceTopLevelVar(script, key, pyValue);
+        break;
+
+    case PythonParser::SettingWriteMode::DictAssign:
+        replaceAnyDictVar(script, key, pyValue);
+        break;
+    }
 }
 
 /*!*******************************************************************************************************************
@@ -354,7 +400,7 @@ void MainWindow::applyOpenEmsSettings(QString &script)
  *
  * \return \c true if the key must be excluded from generic Palace replacements.
  **********************************************************************************************************************/
-bool MainWindow::keyIsExcludedForPalace(const QString &key)
+bool MainWindow::keyIsExcludedForEm(const QString &key)
 {
     return key == QLatin1String("Boundaries") ||
            key == QLatin1String("Ports") ||
@@ -373,27 +419,18 @@ bool MainWindow::keyIsExcludedForPalace(const QString &key)
  **********************************************************************************************************************/
 void MainWindow::applyPalaceSettings(QString &script)
 {
+    const QString simKeyLower = QStringLiteral("palace");
+
     for (auto it = m_simSettings.constBegin(); it != m_simSettings.constEnd(); ++it) {
-        const QString &key = it.key();
-        const QVariant& val = it.value();
+        const QString  &key = it.key();
+        const QVariant &val = it.value();
 
-        if (keyIsExcludedForPalace(key))
-            continue;
-
-        QString pyValue;
-
-        if (isFilePathSetting(key, val)) {
-            pyValue = toPythonQuotedPath(val.toString());
-        } else {
-            if (!variantToPythonLiteral(val, &pyValue))
-                continue;
-        }
-
-        replacePalaceDictVar(script, key, pyValue);
+        applyOneSettingToScript(script, key, val, simKeyLower);
     }
 
     applyBoundaries(script, /*alsoTopLevelAssignment=*/false);
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Updates the "Boundaries" assignment in the script from \c m_simSettings.
@@ -474,9 +511,14 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
     if (m_simSettings.contains("GdsFile")) {
         QString gdsPath = makeScriptPathForPython(m_simSettings.value("GdsFile").toString(), simKeyLower);
 
-        QRegularExpression re("^gds_filename\\s*=.*$",
-                              QRegularExpression::MultilineOption);
+        QRegularExpression re("^gds_filename\\s*=.*$", QRegularExpression::MultilineOption);
         script.replace(re, QStringLiteral("gds_filename = \"%1\"").arg(gdsPath));
+    }
+
+    const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
+    if (!topCell.isEmpty()) {
+        QRegularExpression re(R"(^\s*gds_cellname\s*=.*$)",  QRegularExpression::MultilineOption);
+        script.replace(re, QStringLiteral("gds_cellname = \"%1\"").arg(topCell));
     }
 
     if (m_simSettings.contains("SubstrateFile")) {
@@ -620,14 +662,13 @@ QString MainWindow::buildPortCodeFromGuiTable() const
 QVector<QPair<int,int>> MainWindow::findPortBlocks(const QString &script)
 {
     auto isAddPortLine = [](const QString& t) -> bool {
-        return t.startsWith("simulation_ports.add_port");
+        return t.startsWith(QStringLiteral("simulation_ports.add_port"));
     };
 
     QVector<QPair<int,int>> blocks;
 
     QRegularExpression startRe(
-        R"(simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\s*\n?)",
-        QRegularExpression::MultilineOption);
+        R"((?m)^[ \t]*simulation_ports\s*=\s*simulation_setup\.all_simulation_ports\(\)\s*(?:#.*)?\r?\n?)");
 
     int searchPos = 0;
     while (true) {
@@ -638,15 +679,16 @@ QVector<QPair<int,int>> MainWindow::findPortBlocks(const QString &script)
         const int blockStart = m.capturedStart();
         int scan = m.capturedEnd();
 
-        // Scan forward while lines are empty or add_port
+        // Scan forward while lines belong to the port block
         while (scan < script.size()) {
             int lineEnd = script.indexOf('\n', scan);
-            if (lineEnd < 0) lineEnd = script.size();
+            if (lineEnd < 0)
+                lineEnd = script.size();
 
             const QString line = script.mid(scan, lineEnd - scan);
             const QString t = line.trimmed();
 
-            if (t.isEmpty() || isAddPortLine(t)) {
+            if (t.isEmpty() || t.startsWith('#') || isAddPortLine(t)) {
                 scan = (lineEnd < script.size()) ? (lineEnd + 1) : lineEnd;
                 continue;
             }

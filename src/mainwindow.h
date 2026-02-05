@@ -271,6 +271,7 @@ private:
     QString                         currentSimToolKey() const;
     QString                         toWslPath(const QString &winPath) const;
     QString                         fromWslPath(const QString &wslPath) const;
+    QString                         resolveModelTemplatePath(const QString &templateFile) const;
 
     QString                         createDefaultOpenemsScript();
     QString                         createDefaultPalaceScript();

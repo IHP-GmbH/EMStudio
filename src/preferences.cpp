@@ -19,6 +19,7 @@
  ************************************************************************/
 
 
+#include <QDir>
 #include <QMap>
 #include <QString>
 #include <QVariant>
@@ -65,6 +66,22 @@ void Preferences::on_btnCancel_clicked()
     close();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Builds the Preferences property browser UI and initializes all configuration fields.
+ *
+ * Creates a QtTreePropertyBrowser with a custom VariantManager/VariantFactory and populates it with
+ * grouped settings:
+ *  - EMStudio: paths to model templates shipped with (or used by) the application.
+ *  - OpenEMS: Python executable and OpenEMS install root.
+ *  - Palace: WSL Python, run mode (executable vs. script) and corresponding path.
+ *
+ * For MODEL_TEMPLATES_DIR the function attempts the following initialization order:
+ *  1) Use saved value from \c m_preferences if it points to a folder containing required templates.
+ *  2) Otherwise, fallback to "<applicationDir>/scripts" if it exists and contains templates.
+ *  3) Otherwise, leave the field empty.
+ *
+ * Field hints (WhatsThis/tooltips) are provided to help the user understand expected values.
+ **********************************************************************************************************************/
 void Preferences::setupPreferencesPanel()
 {
     m_propertyBrowser = new QtTreePropertyBrowser(this);
@@ -81,59 +98,132 @@ void Preferences::setupPreferencesPanel()
     QtVariantEditorFactory *factory = new VariantFactory();
     m_propertyBrowser->setFactoryForManager(m_variantManager, factory);
 
+    // -------------------------------------------------------------------------------------------------------------
+    // EMStudio
+    // -------------------------------------------------------------------------------------------------------------
+    QtVariantProperty *emstudioGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("EMStudio"));
+
+    QtVariantProperty *tmplDirProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("MODEL_TEMPLATES_DIR"));
+    tmplDirProp->setWhatsThis("folder");
+    tmplDirProp->setToolTip(tr("Folder containing EMStudio Python model templates.\n\n"
+                               "Expected files:\n"
+                               "  - palace_model.py\n"
+                               "  - openems_model.py\n\n"
+                               "If empty, EMStudio will try to use the templates shipped with the application "
+                               "(<app>/scripts)."));
+
+    auto dirLooksValid = [](const QString& p) -> bool {
+        const QString pp = p.trimmed();
+        if (pp.isEmpty()) return false;
+
+        QDir d(pp);
+        if (!d.exists()) return false;
+
+        return QFileInfo(d.filePath(QStringLiteral("palace_model.py"))).exists() &&
+               QFileInfo(d.filePath(QStringLiteral("openems_model.py"))).exists();
+    };
+
+    QString tmplDir = m_preferences.value(QStringLiteral("MODEL_TEMPLATES_DIR")).toString().trimmed();
+
+    if (!dirLooksValid(tmplDir)) {
+        const QString appLoc    = QCoreApplication::applicationDirPath();
+        const QString scriptsDir = QDir(appLoc).filePath(QStringLiteral("scripts"));
+        if (dirLooksValid(scriptsDir))
+            tmplDir = scriptsDir;
+        else
+            tmplDir.clear();
+    }
+
+    tmplDirProp->setValue(QDir::toNativeSeparators(tmplDir));
+    emstudioGroup->addSubProperty(tmplDirProp);
+
+    m_propertyBrowser->addProperty(emstudioGroup);
+
+    // -------------------------------------------------------------------------------------------------------------
+    // OpenEMS
+    // -------------------------------------------------------------------------------------------------------------
     QtVariantProperty *openemsGroup =
         m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("OpenEMS"));
 
     QtVariantProperty *pythonPathProp =
-        m_variantManager->addProperty(VariantManager::filePathTypeId(), "Python Path");
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("Python Path"));
     pythonPathProp->setWhatsThis("file");
-    pythonPathProp->setValue(m_preferences.value("Python Path", ""));
+    pythonPathProp->setToolTip(tr("Path to the Python executable used to run OpenEMS models.\n"
+                                  "Examples:\n"
+                                  "  - C:\\\\Python311\\\\python.exe\n"
+                                  "  - /usr/bin/python3"));
+    pythonPathProp->setValue(m_preferences.value(QStringLiteral("Python Path"), QString()));
     openemsGroup->addSubProperty(pythonPathProp);
 
     QtVariantProperty *openemsPathProp =
-        m_variantManager->addProperty(VariantManager::filePathTypeId(), "OPENEMS_INSTALL_PATH");
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("OPENEMS_INSTALL_PATH"));
     openemsPathProp->setWhatsThis("folder");
-    openemsPathProp->setValue(m_preferences.value("OPENEMS_INSTALL_PATH", ""));
+    openemsPathProp->setToolTip(tr("OpenEMS installation root folder.\n\n"
+                                   "Used to locate OpenEMS binaries and required tools.\n"
+                                   "On Windows, this should be a native Windows path."));
+    openemsPathProp->setValue(m_preferences.value(QStringLiteral("OPENEMS_INSTALL_PATH"), QString()));
     openemsGroup->addSubProperty(openemsPathProp);
 
+    // -------------------------------------------------------------------------------------------------------------
+    // Palace
+    // -------------------------------------------------------------------------------------------------------------
     QtVariantProperty *palaceGroup =
         m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("Palace"));
 
     QtVariantProperty *pythonWslPathProp =
-        m_variantManager->addProperty(VariantManager::filePathTypeId(), "PALACE_WSL_PYTHON");
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("PALACE_WSL_PYTHON"));
     pythonWslPathProp->setWhatsThis("file");
-    pythonWslPathProp->setValue(m_preferences.value("PALACE_WSL_PYTHON", ""));
+    pythonWslPathProp->setToolTip(tr("Path to the Python executable inside WSL used for Palace workflows.\n"
+                                     "Example:\n"
+                                     "  - /usr/bin/python3\n\n"
+                                     "This is typically needed when EMStudio runs Palace inside WSL."));
+    pythonWslPathProp->setValue(m_preferences.value(QStringLiteral("PALACE_WSL_PYTHON"), QString()));
     palaceGroup->addSubProperty(pythonWslPathProp);
 
     m_palaceRunModeProp =
-        m_variantManager->addProperty(QtVariantPropertyManager::enumTypeId(), "PALACE_RUN_MODE");
-
-    QStringList modes;
-    modes << tr("Executable") << tr("Script");
-    m_palaceRunModeProp->setAttribute("enumNames", modes);
-    m_palaceRunModeProp->setValue(m_preferences.value("PALACE_RUN_MODE", 0));
+        m_variantManager->addProperty(QtVariantPropertyManager::enumTypeId(), QLatin1String("PALACE_RUN_MODE"));
+    m_palaceRunModeProp->setToolTip(tr("Select how Palace should be launched:\n"
+                                       "  - Executable: run Palace from PALACE_INSTALL_PATH/bin/palace\n"
+                                       "  - Script: run a custom launcher script specified by PALACE_RUN_SCRIPT"));
+    {
+        QStringList modes;
+        modes << tr("Executable") << tr("Script");
+        m_palaceRunModeProp->setAttribute(QStringLiteral("enumNames"), modes);
+        m_palaceRunModeProp->setValue(m_preferences.value(QStringLiteral("PALACE_RUN_MODE"), 0));
+    }
     palaceGroup->addSubProperty(m_palaceRunModeProp);
 
-    m_propertyBrowser->addProperty(openemsGroup);
-    m_propertyBrowser->addProperty(palaceGroup);
-
     m_palaceInstallPathProp =
-        m_variantManager->addProperty(VariantManager::filePathTypeId(), "PALACE_INSTALL_PATH");
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("PALACE_INSTALL_PATH"));
     m_palaceInstallPathProp->setWhatsThis("folder");
-    m_palaceInstallPathProp->setValue(m_preferences.value("PALACE_INSTALL_PATH", ""));
+    m_palaceInstallPathProp->setToolTip(tr("Palace installation root folder.\n\n"
+                                           "Used when PALACE_RUN_MODE is set to 'Executable'.\n"
+                                           "Expected executable: <path>\n"
+                                           "EMStudio will automatically append the required sub-path "
+                                           "(e.g. bin/palace)."));
+    m_palaceInstallPathProp->setValue(m_preferences.value(QStringLiteral("PALACE_INSTALL_PATH"), QString()));
     palaceGroup->addSubProperty(m_palaceInstallPathProp);
 
     m_palaceRunScriptProp =
-        m_variantManager->addProperty(VariantManager::filePathTypeId(), "PALACE_RUN_SCRIPT");
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("PALACE_RUN_SCRIPT"));
     m_palaceRunScriptProp->setWhatsThis("file");
-    m_palaceRunScriptProp->setValue(m_preferences.value("PALACE_RUN_SCRIPT", ""));
+    m_palaceRunScriptProp->setToolTip(tr("Custom Palace launcher script.\n\n"
+                                         "Used when PALACE_RUN_MODE is set to 'Script'.\n"
+                                         "The script must be directly executable from the host environment."));
+    m_palaceRunScriptProp->setValue(m_preferences.value(QStringLiteral("PALACE_RUN_SCRIPT"), QString()));
     palaceGroup->addSubProperty(m_palaceRunScriptProp);
+
+    m_propertyBrowser->addProperty(openemsGroup);
+    m_propertyBrowser->addProperty(palaceGroup);
 
     connect(m_variantManager, &QtVariantPropertyManager::valueChanged,
             this, &Preferences::onVariantValueChanged);
 
     onVariantValueChanged(m_palaceRunModeProp, m_palaceRunModeProp->value());
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Updates the internal preferences map when a property value changes

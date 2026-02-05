@@ -1960,6 +1960,31 @@ bool MainWindow::readTextFileUtf8(const QString &fileName, QString &outText)
 }
 
 /*!*******************************************************************************************************************
+ * \brief Resolves the absolute path to a Python model template file.
+ *
+ * Resolution order:
+ *  1) Preferences["MODEL_TEMPLATES_DIR"] (if set and contains the requested file)
+ *  2) Application directory: "<app>/scripts/<templateFile>"
+ *
+ * \param templateFile File name under scripts/ (e.g. "palace_model.py", "openems_model.py").
+ * \return Absolute path to the template file (may point to a non-existing file; caller should check/read).
+ **********************************************************************************************************************/
+QString MainWindow::resolveModelTemplatePath(const QString &templateFile) const
+{
+    const QString prefDir = m_preferences.value("MODEL_TEMPLATES_DIR").toString().trimmed();
+    if (!prefDir.isEmpty()) {
+        const QString p = QDir(prefDir).filePath(templateFile);
+        if (QFileInfo(p).exists() && QFileInfo(p).isFile()) {
+            return p;
+        }
+    }
+
+    const QString appLoc = QCoreApplication::applicationDirPath();
+
+    return QDir(appLoc).filePath(QStringLiteral("scripts/%1").arg(templateFile));
+}
+
+/*!*******************************************************************************************************************
  * \brief Creates the default Palace/Gmsh Python simulation script.
  *
  * Loads the Palace Python model template from the application scripts directory,
@@ -1987,8 +2012,7 @@ QString MainWindow::createDefaultPalaceScript()
         return s;
     };
 
-    const QString appLoc       = QCoreApplication::applicationDirPath();
-    const QString templatePath = QDir(appLoc).filePath(QStringLiteral("scripts/palace_model.py"));
+    const QString templatePath = resolveModelTemplatePath(QStringLiteral("palace_model.py"));
 
     QString templateText;
     if (!readTextFileUtf8(templatePath, templateText)) {
@@ -2035,8 +2059,7 @@ QString MainWindow::createDefaultOpenemsScript()
         return s;
     };
 
-    const QString appLoc       = QCoreApplication::applicationDirPath();
-    const QString templatePath = QDir(appLoc).filePath(QStringLiteral("scripts/openems_model.py"));
+    const QString templatePath = resolveModelTemplatePath(QStringLiteral("openems_model.py"));
 
     QString templateText;
     if (!readTextFileUtf8(templatePath, templateText))

@@ -289,13 +289,13 @@ Before leaving any tab, save your changes using File > Save or Ctrl+S
 
 On the ports tab, you need to configure simulation ports. It is expected that ports are included in the GDSII file on special layers, one layer per port, as described in the documentation of the IHP EM workflows. The EM workflows support in-plane ports (in xy plane) and vertical via ports (z direction). The direction of current flow in the port must be set by the user: `x`,`y`,`z` or `-x`,`-y`,`-z` for reverse polarity. Port polarity matters when multiple ports are connected to the same return path.
 
+For in-plane ports, specify only the "To Layer" field, and leave the "From Layer" field empty. This will create the correct port configuration in the Python model script.
+
 Before leaving any tab, save your changes using File > Save or Ctrl+S 
 
 <img src="./doc/png/ports1.png" alt="ports" width="700">
 
-EMStudio will read the GDSII file and scan for polygon layers 201 and above, which is the recommended layer range to create ports for IHP EM workflows. 
-
-When creating ports entries from scratch, there is a checkbox "Use Substrate Layer Names" of the left bottom side of the Window. This will tell EMStudio to use layer names from the XML stackup file for the layer dropdown boxes.
+When creating ports entries from scratch, there is a checkbox "Use Substrate Layer Names" of the left bottom side of the Window. This will tell EMStudio to use layer names from the XML stackup file for the layer dropdown boxes. Of course, you need to set the XML stackup file **before**, so that layer mappings are available.
 
 In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area. 
 
@@ -321,7 +321,7 @@ At present, EMStudio does **not** allow to switch the simulator for an existing 
 
 # Example Workflows & Reference Projects
 
-EMStudio is compatible with some publicly available example projects that demonstrate complete EM simulation flows based on **IHP SG13G2** technology.
+EMStudio is compatible with most publicly available example projects that demonstrate complete EM simulation flows based on **IHP SG13G2** technology.
 
 These repositories provide real-world examples for both **OpenEMS** and **Palace**, including GDS layouts, stackup files, simulation scripts, and S‑parameter extraction.
 
@@ -342,7 +342,19 @@ This project contains:
 
 ### Using with EMStudio
 
-XML stackups for openEMS from this repository are compatible with EMStudio. Example models provided in this repository do **not yet** use the `settings[]=value` syntax and **can not** be imported into EMStudio. You need to create models from scratch using the openEMS template provided with EMStudio, or convert them manually to `settings[]=value` syntax before importing to EMStudio.
+Load the Python script via:
+
+```
+File → Open Python Model…
+```
+
+EMStudio will:
+
+- Parse openEMS simulation settings  
+- Import GDS + XML files  
+- Load ports and boundaries  
+- Provide full editing of simulation parameters  
+- Export updated openEMS Python script  
 
 ---
 

@@ -157,15 +157,6 @@ void Preferences::setupPreferencesPanel()
     pythonPathProp->setValue(m_preferences.value(QStringLiteral("Python Path"), QString()));
     openemsGroup->addSubProperty(pythonPathProp);
 
-    QtVariantProperty *openemsPathProp =
-        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("OPENEMS_INSTALL_PATH"));
-    openemsPathProp->setWhatsThis("folder");
-    openemsPathProp->setToolTip(tr("OpenEMS installation root folder.\n\n"
-                                   "Used to locate OpenEMS binaries and required tools.\n"
-                                   "On Windows, this should be a native Windows path."));
-    openemsPathProp->setValue(m_preferences.value(QStringLiteral("OPENEMS_INSTALL_PATH"), QString()));
-    openemsGroup->addSubProperty(openemsPathProp);
-
     // -------------------------------------------------------------------------------------------------------------
     // Palace
     // -------------------------------------------------------------------------------------------------------------
@@ -223,7 +214,6 @@ void Preferences::setupPreferencesPanel()
 
     onVariantValueChanged(m_palaceRunModeProp, m_palaceRunModeProp->value());
 }
-
 
 /*!*******************************************************************************************************************
  * \brief Updates the internal preferences map when a property value changes

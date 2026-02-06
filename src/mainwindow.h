@@ -133,8 +133,18 @@ public:
 
     void                            setTopCell(const QString &cellName);
     void                            setGdsFile(const QString &filePath);
+    void                            setSubstrateFile(const QString &filePath);
     void                            tryAutoLoadRecentPythonForTopCell();
     void                            loadPythonModel(const QString &fileName);
+
+#ifdef EMSTUDIO_TESTING
+    bool                            testInitDefaultPalaceModel();
+    void                            testSetSimSetting(const QString& key, const QVariant& val);
+    QString                         testGenerateScriptFromGuiState(QString *outError = nullptr);
+    QString                         testEditorText() const;
+    void                            testSetEditorText(const QString& s);
+    QVector<PortInfo>               testParsePortsFromEditor() const;
+#endif
 
 private slots:
     void                            closeEvent(QCloseEvent *event);

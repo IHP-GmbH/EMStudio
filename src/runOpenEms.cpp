@@ -91,10 +91,6 @@ void MainWindow::runOpenEMS()
         }
     }
 
-    if (!env.contains("OPENEMS_INSTALL_PATH") && m_preferences.contains("OPENEMS_INSTALL_PATH")) {
-        env.insert("OPENEMS_INSTALL_PATH", m_preferences.value("OPENEMS_INSTALL_PATH").toString());
-    }
-
     const QString origScriptPath = QFileInfo(scriptPath).absolutePath();
 #ifdef Q_OS_WIN
     const QString pathSep = ";";

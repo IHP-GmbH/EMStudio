@@ -270,7 +270,7 @@ void MainWindow::setupWindowMenuDocks()
 /*!*******************************************************************************************************************
  * \brief Rebuilds the "Simulation Tool" combo box (cbxSimTool) based on configured install paths.
  *
- * Reads OPENEMS_INSTALL_PATH and PALACE_INSTALL_PATH from \c m_preferences, validates them with
+ * Reads PALACE_INSTALL_PATH from \c m_preferences, validates them with
  * pathLooksValid(), and repopulates \c cbxSimTool with the available tools ("OpenEMS", "Palace").
  * If none are valid, a placeholder item is shown and the combo is disabled. Emits an info() message
  * summarizing what is enabled.
@@ -279,11 +279,11 @@ void MainWindow::refreshSimToolOptions()
 {
     QSignalBlocker blocker(m_ui->cbxSimTool);
 
-    const QString openemsPath     = m_preferences.value("OPENEMS_INSTALL_PATH").toString();
+    const QString openemsPath     = m_preferences.value("Python Path").toString();
     const QString palacePath      = m_preferences.value("PALACE_INSTALL_PATH").toString();
     const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString();
 
-    const bool hasOpenEMS = pathLooksValid(openemsPath);
+    const bool hasOpenEMS = QFileInfo(openemsPath).isExecutable();
 
     const bool hasPalaceInstall = pathLooksValid(palacePath, "bin/palace");
     const bool hasPalaceScript  = fileLooksValid(palaceScriptPath);
@@ -305,7 +305,7 @@ void MainWindow::refreshSimToolOptions()
     if (items == 0) {
         m_ui->cbxSimTool->addItem("No simulation tool configured");
         m_ui->cbxSimTool->setEnabled(false);
-        info("No valid simulation tools found. Set OPENEMS_INSTALL_PATH and/or PALACE_INSTALL_PATH / PALACE_SCRIPT_PATH in Preferences.");
+        info("No valid simulation tools found. Set OpenEMS Paython path and/or PALACE_INSTALL_PATH / PALACE_SCRIPT_PATH in Preferences.");
     } else {
         m_ui->cbxSimTool->setEnabled(true);
         m_ui->cbxSimTool->setCurrentIndex(0);
@@ -1556,6 +1556,17 @@ void MainWindow::setGdsFile(const QString &filePath)
     m_ui->txtGdsFile->setText(filePath);
     updateGdsUserInfo();
     setStateSaved();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the GDS file path in the UI and updates related UI state.
+ * \param filePath Full path to the GDS file to be shown in the text field.
+ **********************************************************************************************************************/
+void MainWindow::setSubstrateFile(const QString &filePath)
+{
+    m_ui->txtSubstrate->setText(filePath);
+    updateSubLayerNamesCheckboxState();
+    setStateChanged();
 }
 
 /*!*******************************************************************************************************************

@@ -1,0 +1,28 @@
+purpose	Which GDSII data type is evaluated? Values in [] can be separated by comma
+preprocess_gds	True|False, preprocess GDSII for safe handling of cutouts/holes?
+merge_polygon_size	Merge via polygons with distance less than .. microns, set to 0 to disable via merging
+unit	unit, defaults to micron
+margin	oversize of dielectric layers relative to drawn geometry
+air_around	air layer between dielectric stackup and simulation boundary, must be > 0
+boundary	Simulation boundary materials
+fstart	start frequency
+fstop	stop frequency
+fstep	frequency step
+fpoint	optional list [] of discrete frequencies in addition to sweep
+fdump	list [] of discrete frequencies for creating field dump files
+adaptive_sweep	True|False, use efficient and robust interpolation for sweep
+refined_cellsize	refined mesh cell size along conductor edges, in project units
+cells_per_wavelength	how many mesh cells per wavelength, must be 10 or more
+meshsize_max	limits maximum mesh cell size in addition to cells/wavelength, default is 70
+order	order of FEM basis function, 2 is default, 1 gives quick & dirty simulation
+adaptive_mesh_iterations	number of iterations for Palace adaptive mesh refinement (AMR), default is 0
+save_adaptive_mesh	True|False, enables storage of refined mesh when using AMR, default is False
+save_gmsh_unrolled	True|False, enables storage of unmeshed gmsh file for debugging, default is False
+substrate_refinement	True|False, additional mesh refinement in substrate region, default is False
+z_thickness_factor	Factor applied to thickness of vertical metal side walls, see user's guide, default 1.0
+no_gui	run gds2palace in batch mode, no mesh view, no user interaction required
+preview_only	show unmeshed geometry only 
+no_preview	don't show unmeshed geometry, immediately show meshed model
+elmer	True|False, switch gds2palace to ELMER solver mode, default is False
+iterative	True|False, use iterative solver, used for ELMER solver only
+ELMER_MPI_THREADS	number of threads for running ELMER, not used for Palace solver

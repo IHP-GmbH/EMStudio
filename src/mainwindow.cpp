@@ -50,6 +50,7 @@
 #include "ui_mainwindow.h"
 #include "substrateview.h"
 #include "pythonparser.h"
+#include "keywordseditor.h"
 
 /*!*******************************************************************************************************************
  * \brief Checks whether a string represents an integer value.
@@ -228,6 +229,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_ui->txtRunPythonScript->setVisible(false);
 
     setupWindowMenuDocks();
+
+    refreshKeywordTipsForCurrentTool();
 
     setStateSaved();
 }
@@ -2037,7 +2040,8 @@ QString MainWindow::createDefaultPalaceScript()
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
     if (parseResult.ok) {
         m_curPythonData = parseResult;
-        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips, parseResult.topLevel);
+        const auto tips = mergeTipsPreferModel(parseResult.settingTips, m_keywordTips);
+        rebuildSimulationSettingsFromPalace(parseResult.settings, tips, parseResult.topLevel);
     }
 
     return script;
@@ -2083,7 +2087,8 @@ QString MainWindow::createDefaultOpenemsScript()
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
     if (parseResult.ok) {
         m_curPythonData = parseResult;
-        rebuildSimulationSettingsFromPalace(parseResult.settings, parseResult.settingTips, parseResult.topLevel);
+        const auto tips = mergeTipsPreferModel(parseResult.settingTips, m_keywordTips);
+        rebuildSimulationSettingsFromPalace(parseResult.settings, tips, parseResult.topLevel);
     }
 
     return script;
@@ -2128,6 +2133,8 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
 
     m_preferences["SIMULATION_TOOL_INDEX"] = index;
     m_preferences["SIMULATION_TOOL_KEY"]   = key.toLower();
+
+    refreshKeywordTipsForCurrentTool();
 }
 
 /*!*******************************************************************************************************************
@@ -2221,7 +2228,8 @@ void MainWindow::loadPythonModel(const QString &fileName)
     if (idxSim >= 0 && m_ui->cbxSimTool->isEnabled())
         m_ui->cbxSimTool->setCurrentIndex(idxSim);
 
-    rebuildSimulationSettingsFromPalace(res.settings, res.settingTips, res.topLevel);
+    const auto tips = mergeTipsPreferModel(res.settingTips, m_keywordTips);
+    rebuildSimulationSettingsFromPalace(res.settings, tips, res.topLevel);
 
     const QDir modelDir(fi.absolutePath());
 

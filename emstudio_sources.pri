@@ -8,6 +8,8 @@ TOP = $$clean_path($$TOP)
 INCLUDEPATH += $$TOP $$TOP/src $$TOP/extension $$TOP/QtPropertyBrowser
 
 SOURCES += \
+    $$TOP/src/tips.cpp \
+    $$TOP/src/keywordseditor.cpp \
     $$TOP/QtPropertyBrowser/qtbuttonpropertybrowser.cpp \
     $$TOP/QtPropertyBrowser/qteditorfactory.cpp \
     $$TOP/QtPropertyBrowser/qtgroupboxpropertybrowser.cpp \
@@ -42,6 +44,7 @@ SOURCES += \
     $$TOP/src/xmlreader.cpp
 
 HEADERS += \
+    $$TOP/src/keywordseditor.h \
     $$TOP/QtPropertyBrowser/qtbuttonpropertybrowser.h \
     $$TOP/QtPropertyBrowser/qteditorfactory.h \
     $$TOP/QtPropertyBrowser/qtgroupboxpropertybrowser.h \

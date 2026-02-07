@@ -1,0 +1,19 @@
+preview_only	Enable this to preview model/mesh only, without starting simulation
+postprocess_only	Enable this to show existing results only, without starting simulation
+purpose	Which GDSII data type is evaluated? Values in [] can be separated by comma
+preprocess_gds	True|False, preprocess GDSII for safe handling of cutouts/holes?
+merge_polygon_size	Merge via polygons with distance less than .. microns, set to 0 to disable via merging
+unit	unit, defaults to micron
+fstart	start frequency
+fstop	stop frequency
+numfreq	number of frequency steps created from FFT (no effect of simulation time)
+refined_cellsize	minimum mesh size used by edge mesh refinement, in project units
+cells_per_wavelength	how many mesh cells per wavelength, must be 10 or more
+max_cellsize	limits maximum mesh cell size in addition to cells/wavelength, in project units
+margin	oversize of dielectric layers relative to drawn geometry
+air_around	air layer between dielectric stackup and simulation boundary, must be > 0
+Boundaries	Simulation boundary materials
+energy_limit	end criteria for residual energy (dB), default is -40
+field_dumps	used for defining field dump output, see example in repository, default is False
+no_gui	run in batch mode, no mesh view, no user interaction required
+easyMesh	True|False, True switches mesh algorithm to easyMesh4openEMS, must be installed as Python module

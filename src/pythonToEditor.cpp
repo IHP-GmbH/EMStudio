@@ -159,30 +159,6 @@ static void replaceAnyDictVar(QString &script, const QString &key, const QString
 }
 
 /*!*******************************************************************************************************************
- * \brief Replaces a Palace-style dict assignment with a new value.
- *
- * Searches for lines of the form:
- * \code
- *   settings['key'] = <value>   # optional comment
- * \endcode
- * where the dict variable name is a single identifier, and replaces only the
- * value part with \a pyValue while preserving indentation and an optional comment.
- *
- * \param script  Python script text to be modified in-place.
- * \param key     Dictionary key string to replace.
- * \param pyValue New Python literal/expression to put on the right-hand side.
- **********************************************************************************************************************/
-static void replacePalaceDictVar(QString &script, const QString &key, const QString &pyValue)
-{
-    QRegularExpression re(
-        QString(R"(^(\s*\w+\s*\[\s*['"]%1['"]\s*\]\s*=\s*)([^#\n]*?)(\s*#.*)?$)")
-            .arg(QRegularExpression::escape(key)),
-        QRegularExpression::MultilineOption);
-
-    script.replace(re, QStringLiteral("\\1%1\\3").arg(pyValue));
-}
-
-/*!*******************************************************************************************************************
  * \brief Automatically enables the "SubLayer Names" option when substrate and ports are available.
  *
  * This helper checks whether a substrate file is loaded and at least one port
@@ -386,6 +362,9 @@ void MainWindow::applyOneSettingToScript(QString &script,
 
     case PythonParser::SettingWriteMode::DictAssign:
         replaceAnyDictVar(script, key, pyValue);
+        break;
+
+    case PythonParser::SettingWriteMode::Unknown:
         break;
     }
 }

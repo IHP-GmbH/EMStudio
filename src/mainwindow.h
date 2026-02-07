@@ -181,6 +181,7 @@ private slots:
     void                            on_cbxSimTool_currentIndexChanged(int index);
     void                            on_actionOpen_Python_Model_triggered();
     void                            onOpenRecentPythonModel();
+    void                            on_actionKeywords_triggered();
 
 private:
     void                            saveSettings();
@@ -233,6 +234,7 @@ private:
                                                             const QString &simKeyLower);
 
     QString                         loadOrReusePythonScriptText(const QString &filePath);
+    QString                         resolveKeywordsPath(const QString& simKeyLower) const;
 
     bool                            readTextFileUtf8(const QString &fileName, QString &outText);
 
@@ -265,6 +267,11 @@ private:
     void                            rebuildSimulationSettingsFromPalace(const QMap<QString, QVariant>& settings,
                                                                         const QMap<QString, QString>& tips,
                                                                         const QMap<QString, QVariant>& topLevelVars);
+
+    void                            refreshKeywordTipsForCurrentTool();
+    QMap<QString, QString>          loadKeywordTipsCsv(const QString& simKeyLower) const;
+    QMap<QString, QString>          mergeTipsPreferModel(const QMap<QString, QString>& modelTips,
+                                                         const QMap<QString, QString>& fallbackTips) const;
 
     void                            clearSimSettingsGroup();
     QString                         findBoundariesKeyCaseInsensitive(const QMap<QString, QVariant> &settings) const;
@@ -354,6 +361,7 @@ private:
 
     QHash<int, QString>             m_gdsToSubName;
     QHash<QString, int>             m_subNameToGds;
+    QMap<QString, QString>          m_keywordTips;
 
     QMap<QString, QVariant>         m_preferences;
     QMap<QString, QVariant>         m_simSettings;

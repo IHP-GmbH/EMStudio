@@ -23,6 +23,7 @@
 #include <QDebug>
 #include <QTimer>
 #include <QAction>
+#include <QPointer>
 #include <QProcess>
 #include <QFileInfo>
 #include <QSettings>
@@ -1538,17 +1539,21 @@ void MainWindow::on_btnStop_clicked()
     }
 
     m_palacePhase = PalacePhase::None;
-
     info("Stopping simulation...", false);
 
-    m_simProcess->terminate();
+    QPointer<QProcess> p = m_simProcess;
+    p->terminate();
 
-    QProcess *p = m_simProcess;
-    QTimer::singleShot(1500, this, [p]() {
+    auto *t = new QTimer(p);
+    t->setSingleShot(true);
+    connect(t, &QTimer::timeout, p, [p]() {
         if (p && p->state() != QProcess::NotRunning)
             p->kill();
     });
+
+    t->start(1500);
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Sets the GDS file path in the UI and updates related UI state.

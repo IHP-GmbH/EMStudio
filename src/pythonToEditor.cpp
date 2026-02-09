@@ -341,7 +341,7 @@ void MainWindow::applyOneSettingToScript(QString &script,
 
     auto itMode = m_curPythonData.writeMode.constFind(key);
     if (itMode == m_curPythonData.writeMode.constEnd()) {
-        info(QString("Python write: skip key '%1' (not found in script)").arg(key), false);
+        //info(QString("Python write: skip key '%1' (not found in script)").arg(key), false);
         return;
     }
 
@@ -384,7 +384,9 @@ bool MainWindow::keyIsExcludedForEm(const QString &key)
     return key == QLatin1String("Boundaries") ||
            key == QLatin1String("Ports") ||
            key == QLatin1String("RunDir") ||
-           key == QLatin1String("RunPythonScript");
+           key == QLatin1String("RunPythonScript") ||
+           key == QLatin1String("GdsFile") ||
+           key == QLatin1String("SubstrateFile");
 }
 
 /*!*******************************************************************************************************************

@@ -164,13 +164,13 @@ void Preferences::setupPreferencesPanel()
         m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("Palace"));
 
     QtVariantProperty *pythonWslPathProp =
-        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("PALACE_WSL_PYTHON"));
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("PALACE_PYTHON"));
     pythonWslPathProp->setWhatsThis("file");
     pythonWslPathProp->setToolTip(tr("Path to the Python executable inside WSL used for Palace workflows.\n"
                                      "Example:\n"
                                      "  - /usr/bin/python3\n\n"
                                      "This is typically needed when EMStudio runs Palace inside WSL."));
-    pythonWslPathProp->setValue(m_preferences.value(QStringLiteral("PALACE_WSL_PYTHON"), QString()));
+    pythonWslPathProp->setValue(m_preferences.value(QStringLiteral("PALACE_PYTHON"), QString()));
     palaceGroup->addSubProperty(pythonWslPathProp);
 
     m_palaceRunModeProp =

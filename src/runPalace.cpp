@@ -249,7 +249,7 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     ctx.modelLinux     = ctx.modelWin;
 #endif
 
-    ctx.pythonCmd = m_preferences.value("PALACE_WSL_PYTHON").toString().trimmed();
+    ctx.pythonCmd = m_preferences.value("PALACE_PYTHON").toString().trimmed();
     if (ctx.pythonCmd.isEmpty())
         ctx.pythonCmd = QStringLiteral("python3");
 

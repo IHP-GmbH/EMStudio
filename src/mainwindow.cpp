@@ -2014,23 +2014,6 @@ QString MainWindow::resolveModelTemplatePath(const QString &templateFile) const
  **********************************************************************************************************************/
 QString MainWindow::createDefaultPalaceScript()
 {
-    QString gdsFile = m_ui->txtGdsFile->text().trimmed();
-    if (!gdsFile.isEmpty())
-        gdsFile = toWslPath(QDir::fromNativeSeparators(gdsFile));
-
-    QString xmlFile = m_ui->txtSubstrate->text().trimmed();
-    if (!xmlFile.isEmpty())
-        xmlFile = toWslPath(QDir::fromNativeSeparators(xmlFile));
-
-    // Top cell (gds_cellname) support
-    QString topCell = m_ui->cbxTopCell->currentText().trimmed();
-
-    auto pyEscape = [](QString s) -> QString {
-        s.replace("\\", "\\\\");
-        s.replace("\"", "\\\"");
-        return s;
-    };
-
     const QString templatePath = resolveModelTemplatePath(QStringLiteral("palace_model.py"));
 
     QString templateText;
@@ -2038,15 +2021,19 @@ QString MainWindow::createDefaultPalaceScript()
         return QString();
     }
 
-    const QString script = QString::fromUtf8("%1")
-                               .arg(templateText)
-                               .arg(gdsFile, xmlFile, pyEscape(topCell));
-
+    QString script = QString::fromUtf8("%1").arg(templateText);
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
     if (parseResult.ok) {
         m_curPythonData = parseResult;
-        const auto tips = mergeTipsPreferModel(parseResult.settingTips, m_keywordTips);
-        rebuildSimulationSettingsFromPalace(parseResult.settings, tips, parseResult.topLevel);
+        const QString simKeyLower = QStringLiteral("palace");
+        applySimSettingsToScript(script, simKeyLower);
+        applyGdsAndXmlPaths(script, simKeyLower);
+        PythonParser::Result finalResult = PythonParser::parseSettingsFromText(script);
+        if (finalResult.ok) {
+            m_curPythonData = finalResult;
+            const auto tips = mergeTipsPreferModel(finalResult.settingTips, m_keywordTips);
+            rebuildSimulationSettingsFromPalace(finalResult.settings, tips, finalResult.topLevel);
+        }
     }
 
     return script;
@@ -2063,37 +2050,29 @@ QString MainWindow::createDefaultPalaceScript()
  **********************************************************************************************************************/
 QString MainWindow::createDefaultOpenemsScript()
 {
-    QString gdsFile = m_ui->txtGdsFile->text().trimmed();
-    if (!gdsFile.isEmpty())
-        gdsFile = QDir::fromNativeSeparators(gdsFile);
-
-    QString xmlFile = m_ui->txtSubstrate->text().trimmed();
-    if (!xmlFile.isEmpty())
-        xmlFile = QDir::fromNativeSeparators(xmlFile);
-
-    QString topCell = m_ui->cbxTopCell->currentText().trimmed();
-
-    auto pyEscape = [](QString s) -> QString {
-        s.replace("\\", "\\\\");
-        s.replace("\"", "\\\"");
-        return s;
-    };
-
     const QString templatePath = resolveModelTemplatePath(QStringLiteral("openems_model.py"));
 
     QString templateText;
     if (!readTextFileUtf8(templatePath, templateText))
         return QString();
 
-    const QString script = QString::fromUtf8("%1")
-                               .arg(templateText)
-                               .arg(gdsFile, xmlFile, pyEscape(topCell));
+    QString script = QString::fromUtf8("%1").arg(templateText);
 
     PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
     if (parseResult.ok) {
         m_curPythonData = parseResult;
-        const auto tips = mergeTipsPreferModel(parseResult.settingTips, m_keywordTips);
-        rebuildSimulationSettingsFromPalace(parseResult.settings, tips, parseResult.topLevel);
+
+        const QString simKeyLower = QStringLiteral("openems");
+
+        applySimSettingsToScript(script, simKeyLower);
+        applyGdsAndXmlPaths(script, simKeyLower);
+
+        PythonParser::Result finalResult = PythonParser::parseSettingsFromText(script);
+        if (finalResult.ok) {
+            m_curPythonData = finalResult;
+            const auto tips = mergeTipsPreferModel(finalResult.settingTips, m_keywordTips);
+            rebuildSimulationSettingsFromPalace(finalResult.settings, tips, finalResult.topLevel);
+        }
     }
 
     return script;

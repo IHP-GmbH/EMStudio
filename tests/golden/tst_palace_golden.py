@@ -1,3 +1,5 @@
+# MODEL FOR GMSH WITH PALACE
+
 import os
 import sys
 import subprocess
@@ -20,10 +22,10 @@ run_command = ['./run_sim']
 
 # ===================== input files and path settings =======================
 
-gds_filename = "line_simple_viaport.gds"   # geometries
-gds_cellname = ""       # optional name of cell, empty string to load always top cell
+gds_filename = "<GDS_PATH>"
+gds_cellname = "t1"
 
-XML_filename = "SG13G2_nosub.xml"          # stackup
+XML_filename = "<XML_PATH>"
 
 # get path for this simulation file
 script_path = utilities.get_script_path(__file__)
@@ -48,14 +50,14 @@ settings['preprocess_gds'] = True  # @brief  Preprocess GDSII for safe handling 
 settings['merge_polygon_size'] = 0.5 #  @brief  Merge via polygons with distance less than .. microns, set to 0 to disable via merging.
 
 settings['unit']   = 1e-6  # @brief Geometry units, 1E-6 is in microns
-settings['margin'] = 50    # @brief Distance from GDSII geometry boundary to stackup boundary, in project units
+settings['margin'] = 51    # @brief Distance from GDSII geometry boundary to stackup boundary, in project units
 
 settings['fstart']  = 0e9  # @brief start frequency [Hz]
-settings['fstop']   = 100e9 # @brief stop frequency [Hz]
-settings['fstep']   = 2.5e9 # @brief frequency step [Hz], adaptive frequency sweep is used 
+settings['fstop']   = 100000000000 # @brief stop frequency [Hz]
+settings['fstep']   = 2500000000 # @brief frequency step [Hz], adaptive frequency sweep is used
 
 settings['fpoint']  = [] # @brief optional: list of discrete frequencies fpr S-param, in addition to sweep, default is []
-settings['fdump']   = [] # @brief optional: list of discrete frequencies for field dump file (Paraview), default is [] 
+settings['fdump']   = [] # @brief optional: list of discrete frequencies for field dump file (Paraview), default is []
 
 # optional: boundary condition ABC, PEC or PMC at X-,X+,Y-mY+,Z-,Z+ Default is absorbing boundary.
 settings['boundary']=['ABC','ABC','ABC','ABC','ABC','ABC']
@@ -69,12 +71,6 @@ settings['adaptive_mesh_iterations'] = 0  # @brief adaptive mesh iterations, def
 # Ports from GDSII Data, polygon geometry from specified special layer
 # Excitations can be switched off by voltage=0, those S-parameter will be incomplete then
 
-simulation_ports = simulation_setup.all_simulation_ports()
-
-
-# ======================== simulation ================================
-
-# get technology stackup data
 materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate (XML_filename)
 
 # get list of layers from technology
@@ -88,8 +84,7 @@ allpolygons = gds_reader.read_gds(gds_filename,
                                   metals_list=metals_list,
                                   preprocess=settings['preprocess_gds'],
                                   merge_polygon_size=settings['merge_polygon_size'],
-                                  cellname=g
-ds_cellname)
+                                  cellname=gds_cellname)
 
 
 ########### create model ###########

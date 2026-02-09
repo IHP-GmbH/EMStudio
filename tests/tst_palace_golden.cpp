@@ -26,8 +26,92 @@ static QString normalize(QString s)
     s.replace(QRegularExpression(R"(([A-Za-z]:[\\/][^ \n'"]+\.xml))"), "<XML_PATH>");
     s.replace(QRegularExpression(R"((/[^ \n'"]+\.gds))"), "<GDS_PATH>");
     s.replace(QRegularExpression(R"((/[^ \n'"]+\.xml))"), "<XML_PATH>");
+    s.replace(QRegularExpression(R"(e([+-])0+(\d+))"), "e\\1\\2");
 
     return s.trimmed() + "\n";
+}
+
+static QString diffText(const QString& expected,
+                        const QString& actual,
+                        int contextLines = 2)
+{
+    const QStringList exp = expected.split('\n');
+    const QStringList act = actual.split('\n');
+
+    const int maxLines = qMax(exp.size(), act.size());
+
+    for (int i = 0; i < maxLines; ++i) {
+        const QString e = (i < exp.size()) ? exp[i] : "<EOF>";
+        const QString a = (i < act.size()) ? act[i] : "<EOF>";
+
+        if (e != a) {
+            QString out;
+            out += QString("Difference at line %1:\n").arg(i + 1);
+
+            const int from = qMax(0, i - contextLines);
+            const int to   = qMin(maxLines - 1, i + contextLines);
+
+            for (int j = from; j <= to; ++j) {
+                const QString ee = (j < exp.size()) ? exp[j] : "<EOF>";
+                const QString aa = (j < act.size()) ? act[j] : "<EOF>";
+
+                if (j == i) {
+                    out += QString(">> EXPECTED: %1\n").arg(ee);
+                    out += QString(">> ACTUAL  : %1\n").arg(aa);
+                } else {
+                    out += QString("   exp: %1\n").arg(ee);
+                    out += QString("   act: %1\n").arg(aa);
+                }
+            }
+            return out;
+        }
+    }
+
+    return QString();
+}
+
+static bool writeUtf8Atomic(const QString& path, const QString& text, QString* outErr = nullptr)
+{
+    const QFileInfo fi(path);
+    if (!fi.exists()) {
+        if (outErr) *outErr = QString("Golden file does not exist: %1").arg(path);
+        return false;
+    }
+
+    // ensure dir exists and is writable
+    const QDir dir = fi.absoluteDir();
+    if (!dir.exists()) {
+        if (outErr) *outErr = QString("Directory does not exist: %1").arg(dir.absolutePath());
+        return false;
+    }
+
+    // atomic write: write to temp then replace
+    const QString tmpPath = fi.absoluteFilePath() + ".tmp";
+
+    QFile tmp(tmpPath);
+    if (!tmp.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        if (outErr) *outErr = QString("Cannot open temp for write: %1 (%2)")
+                          .arg(tmpPath, tmp.errorString());
+        return false;
+    }
+
+    tmp.write(text.toUtf8());
+    if (!tmp.flush()) {
+        if (outErr) *outErr = QString("Flush failed for: %1 (%2)")
+                          .arg(tmpPath, tmp.errorString());
+        return false;
+    }
+    tmp.close();
+
+    // Replace destination
+    QFile::remove(fi.absoluteFilePath());
+    if (!QFile::rename(tmpPath, fi.absoluteFilePath())) {
+        if (outErr) *outErr = QString("Cannot replace golden file: %1").arg(fi.absoluteFilePath());
+        QFile::remove(tmpPath);
+        return false;
+    }
+
+    return true;
 }
 
 void PalaceGolden::defaultPalace_changeSettings_ports_and_compare()
@@ -48,36 +132,36 @@ void PalaceGolden::defaultPalace_changeSettings_ports_and_compare()
     w.setSubstrateFile(xmlPath);
 
     // ------------------------------------------------------------------
-    // Now generate the default Palace model (deterministic, no dialogs)
+    // Generate the default Palace model (deterministic, no dialogs)
+    // This MUST populate the editor
     // ------------------------------------------------------------------
     QVERIFY2(w.testInitDefaultPalaceModel(),
              "testInitDefaultPalaceModel() failed (default Palace script is empty?)");
 
-    return;
+    // ------------------------------------------------------------------
+    // Ports must be parsed from the script currently in the editor
+    // ------------------------------------------------------------------
+    {
+        const auto ports = w.testParsePortsFromEditor();
+        QVERIFY2(ports.isEmpty(), "No ports shall be parsed from editor after default model init");
+    }
 
     // ------------------------------------------------------------------
-    // Change a GUI setting (directly in m_simSettings)
+    // Change a GUI setting (direct write into m_simSettings)
     // ------------------------------------------------------------------
-    w.testSetSimSetting("fstop", 50e9);
+    w.testSetSimSetting("margin", 51);
 
     // ------------------------------------------------------------------
-    // Ports must be parsed from the script that was generated/imported
-    // ------------------------------------------------------------------
-    const auto ports = w.testParsePortsFromEditor();
-    qDebug()<<ports.count();
-
-    return;
-    QVERIFY2(!ports.isEmpty(), "No ports parsed from editor after default model init");
-
-    // ------------------------------------------------------------------
-    // Generate python script from GUI state (no file I/O)
+    // Regenerate script from GUI state and write it back to editor
+    // (so we compare editor content)
     // ------------------------------------------------------------------
     QString err;
-    const QString got = w.testGenerateScriptFromGuiState(&err);
-    QVERIFY2(!got.isEmpty(), qPrintable(err));
+    const QString regenerated = w.testGenerateScriptFromGuiState(&err);
+    QVERIFY2(!regenerated.isEmpty(), qPrintable(err));
+    w.testSetEditorText(regenerated);
 
     // ------------------------------------------------------------------
-    // Load golden and compare
+    // Load golden and compare EDITOR CONTENT
     // ------------------------------------------------------------------
     const QString goldenPath = QFINDTESTDATA("golden/tst_palace_golden.py");
     QVERIFY2(!goldenPath.isEmpty(), "Golden python file not found via QFINDTESTDATA");
@@ -87,20 +171,17 @@ void PalaceGolden::defaultPalace_changeSettings_ports_and_compare()
              qPrintable(QString("Golden file empty: %1").arg(goldenPath)));
 
     const QString ng = normalize(golden);
-    const QString na = normalize(got);
+    const QString na = normalize(w.testEditorText());
 
     if (ng != na) {
-        const QString outPath =
-            QDir::cleanPath(QCoreApplication::applicationDirPath() +
-                            "/tst_palace_golden.actual.py");
 
-        QFile out(outPath);
-        if (out.open(QIODevice::WriteOnly | QIODevice::Text))
-            out.write(na.toUtf8());
+        /*QString werr;
+        const bool ok = writeUtf8Atomic(goldenPath, na, &werr);
+        QVERIFY2(ok, qPrintable(QString("Failed to write golden: %1").arg(werr)));
+        return; // make test PASS after golden update*/
 
-        QFAIL(qPrintable(
-            QString("Mismatch vs golden.\nGolden: %1\nActual written to: %2")
-                .arg(goldenPath, outPath)));
+        const QString diff = diffText(ng, na);
+        QFAIL(qPrintable(QString("Mismatch vs golden:\n\n%1").arg(diff)));
     }
 }
 

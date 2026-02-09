@@ -3,6 +3,7 @@
 #include <QSignalBlocker>
 #include <QString>
 #include <QVector>
+#include <QDebug>
 
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
@@ -38,12 +39,8 @@ bool MainWindow::testInitDefaultPalaceModel()
     if (script.trimmed().isEmpty())
         return false;
 
-    QSignalBlocker be(m_ui->editRunPythonScript);
-    m_ui->editRunPythonScript->setPlainText(script);
+    testSetEditorText(script);
     m_ui->editRunPythonScript->document()->setModified(false);
-
-    m_ui->tblPorts->setRowCount(0);
-    importPortsFromEditor();
 
     return true;
 }

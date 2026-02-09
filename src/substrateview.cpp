@@ -402,17 +402,57 @@ void SubstrateView::drawSubstrate()
         dielectricMap[diel.name] = enclosed;
     }
 
+    auto physToPx = [&](double z) -> double {
+        for (const auto& d : allLayers) {
+            if (d.type != "dielectric") continue;
+            if (z >= d.realZMin && z <= d.realZMax) {
+                const double t = d.realZMax - d.realZMin;
+                if (t <= 0) return d.zminPx;
+                const double k = (d.zmaxPx - d.zminPx) / t;
+                return d.zminPx + (z - d.realZMin) * k;
+            }
+        }
+
+        const VisualLayer* first = nullptr;
+        const VisualLayer* last  = nullptr;
+        for (const auto& d : allLayers) {
+            if (d.type != "dielectric") continue;
+            if (!first || d.realZMin < first->realZMin) first = &d;
+            if (!last  || d.realZMax > last->realZMax)  last  = &d;
+        }
+        if (!first || !last) return 0.0;
+
+        if (z < first->realZMin) {
+            const double t = first->realZMax - first->realZMin;
+            const double k = (t > 0) ? (first->zmaxPx - first->zminPx) / t : 1.0;
+            return first->zminPx + (z - first->realZMin) * k;
+        } else {
+            const double t = last->realZMax - last->realZMin;
+            const double k = (t > 0) ? (last->zmaxPx - last->zminPx) / t : 1.0;
+            return last->zmaxPx + (z - last->realZMax) * k;
+        }
+    };
+
     for (auto& layer : allLayers) {
         if (layer.name == "LBE" || layer.type == "dielectric") continue;
+
         VisualLayer refDielectric = findEnclosingDielectric(layer.name, dielectricMap, allLayers);
-        if (refDielectric.name.isEmpty()) continue;
-        const int num = countLayersInDielectric(refDielectric.name, dielectricMap);
-        if (num <= 0) continue;
-        const double bandPx = (refDielectric.zmaxPx - refDielectric.zminPx) / num;
-        const int     idx   = getLayerPositionInDielectric(layer.name, dielectricMap);
-        if (idx < 0) continue;
-        layer.zminPx = refDielectric.zminPx + bandPx * idx;
-        layer.zmaxPx = refDielectric.zminPx + bandPx * (idx + 1);
+
+        if (!refDielectric.name.isEmpty()) {
+            const int num = countLayersInDielectric(refDielectric.name, dielectricMap);
+            if (num > 0) {
+                const double bandPx = (refDielectric.zmaxPx - refDielectric.zminPx) / num;
+                const int idx = getLayerPositionInDielectric(layer.name, dielectricMap);
+                if (idx >= 0) {
+                    layer.zminPx = refDielectric.zminPx + bandPx * idx;
+                    layer.zmaxPx = refDielectric.zminPx + bandPx * (idx + 1);
+                    continue;
+                }
+            }
+        }
+
+        layer.zminPx = physToPx(layer.realZMin);
+        layer.zmaxPx = physToPx(layer.realZMax);
     }
 
     const double metalWidth = dielWidth / 1.5;

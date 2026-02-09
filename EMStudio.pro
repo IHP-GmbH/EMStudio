@@ -45,7 +45,6 @@ win32 {
 }
 
 unix {
-    # On Unix, prefer DESTDIR if used, otherwise OUT_PWD
     RUNTIME_DIR = $$clean_path($$OUT_PWD)
     !isEmpty(DESTDIR) {
         RUNTIME_DIR = $$clean_path($$OUT_PWD/$$DESTDIR)
@@ -54,15 +53,21 @@ unix {
     SCRIPTS_DST_DIR  = $$clean_path($$RUNTIME_DIR/scripts)
     KEYWORDS_DST_DIR = $$clean_path($$RUNTIME_DIR/keywords)
 
-    QMAKE_POST_LINK += $$quote(echo "[EMStudio] Runtime dir: $$RUNTIME_DIR") $$escape_expand(\\n\\t)
+    QMAKE_POST_LINK += $$quote(@echo EMStudio: Runtime dir: $$RUNTIME_DIR) $$escape_expand(\\n\\t)
 
-    # scripts
-    QMAKE_POST_LINK += $$quote(echo "[EMStudio] Copy scripts: $$SCRIPTS_SRC_DIR to $$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(mkdir -p "$$SCRIPTS_DST_DIR") $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(cp -R "$$SCRIPTS_SRC_DIR"/. "$$SCRIPTS_DST_DIR"/) $$escape_expand(\\n\\t)
+    QMAKE_POST_LINK += $$quote(@if [ $$SCRIPTS_SRC_DIR != $$SCRIPTS_DST_DIR ]; then \
+        mkdir -p $$SCRIPTS_DST_DIR && \
+        cp -R $$SCRIPTS_SRC_DIR/. $$SCRIPTS_DST_DIR/ ; \
+    else \
+        echo EMStudio: Skip scripts copy - in-place build; \
+    fi) $$escape_expand(\\n\\t)
 
-    # keywords (copy only if source dir exists)
-    QMAKE_POST_LINK += $$quote(test -d "$$KEYWORDS_SRC_DIR" && echo "[EMStudio] Copy keywords: $$KEYWORDS_SRC_DIR to $$KEYWORDS_DST_DIR" || true) $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(test -d "$$KEYWORDS_SRC_DIR" && mkdir -p "$$KEYWORDS_DST_DIR" || true) $$escape_expand(\\n\\t)
-    QMAKE_POST_LINK += $$quote(test -d "$$KEYWORDS_SRC_DIR" && cp -R "$$KEYWORDS_SRC_DIR"/. "$$KEYWORDS_DST_DIR"/ || true) $$escape_expand(\\n\\t)
+    QMAKE_POST_LINK += $$quote(@if [ -d $$KEYWORDS_SRC_DIR ]; then \
+        if [ $$KEYWORDS_SRC_DIR != $$KEYWORDS_DST_DIR ]; then \
+            mkdir -p $$KEYWORDS_DST_DIR && \
+            cp -R $$KEYWORDS_SRC_DIR/. $$KEYWORDS_DST_DIR/ ; \
+        else \
+            echo EMStudio: Skip keywords copy - in-place build; \
+        fi; \
+    fi) $$escape_expand(\\n\\t)
 }

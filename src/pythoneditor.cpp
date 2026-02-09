@@ -46,7 +46,7 @@ static constexpr qreal ZOOM_STEP = 1.10;
 PythonEditor::PythonEditor(QWidget *parent)
     : QTextEdit(parent)
 {
-    new PythonSyntaxHighlighter(this->document());
+    m_highlighter = new PythonSyntaxHighlighter(this->document());
 
     m_keywords = QStringList()
                  << "and" << "as" << "assert" << "break" << "class" << "continue" << "def" << "del"
@@ -517,4 +517,20 @@ void PythonEditor::setPlainTextUndoable(const QString &text)
     c.endEditBlock();
 }
 
-
+/*!*******************************************************************************************************************
+ * \brief Sets additional keywords to be highlighted in the editor.
+ *
+ * Passes a list of extra keywords (e.g. simulation or model-specific terms)
+ * to the underlying PythonSyntaxHighlighter. These keywords are highlighted
+ * in addition to the built-in Python language keywords.
+ *
+ * This function is typically called by MainWindow when keyword tips are
+ * reloaded from external CSV/TSV files.
+ *
+ * \param words List of keywords to highlight.
+ **********************************************************************************************************************/
+void PythonEditor::setExtraHighlightKeywords(const QStringList &words)
+{
+    if (m_highlighter)
+        m_highlighter->setExtraKeywords(words);
+}

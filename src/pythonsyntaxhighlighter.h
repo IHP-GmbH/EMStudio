@@ -24,19 +24,24 @@
 #include <QSyntaxHighlighter>
 #include <QTextCharFormat>
 #include <QRegularExpression>
+#include <QStringList>
+#include <QSet>
+#include <QVector>
 
 /*!*******************************************************************************************************************
  * \class PythonSyntaxHighlighter
  * \brief Provides syntax highlighting for Python code in QTextDocument-based editors.
  *
  * Implements QSyntaxHighlighter to define and apply formatting rules for:
- * - Keywords
- * - Strings
- * - Comments
- * - Numbers
- * - Function names
+ *  - Built-in Python keywords (highest priority)
+ *  - Extra keywords (e.g., tips from EMStudio keywords CSV) (lower priority)
+ *  - Strings
+ *  - Comments
+ *  - Numbers
+ *  - Function names
  *
- * Useful for enhancing readability of Python scripts in custom code editors.
+ * Extra keywords are intended as a "soft" highlight layer: they should not override
+ * the built-in Python keyword highlighting.
  *
  * \see QSyntaxHighlighter, QTextCharFormat, QRegularExpression
  **********************************************************************************************************************/
@@ -44,24 +49,40 @@ class PythonSyntaxHighlighter : public QSyntaxHighlighter
 {
     Q_OBJECT
 
+    struct HighlightingRule
+    {
+        QRegularExpression pattern;
+        QTextCharFormat    format;
+    };
+
 public:
-    PythonSyntaxHighlighter(QTextDocument *parent = nullptr);
+    explicit PythonSyntaxHighlighter(QTextDocument *parent = nullptr);
+
+    void                        setExtraKeywords(const QStringList &words);
+    QStringList                 extraKeywords() const { return m_extraKeywords; }
 
 protected:
-    void highlightBlock(const QString &text) override;
+    void                        highlightBlock(const QString &text) override;
 
 private:
-    struct HighlightingRule {
-        QRegularExpression pattern;
-        QTextCharFormat format;
-    };
-    QVector<HighlightingRule> highlightingRules;
+    void                        rebuildRules();
 
-    QTextCharFormat keywordFormat;
-    QTextCharFormat stringFormat;
-    QTextCharFormat commentFormat;
-    QTextCharFormat numberFormat;
-    QTextCharFormat functionFormat;
+    static QRegularExpression   makeWordRegex(const QString &word);
+
+private:
+    QVector<HighlightingRule>   highlightingRules;
+
+    QStringList                 m_pythonKeywords;
+    QSet<QString>               m_pythonKeywordSet;
+
+    QStringList                 m_extraKeywords;
+
+    QTextCharFormat             keywordFormat;
+    QTextCharFormat             extraKeywordFormat;
+    QTextCharFormat             stringFormat;
+    QTextCharFormat             commentFormat;
+    QTextCharFormat             numberFormat;
+    QTextCharFormat             functionFormat;
 };
 
 #endif // PYTHONSYNTAXHIGHLIGHTER_H

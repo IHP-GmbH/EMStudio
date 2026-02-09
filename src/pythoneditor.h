@@ -26,6 +26,7 @@
 #include <QStringListModel>
 
 class FindDialog;
+class PythonSyntaxHighlighter;
 
 /*!*******************************************************************************************************************
  * \class PythonEditor
@@ -54,6 +55,7 @@ public:
     QCompleter                          *completer() const;
     void                                setEditorFontSize(qreal pt);
     void                                setPlainTextUndoable(const QString &text);
+    void                                setExtraHighlightKeywords(const QStringList &words);
 
 signals:
     void                                sigFontSizeChanged(qreal newSize);
@@ -89,6 +91,8 @@ private:
 
     FindDialog                          *m_find = nullptr;
     QList<QTextEdit::ExtraSelection>    m_searchSelections;
+
+    PythonSyntaxHighlighter*            m_highlighter = nullptr;
 };
 
 #endif // PYTHONEDITOR_H

@@ -24,6 +24,7 @@
 #include <QTextStream>
 
 #include "mainwindow.h"
+#include "ui_mainwindow.h"
 #include "keywordseditor.h"
 
 /*!*******************************************************************************************************************
@@ -158,6 +159,8 @@ void MainWindow::refreshKeywordTipsForCurrentTool()
 {
     const QString simKey = currentSimToolKey().toLower();
     m_keywordTips = loadKeywordTipsCsv(simKey);
+
+    m_ui->editRunPythonScript->setExtraHighlightKeywords(m_keywordTips.keys());
 }
 
 /*!*******************************************************************************************************************

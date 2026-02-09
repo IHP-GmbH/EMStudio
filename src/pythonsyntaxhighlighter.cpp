@@ -33,46 +33,34 @@ PythonSyntaxHighlighter::PythonSyntaxHighlighter(QTextDocument *parent)
 {
     HighlightingRule rule;
 
-    // Keywords
-    keywordFormat.setForeground(Qt::blue);
-    keywordFormat.setFontWeight(QFont::Bold);
-    const QStringList keywords = {
+    m_pythonKeywords = QStringList{
         "and", "as", "assert", "break", "class", "continue", "def", "del",
         "elif", "else", "except", "False", "finally", "for", "from", "global",
         "if", "import", "in", "is", "lambda", "None", "nonlocal", "not", "or",
         "pass", "raise", "return", "True", "try", "while", "with", "yield"
     };
-    for (const QString &word : keywords) {
-        rule.pattern = QRegularExpression(QString("\\b%1\\b").arg(word));
-        rule.format = keywordFormat;
-        highlightingRules.append(rule);
+
+    for (const QString& k : m_pythonKeywords) {
+        m_pythonKeywordSet.insert(k);
     }
 
-    // Strings
-    stringFormat.setForeground(Qt::darkGreen);
-    rule.pattern = QRegularExpression(R"(["'][^"']*["'])");
-    rule.format = stringFormat;
-    highlightingRules.append(rule);
+    keywordFormat.setForeground(Qt::blue);
+    //keywordFormat.setFontWeight(QFont::Bold);
 
-    // Comments
+    extraKeywordFormat.setForeground(Qt::black);
+    extraKeywordFormat.setFontWeight(QFont::DemiBold);
+
+    stringFormat.setForeground(Qt::darkGreen);
+
     commentFormat.setForeground(Qt::darkGray);
     commentFormat.setFontItalic(true);
-    rule.pattern = QRegularExpression("#[^\n]*");
-    rule.format = commentFormat;
-    highlightingRules.append(rule);
 
-    // Numbers
     numberFormat.setForeground(Qt::darkMagenta);
-    rule.pattern = QRegularExpression(R"(\b[0-9]+(\.[0-9]+)?\b)");
-    rule.format = numberFormat;
-    highlightingRules.append(rule);
 
-    // Function definitions
-    functionFormat.setFontItalic(true);
     functionFormat.setForeground(Qt::darkCyan);
-    rule.pattern = QRegularExpression(R"(\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\b)");
-    rule.format = functionFormat;
-    highlightingRules.append(rule);
+    functionFormat.setFontItalic(true);
+
+    rebuildRules();
 }
 
 /*!*******************************************************************************************************************
@@ -93,3 +81,81 @@ void PythonSyntaxHighlighter::highlightBlock(const QString &text)
         }
     }
 }
+
+/*!*******************************************************************************************************************
+ * \brief Sets extra user-defined keywords to highlight (e.g. tips keywords).
+ *
+ * These keywords are highlighted with lower priority than built-in Python keywords.
+ * Calling this function rebuilds internal rules and triggers rehighlight().
+ *
+ * \param words List of extra keywords.
+ **********************************************************************************************************************/
+void PythonSyntaxHighlighter::setExtraKeywords(const QStringList& words)
+{
+    m_extraKeywords = words;
+    rebuildRules();
+    rehighlight();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Helper: builds a word-boundary regex for a single identifier.
+ **********************************************************************************************************************/
+QRegularExpression PythonSyntaxHighlighter::makeWordRegex(const QString& word)
+{
+    return QRegularExpression(QStringLiteral("\\b%1\\b").arg(QRegularExpression::escape(word)));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Rebuilds the list of highlighting rules in the correct priority order.
+ *
+ * Priority (later rules overwrite earlier if they overlap):
+ *  1) strings/comments (so they can override keyword highlighting inside them)
+ *  2) extra keywords (lower priority than Python keywords)
+ *  3) Python keywords (highest among keywords)
+ *  4) numbers, function defs, etc. (you can reorder if you want different behavior)
+ **********************************************************************************************************************/
+void PythonSyntaxHighlighter::rebuildRules()
+{
+    highlightingRules.clear();
+    HighlightingRule rule;
+
+    rule.pattern = QRegularExpression(R"(["'][^"']*["'])");
+    rule.format  = stringFormat;
+    highlightingRules.append(rule);
+
+    // Comments
+    rule.pattern = QRegularExpression("#[^\n]*");
+    rule.format  = commentFormat;
+    highlightingRules.append(rule);
+
+    for (const QString& w0 : m_extraKeywords) {
+        const QString w = w0.trimmed();
+        if (w.isEmpty())
+            continue;
+
+        if (m_pythonKeywordSet.contains(w))
+            continue;
+
+        rule.pattern = makeWordRegex(w);
+        rule.format  = extraKeywordFormat;
+        highlightingRules.append(rule);
+    }
+
+    // Python keywords
+    for (const QString& word : m_pythonKeywords) {
+        rule.pattern = makeWordRegex(word);
+        rule.format  = keywordFormat;
+        highlightingRules.append(rule);
+    }
+
+    // Numbers
+    rule.pattern = QRegularExpression(R"(\b[0-9]+(\.[0-9]+)?\b)");
+    rule.format  = numberFormat;
+    highlightingRules.append(rule);
+
+    // Function definitions
+    rule.pattern = QRegularExpression(R"(\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\b)");
+    rule.format  = functionFormat;
+    highlightingRules.append(rule);
+}
+

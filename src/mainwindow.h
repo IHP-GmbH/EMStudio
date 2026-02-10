@@ -142,6 +142,7 @@ public:
     void                            testSetSimSetting(const QString& key, const QVariant& val);
     QString                         testGenerateScriptFromGuiState(QString *outError = nullptr);
     QString                         testEditorText() const;
+    bool                            testSetSimToolKey(const QString& simToolKey, QString* outErr);
     void                            testSetEditorText(const QString& s);
     QVector<PortInfo>               testParsePortsFromEditor() const;
 #endif

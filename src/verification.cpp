@@ -122,11 +122,34 @@ void MainWindow::testSetSimSetting(const QString& key, const QVariant& val)
     setStateChanged();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns the current Python editor content for test inspection.
+ *
+ * This helper provides read-only access to the Python editor text without
+ * triggering any UI updates or state changes. It is intended for use in
+ * unit and golden-file tests to compare the generated or modified script
+ * against expected reference content.
+ *
+ * \return Full Python script text currently present in the editor,
+ *         or an empty string if the editor is not initialized.
+ **********************************************************************************************************************/
 QString MainWindow::testEditorText() const
 {
     return m_ui && m_ui->editRunPythonScript ? m_ui->editRunPythonScript->toPlainText() : QString();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Replaces the Python editor content for tests without user interaction.
+ *
+ * This helper sets the complete text of the Python editor in a deterministic
+ * way, blocking editor signals to avoid unintended side effects. The document
+ * is marked as modified to emulate user edits and ensure that regeneration
+ * paths behave consistently in automated tests.
+ *
+ * No dialogs are shown and no files are written.
+ *
+ * \param s Full Python script text to insert into the editor.
+ **********************************************************************************************************************/
 void MainWindow::testSetEditorText(const QString& s)
 {
     if (!m_ui || !m_ui->editRunPythonScript)
@@ -136,5 +159,71 @@ void MainWindow::testSetEditorText(const QString& s)
     m_ui->editRunPythonScript->setPlainText(s);
     m_ui->editRunPythonScript->document()->setModified(true);
 }
+
+/*!*******************************************************************************************************************
+ * \brief Selects the simulation backend by its stable key ("openems"/"palace") for unit tests.
+ *
+ * This helper emulates the user selection in the Simulation Tool combo box without opening any dialogs.
+ * It sets the corresponding item in \c cbxSimTool by matching the item data (stable tool key),
+ * triggers the same update path as the UI slot (persisting \c SIMULATION_TOOL_KEY / INDEX and
+ * refreshing keyword tips), and returns whether the key was found and applied.
+ *
+ * \param simToolKey Stable tool key to select (e.g. "openems" or "palace"), case-insensitive.
+ * \param outErr Optional error string for diagnostics.
+ * \return True if the tool key existed in the combo box and was selected; otherwise false.
+ **********************************************************************************************************************/
+bool MainWindow::testSetSimToolKey(const QString& simToolKey, QString* outErr)
+{
+    if (outErr) *outErr = QString();
+
+    if (!m_ui || !m_ui->cbxSimTool) {
+        if (outErr) *outErr = QStringLiteral("cbxSimTool is not initialized.");
+        return false;
+    }
+
+    if (!m_ui->cbxSimTool->isEnabled()) {
+        if (outErr) *outErr = QStringLiteral("cbxSimTool is disabled (no simulation tool configured?).");
+        return false;
+    }
+
+    const QString key = simToolKey.trimmed().toLower();
+    if (key.isEmpty()) {
+        if (outErr) *outErr = QStringLiteral("Requested sim tool key is empty.");
+        return false;
+    }
+
+    if (m_ui->cbxSimTool->count() == 0) {
+        refreshSimToolOptions();
+    }
+
+    const int idx = m_ui->cbxSimTool->findData(key);
+    if (idx < 0) {
+        if (outErr) {
+            QStringList avail;
+            for (int i = 0; i < m_ui->cbxSimTool->count(); ++i) {
+                avail << m_ui->cbxSimTool->itemData(i).toString();
+            }
+            *outErr = QString("Simulation tool key '%1' not found in combo. Available: [%2]")
+                          .arg(key, avail.join(", "));
+        }
+        return false;
+    }
+
+    {
+        QSignalBlocker blocker(m_ui->cbxSimTool);
+        m_ui->cbxSimTool->setCurrentIndex(idx);
+    }
+
+    on_cbxSimTool_currentIndexChanged(idx);
+
+    const QString applied = currentSimToolKey();
+    if (applied != key) {
+        if (outErr) *outErr = QString("Failed to apply tool key. Expected '%1', got '%2'.").arg(key, applied);
+        return false;
+    }
+
+    return true;
+}
+
 #endif
 

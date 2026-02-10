@@ -131,6 +131,9 @@ void PalaceGolden::defaultPalace_changeSettings_ports_and_compare()
     w.setTopCell("t1");
     w.setSubstrateFile(xmlPath);
 
+    QString terr;
+    QVERIFY2(w.testSetSimToolKey("palace", &terr), qPrintable(terr));
+
     // ------------------------------------------------------------------
     // Generate the default Palace model (deterministic, no dialogs)
     // This MUST populate the editor

@@ -68,7 +68,7 @@ jobs:
         run: |
           mkdir -p build-tests
           cd build-tests
-          qmake ../tests/emstudio_golden_tests.pro
+          qmake ../tests/tests.pro
 
       - name: Build tests
         run: |

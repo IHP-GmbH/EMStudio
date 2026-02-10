@@ -131,6 +131,9 @@ void PalaceGolden::defaultPalace_changeSettings_ports_and_compare()
     w.setTopCell("t1");
     w.setSubstrateFile(xmlPath);
 
+    w.testSetPreference("PALACE_INSTALL_PATH", "/tmp");
+    w.refreshSimToolOptionsForTests();
+
     QString terr;
     QVERIFY2(w.testSetSimToolKey("palace", &terr), qPrintable(terr));
 

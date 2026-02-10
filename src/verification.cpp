@@ -225,5 +225,37 @@ bool MainWindow::testSetSimToolKey(const QString& simToolKey, QString* outErr)
     return true;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Sets a preference key/value pair for tests without UI interaction.
+ *
+ * This helper writes directly into the internal preferences storage used by
+ * MainWindow, bypassing dialogs, validators, and persistent settings.
+ * It is intended exclusively for automated tests to simulate configured
+ * external tools (e.g. Palace/OpenEMS) in CI environments.
+ *
+ * \param key Preference key to set (e.g. "PALACE_INSTALL_PATH").
+ * \param value Preference value to assign.
+ **********************************************************************************************************************/
+void MainWindow::testSetPreference(const QString& key, const QVariant& value)
+{
+    m_preferences[key] = value;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Refreshes the Simulation Tool combo box for test environments.
+ *
+ * This helper re-evaluates available simulation backends based on the current
+ * preferences state and updates the Simulation Tool combo box accordingly.
+ * Unlike the production path, this function is intended to be callable
+ * explicitly from unit tests after test preferences have been injected.
+ *
+ * It allows CI tests to enable and select simulation backends (e.g. Palace)
+ * without requiring real external tool installations.
+ **********************************************************************************************************************/
+void MainWindow::refreshSimToolOptionsForTests()
+{
+    refreshSimToolOptions();
+}
+
 #endif
 

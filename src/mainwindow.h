@@ -144,6 +144,8 @@ public:
     QString                         testEditorText() const;
     bool                            testSetSimToolKey(const QString& simToolKey, QString* outErr);
     void                            testSetEditorText(const QString& s);
+    void                            refreshSimToolOptionsForTests();
+    void                            testSetPreference(const QString& key, const QVariant& value);
     QVector<PortInfo>               testParsePortsFromEditor() const;
 #endif
 

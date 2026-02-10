@@ -95,6 +95,7 @@ jobs:
       - name: Print code coverage table
         run: |
           cd build-tests
+          chmod +x ../tools/get_code_coverage.sh
           ../tools/get_code_coverage.sh .
 
   build-windows:

@@ -75,6 +75,13 @@ jobs:
           cd build-tests
           make -j"$(nproc)"
 
+      - name: Stage runtime files for tests
+        run: |
+          cd build-tests
+          cp -R ../scripts ./scripts
+          cp -R ../keywords ./keywords
+          cp -R ../icons ./icons || true
+
       - name: Clean old coverage data
         run: |
           cd build-tests

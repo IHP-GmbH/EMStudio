@@ -18,18 +18,27 @@ echo "BUILD_DIR: $BUILD_DIR"
 echo
 
 # Sanity check (helps a LOT in CI)
-echo "GCNO files: $(find . -name '*.gcno' | wc -l)"
-echo "GCDA files: $(find . -name '*.gcda' | wc -l)"
+echo "GCNO files: $(find . -name '*.gcno' | wc -l | tr -d ' ')"
+echo "GCDA files: $(find . -name '*.gcda' | wc -l | tr -d ' ')"
 echo
 
-# Always print summary so CI log is never empty
+TMP_OUT="$(mktemp)"
+trap 'rm -f "$TMP_OUT"' EXIT
+
 gcovr -r "$ROOT_DIR" \
   --filter ".*[\\/]src[\\/].*" \
   --exclude ".*[\\/](moc_|ui_|qrc_).*" \
   --exclude ".*[\\/]tests[\\/].*" \
   --print-summary \
-| tee /dev/stderr \
-| awk 'NF>=4{print $1,$2,$3,$4}' | column -t
+  > "$TMP_OUT"
+
+awk '
+  $1 ~ /^src\// || $1 == "TOTAL" { print $1,$2,$3,$4 }
+' "$TMP_OUT" | column -t
+
+echo
+
+grep -E '^(lines|functions|branches):' "$TMP_OUT" || true
 
 echo
 echo "=== Coverage step finished ==="

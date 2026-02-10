@@ -42,6 +42,54 @@ jobs:
             build/**/EMStudio
           if-no-files-found: warn
 
+  tests-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'gcc_64'
+
+      - name: Install test deps (gcovr + xvfb)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+          python3 -m pip install --upgrade pip
+          python3 -m pip install gcovr
+
+      - name: Configure tests (qmake)
+        run: |
+          mkdir -p build-tests
+          cd build-tests
+          qmake ../tests/emstudio_golden_tests.pro
+
+      - name: Build tests
+        run: |
+          cd build-tests
+          make -j"$(nproc)"
+
+      - name: Clean old coverage data
+        run: |
+          cd build-tests
+          find . -name "*.gcda" -delete || true
+
+      - name: Run tests (headless Qt)
+        run: |
+          cd build-tests
+          xvfb-run -a ./emstudio_golden_tests -platform offscreen
+
+      - name: Print code coverage table
+        run: |
+          cd build-tests
+          ../tools/get_code_coverage.sh .
+
   build-windows:
     runs-on: windows-latest
 

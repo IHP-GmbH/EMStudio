@@ -23,3 +23,6 @@ DEPENDPATH += $$PWD
 INCLUDEPATH += $$PWD
 
 DEFINES += EMSTUDIO_TESTING
+
+include($$TOP/emstudio_coverage.pri)
+

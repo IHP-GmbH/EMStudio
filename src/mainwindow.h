@@ -215,6 +215,8 @@ private:
     void                            info(const QString &msg, bool clear = false);
     void                            error(const QString &msg, bool clear = false);
 
+    void                            updateBoundaryOptionsForCurrentTool();
+
     void                            loadPythonScriptToEditor(const QString &filePath);
     void                            setLineEditPalette(QLineEdit* lineEdit, const QString& path);
     void                            applySimSettingsToScript(QString &script, const QString &simKeyLower);

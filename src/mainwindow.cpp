@@ -1464,7 +1464,72 @@ void MainWindow::on_actionPrefernces_triggered()
 {
     Preferences dlg(m_preferences, this);
     dlg.exec();
+
+    refreshSimToolOptions();
+    refreshKeywordTipsForCurrentTool();
+
+    updateBoundaryOptionsForCurrentTool();
+
+    saveSettings();
 }
+
+/*!*******************************************************************************************************************
+ * \brief Updates boundary condition options according to the currently selected simulation tool.
+ *
+ * Rebuilds the enum values of the "Boundaries" property group based on the
+ * active simulation backend (OpenEMS or Palace). The function preserves the
+ * currently selected boundary type where possible and safely falls back to
+ * a default value if the previous selection is not available in the new
+ * simulator context.
+ *
+ * This method is called after:
+ *  - Changing the simulation tool in the combo box,
+ *  - Closing the Preferences dialog (when tool configuration may change).
+ **********************************************************************************************************************/
+void MainWindow::updateBoundaryOptionsForCurrentTool()
+{
+    if (!m_variantManager || !m_propertyBrowser)
+        return;
+
+    const QString key = m_preferences.value("SIMULATION_TOOL_KEY").toString().trimmed().toLower();
+
+    QStringList boundaryOptions;
+    if (key == QLatin1String("openems")) {
+        boundaryOptions << "PEC" << "PMC" << "MUR" << "PML_8";
+    } else if (key == QLatin1String("palace")) {
+        boundaryOptions << "PEC" << "PMC" << "Absorbing" << "Impedance" << "Conductivity";
+    } else {
+        boundaryOptions << "PEC" << "PMC";
+    }
+
+    QtProperty* boundariesGroup = nullptr;
+    for (QtProperty* top : m_propertyBrowser->properties()) {
+        for (QtProperty* sub : top->subProperties()) {
+            if (sub->propertyName() == QLatin1String("Boundaries")) {
+                boundariesGroup = sub;
+                break;
+            }
+        }
+        if (boundariesGroup) break;
+    }
+    if (!boundariesGroup) return;
+
+    QSignalBlocker b(m_variantManager);
+
+    for (QtProperty* prop : boundariesGroup->subProperties()) {
+        const int oldIdx = m_variantManager->value(prop).toInt();
+        const QStringList oldNames =
+            m_variantManager->attributeValue(prop, "enumNames").toStringList();
+        const QString oldText = oldNames.value(oldIdx);
+
+        m_variantManager->setAttribute(prop, "enumNames", boundaryOptions);
+
+        int newIdx = boundaryOptions.indexOf(oldText);
+        if (newIdx < 0) newIdx = 0;
+        m_variantManager->setValue(prop, newIdx);
+    }
+}
+
 
 /*!*******************************************************************************************************************
  * \brief Starts the simulation by dispatching to the selected backend (OpenEMS or Palace).
@@ -2119,6 +2184,8 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
     m_preferences["SIMULATION_TOOL_KEY"]   = key.toLower();
 
     refreshKeywordTipsForCurrentTool();
+
+    updateBoundaryOptionsForCurrentTool();
 }
 
 /*!*******************************************************************************************************************

@@ -131,7 +131,7 @@ jobs:
           cd build
           mingw32-make -j"$(nproc)"
 
-      - name: Deploy Qt runtime (windeployqt) + add KLayout driver + logo
+      - name: Deploy Qt runtime and runtime resources
         shell: cmd
         run: |
           cd build
@@ -148,14 +148,13 @@ jobs:
 
           windeployqt --dir dist dist\EMStudio.exe
 
-          rem Put driver script + icon into installation image
-          mkdir dist\scripts
-          mkdir dist\icons
+          rem Runtime folders (scripts, keywords)
+          xcopy /E /I /Y ..\scripts  dist\scripts
+          xcopy /E /I /Y ..\keywords dist\keywords
 
-          copy ..\scripts\klEmsDriver.py dist\scripts\
+          rem Logo (also placed next to exe for KLayout)
+          if not exist dist\icons mkdir dist\icons
           copy ..\icons\logo.png dist\icons\
-
-          rem Optional: if you want logo also directly near exe (your KLayout code expects that)
           copy ..\icons\logo.png dist\logo.png
 
       - name: Build Windows installer (Inno Setup)

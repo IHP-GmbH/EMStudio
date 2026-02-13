@@ -45,7 +45,7 @@ PythonSyntaxHighlighter::PythonSyntaxHighlighter(QTextDocument *parent)
     }
 
     keywordFormat.setForeground(Qt::blue);
-    //keywordFormat.setFontWeight(QFont::Bold);
+    keywordFormat.setFontWeight(QFont::Bold);
 
     extraKeywordFormat.setForeground(Qt::black);
     extraKeywordFormat.setFontWeight(QFont::DemiBold);
@@ -119,20 +119,11 @@ void PythonSyntaxHighlighter::rebuildRules()
     highlightingRules.clear();
     HighlightingRule rule;
 
-    rule.pattern = QRegularExpression(R"(["'][^"']*["'])");
-    rule.format  = stringFormat;
-    highlightingRules.append(rule);
-
-    // Comments
-    rule.pattern = QRegularExpression("#[^\n]*");
-    rule.format  = commentFormat;
-    highlightingRules.append(rule);
-
+    // 1) extra keywords
     for (const QString& w0 : m_extraKeywords) {
         const QString w = w0.trimmed();
         if (w.isEmpty())
             continue;
-
         if (m_pythonKeywordSet.contains(w))
             continue;
 
@@ -141,21 +132,30 @@ void PythonSyntaxHighlighter::rebuildRules()
         highlightingRules.append(rule);
     }
 
-    // Python keywords
+    // 2) Python keywords
     for (const QString& word : m_pythonKeywords) {
         rule.pattern = makeWordRegex(word);
         rule.format  = keywordFormat;
         highlightingRules.append(rule);
     }
 
-    // Numbers
+    // 3) Numbers
     rule.pattern = QRegularExpression(R"(\b[0-9]+(\.[0-9]+)?\b)");
     rule.format  = numberFormat;
     highlightingRules.append(rule);
 
-    // Function definitions
+    // 4) Function definitions
     rule.pattern = QRegularExpression(R"(\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\b)");
     rule.format  = functionFormat;
     highlightingRules.append(rule);
-}
 
+    // 5) Strings (apply late so they override keywords/numbers inside)
+    rule.pattern = QRegularExpression(R"((["'])(?:\\.|(?!\1).)*\1)");
+    rule.format  = stringFormat;
+    highlightingRules.append(rule);
+
+    // 6) Comments (LAST so they override everything inside)
+    rule.pattern = QRegularExpression(R"(#[^\n]*)");
+    rule.format  = commentFormat;
+    highlightingRules.append(rule);
+}

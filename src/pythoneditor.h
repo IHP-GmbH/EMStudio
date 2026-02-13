@@ -21,6 +21,7 @@
 #ifndef PYTHONEDITOR_H
 #define PYTHONEDITOR_H
 
+#include <QSet>
 #include <QTextEdit>
 #include <QCompleter>
 #include <QStringListModel>
@@ -86,6 +87,7 @@ private:
 private:
     QStringListModel                    *m_model;
     QStringList                         m_keywords;
+    QSet<QString>                       m_keywordsLower;
 
     QCompleter                          *m_completer = nullptr;
 

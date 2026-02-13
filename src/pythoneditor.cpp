@@ -62,6 +62,9 @@ PythonEditor::PythonEditor(QWidget *parent)
 
     connect(this, &QTextEdit::textChanged, this, &PythonEditor::updateVariableList);
 
+    for (const auto& k : m_keywords)
+        m_keywordsLower.insert(k.toLower());
+
     new QShortcut(QKeySequence::Find, this, SLOT(openFindDialog()));
     auto *scNext = new QShortcut(QKeySequence(Qt::Key_F3), this);
     connect(scNext, &QShortcut::activated, this, [this]{
@@ -192,18 +195,23 @@ void PythonEditor::updateVariableList()
     QSet<QString> identifiers;
     QRegularExpression re(R"(\b([A-Za-z_][A-Za-z0-9_]*)\b)");
     QRegularExpressionMatchIterator i = re.globalMatch(text);
+
     while (i.hasNext()) {
         QRegularExpressionMatch match = i.next();
         QString word = match.captured(1);
-        if (!m_keywords.contains(word)) {
+
+        if (!m_keywordsLower.contains(word.toLower())) {
             identifiers.insert(word);
         }
     }
 
     QStringList fullList = m_keywords;
     fullList.append(identifiers.values());
+    fullList.removeDuplicates();
+    fullList.sort(Qt::CaseInsensitive);
     m_model->setStringList(fullList);
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Opens the Find dialog for searching text within the editor.

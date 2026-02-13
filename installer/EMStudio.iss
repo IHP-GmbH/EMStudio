@@ -5,7 +5,7 @@
 #define KLayoutIco "KLayout.ico"
 
 [Setup]
-AppId={{A3B2E413-8A21-4C0C-92F1-0E20796C124B}
+AppId={{A3B2E413-8A21-4C0C-92F1-0E20796C124B}}
 AppName={#AppName}
 AppVersion={#AppVersion}
 DefaultDirName={pf}\EMStudio
@@ -18,8 +18,9 @@ UninstallDisplayIcon={app}\{#AppIco}
 ChangesEnvironment=yes
 
 [Files]
-; Main application + Qt runtime
-Source: "..\build\dist\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+; Main application + Qt runtime + all staged runtime assets from dist
+; IMPORTANT: put scripts/ and keywords/ into build\dist before running ISCC
+Source: "..\build\dist\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 ; Application icon
 Source: "{#AppIco}"; DestDir: "{app}"; Flags: ignoreversion

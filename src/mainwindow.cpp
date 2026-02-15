@@ -628,21 +628,42 @@ void MainWindow::saveSettings()
 void MainWindow::loadSettings()
 {
     QSettings settings("EMStudio", "EMStudioApp");
-    restoreGeometry(settings.value("MainWindow/geometry").toByteArray());
-    restoreState(settings.value("MainWindow/state").toByteArray());
+
+    const QByteArray geom  = settings.value("MainWindow/geometry").toByteArray();
+    const QByteArray state = settings.value("MainWindow/state").toByteArray();
+
+    if (!geom.isEmpty())
+        restoreGeometry(geom);
+
+    bool okState = true;
+    if (!state.isEmpty())
+        okState = restoreState(state);
+
+    if (!okState) {
+        settings.remove("MainWindow/state");
+
+        if (m_ui && m_ui->dockRunControl)
+            m_ui->dockRunControl->show();
+
+        if (m_ui && m_ui->dockLog)
+            m_ui->dockLog->show();
+    }
+
+    if (m_ui && m_ui->dockRunControl && m_ui->dockLog) {
+        if (!m_ui->dockRunControl->isVisible() && !m_ui->dockLog->isVisible()) {
+            m_ui->dockRunControl->show();
+            m_ui->dockLog->show();
+        }
+    }
 
     settings.beginGroup("SystemSettings");
-    QStringList keys = settings.childKeys();
-    for (const QString &key : keys) {
+    for (const QString &key : settings.childKeys())
         m_sysSettings[key] = settings.value(key);
-    }
     settings.endGroup();
 
     settings.beginGroup("Preferences");
-    const QStringList prefKeys = settings.childKeys();
-    for (const QString& key : prefKeys) {
+    for (const QString& key : settings.childKeys())
         m_preferences[key] = settings.value(key);
-    }
     settings.endGroup();
 }
 

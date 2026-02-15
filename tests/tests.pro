@@ -13,6 +13,7 @@ HEADERS += \
     tst_palace_golden.h
 
 FORMS += \
+    $$PWD/../src/about.ui \
     $$PWD/../src/mainwindow.ui \
     $$PWD/../src/preferences.ui
 

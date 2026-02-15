@@ -185,6 +185,7 @@ private slots:
     void                            on_actionOpen_Python_Model_triggered();
     void                            onOpenRecentPythonModel();
     void                            on_actionKeywords_triggered();
+    void                            on_actionAbout_EMStudio_triggered();
 
 private:
     void                            saveSettings();

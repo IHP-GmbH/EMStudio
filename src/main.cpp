@@ -79,6 +79,7 @@
 #include <QMessageBox>
 #include <QApplication>
 #include <QSplashScreen>
+#include <QCoreApplication>
 
 /*!*******************************************************************************************************************
  * \brief Prints usage information for the EMStudio application.
@@ -109,6 +110,9 @@ void printHelp()
 int main(int argc, char *argv[])
 {
     QApplication a(argc, argv);
+
+    QCoreApplication::setApplicationName("EMStudio");
+    QCoreApplication::setApplicationVersion(QStringLiteral(EMSTUDIO_VERSION_STR));
 
     QPixmap pixmap(":/logo");
     QPixmap scaledPixmap = pixmap.scaled(

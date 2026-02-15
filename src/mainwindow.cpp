@@ -46,6 +46,7 @@
 #include "QtPropertyBrowser/qtvariantproperty.h"
 #include "QtPropertyBrowser/qttreepropertybrowser.h"
 
+#include "about.h"
 #include "mainwindow.h"
 #include "preferences.h"
 #include "ui_mainwindow.h"
@@ -2874,4 +2875,22 @@ void MainWindow::tryAutoLoadRecentPythonForTopCell()
     loadPythonScriptToEditor(bestMatch);
 
     applyPythonScriptFromEditor();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Opens the "About EMStudio" dialog.
+ *
+ * Triggered from the Help → About EMStudio... menu action.
+ * Displays application information such as:
+ *  - application name and version,
+ *  - copyright notice,
+ *  - license information,
+ *  - build and Qt version details.
+ *
+ * The dialog is shown modally and does not modify any application state.
+ **********************************************************************************************************************/
+void MainWindow::on_actionAbout_EMStudio_triggered()
+{
+    AboutDialog dlg(this);
+    dlg.exec();
 }

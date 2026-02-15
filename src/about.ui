@@ -1,0 +1,131 @@
+<ui version="4.0">
+ <class>AboutDialog</class>
+ <widget class="QDialog" name="AboutDialog">
+  <property name="windowTitle">
+   <string>About EMStudio</string>
+  </property>
+  <property name="modal">
+   <bool>true</bool>
+  </property>
+
+  <layout class="QVBoxLayout" name="verticalLayout">
+
+   <!-- Header -->
+   <item>
+    <layout class="QHBoxLayout">
+     <item>
+      <widget class="QLabel" name="lblLogo">
+       <property name="minimumSize">
+        <size><width>72</width><height>72</height></size>
+       </property>
+       <property name="maximumSize">
+        <size><width>72</width><height>72</height></size>
+       </property>
+       <property name="scaledContents">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+
+     <item>
+      <layout class="QVBoxLayout">
+       <item>
+        <widget class="QLabel" name="lblTitle">
+         <property name="text">
+          <string>EMStudio</string>
+         </property>
+         <property name="font">
+          <font><pointsize>16</pointsize><bold>true</bold></font>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="lblSubtitle">
+         <property name="text">
+          <string>Electromagnetic Simulation GUI</string>
+         </property>
+         <property name="styleSheet">
+          <string>color: gray;</string>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </item>
+    </layout>
+   </item>
+
+   <!-- Info grid -->
+   <item>
+    <layout class="QGridLayout" name="gridLayout">
+     <item row="0" column="0">
+      <widget class="QLabel"><property name="text"><string>Version:</string></property></widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QLabel" name="lblVersion"/>
+     </item>
+
+     <item row="1" column="0">
+      <widget class="QLabel"><property name="text"><string>Qt:</string></property></widget>
+     </item>
+     <item row="1" column="1">
+      <widget class="QLabel" name="lblQt"/>
+     </item>
+
+     <item row="2" column="0">
+      <widget class="QLabel"><property name="text"><string>Build:</string></property></widget>
+     </item>
+     <item row="2" column="1">
+      <widget class="QLabel" name="lblBuild"/>
+     </item>
+
+     <item row="3" column="0">
+      <widget class="QLabel"><property name="text"><string>License:</string></property></widget>
+     </item>
+     <item row="3" column="1">
+      <widget class="QLabel">
+       <property name="text"><string>GNU GPL v3 or later</string></property>
+      </widget>
+     </item>
+
+     <item row="4" column="0">
+      <widget class="QLabel"><property name="text"><string>Project:</string></property></widget>
+     </item>
+     <item row="4" column="1">
+      <widget class="QLabel">
+       <property name="text">
+        <string>&lt;a href="https://github.com/IHP-GmbH/EMStudio"&gt;github.com/IHP-GmbH/EMStudio&lt;/a&gt;</string>
+       </property>
+       <property name="openExternalLinks">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+
+   <!-- Footer -->
+   <item>
+    <widget class="QLabel" name="lblCopyright">
+     <property name="text">
+      <string>© 2023–2025 IHP Authors</string>
+     </property>
+     <property name="alignment">
+      <set>Qt::AlignCenter</set>
+     </property>
+     <property name="styleSheet">
+      <string>color: gray;</string>
+     </property>
+    </widget>
+   </item>
+
+   <item>
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Close</set>
+     </property>
+    </widget>
+   </item>
+
+  </layout>
+ </widget>
+</ui>

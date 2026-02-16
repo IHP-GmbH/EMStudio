@@ -310,7 +310,7 @@ void MainWindow::refreshSimToolOptions()
     if (items == 0) {
         m_ui->cbxSimTool->addItem("No simulation tool configured");
         m_ui->cbxSimTool->setEnabled(false);
-        info("No valid simulation tools found. Set OpenEMS Paython path and/or PALACE_INSTALL_PATH / PALACE_SCRIPT_PATH in Preferences.");
+        info("No valid simulation tools found. Set OpenEMS Python path and/or PALACE_INSTALL_PATH / PALACE_SCRIPT_PATH in Preferences.");
     } else {
         m_ui->cbxSimTool->setEnabled(true);
         m_ui->cbxSimTool->setCurrentIndex(0);

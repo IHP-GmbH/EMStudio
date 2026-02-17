@@ -42,7 +42,7 @@ win32 {
     TARGET_EXE           = $${TARGET}.exe
     COPY_CMD             = $$system_path($$clean_path($$PWD/tools/copy_assets.cmd))
 
-    QMAKE_POST_LINK += cmd /c call \"$$COPY_CMD\" \"$$OUT_DIR_WIN\" \"$$TARGET_EXE\" \"$$SCRIPTS_SRC_DIR_WIN\" \"$$KEYWORDS_SRC_DIR_WIN\"
+    QMAKE_POST_LINK += $$quote(cmd /c ""$$COPY_CMD" "$$OUT_DIR_WIN" "$$TARGET_EXE" "$$SCRIPTS_SRC_DIR_WIN" "$$KEYWORDS_SRC_DIR_WIN"")
 }
 
 unix {

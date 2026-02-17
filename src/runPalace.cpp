@@ -200,7 +200,7 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     bool isScriptMode = false;
     if (ctx.runMode == 1) {
         ctx.launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
-        if (ctx.launcherWin.isEmpty() || !QFileInfo::exists(ctx.launcherWin)) {
+        if (ctx.launcherWin.isEmpty()) {
             outError = QStringLiteral("PALACE_RUN_SCRIPT is not configured or does not exist.");
             return false;
         }

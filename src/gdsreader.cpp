@@ -22,6 +22,7 @@
 #include <QSet>
 #include <QPair>
 #include <QFile>
+#include <QDebug>
 #include <QString>
 #include <QFileInfo>
 #include <QDataStream>
@@ -49,28 +50,55 @@ QStringList MainWindow::extractGdsCellNames(const QString &filePath)
     QDataStream stream(&file);
     stream.setByteOrder(QDataStream::BigEndian);
 
-    while (!stream.atEnd()) {
-        quint16 size;
-        quint8 recordType, dataType;
+    while (file.bytesAvailable() >= 4) {
+
+        const qint64 recStartPos = file.pos();
+
+        quint16 size = 0;
+        quint8 recordType = 0, dataType = 0;
 
         stream >> size >> recordType >> dataType;
-        int dataSize = size - 4;
 
-        if (recordType == 0x06 && dataType == 0x06) {
+        if (stream.status() != QDataStream::Ok) {
+            break;
+        }
+
+        if (size < 4 || (size & 1) != 0) {
+            break;
+        }
+
+        const qint64 dataSize = qint64(size) - 4;
+
+        if (dataSize > file.bytesAvailable()) {
+            break;
+        }
+
+        if (recordType == 0x06 && dataType == 0x06) { // STRNAME / ASCII
             QByteArray nameData;
-            nameData.resize(dataSize);
-            stream.readRawData(nameData.data(), dataSize);
+            nameData.resize(int(dataSize));
+            if (dataSize > 0) {
+                const int read = stream.readRawData(nameData.data(), int(dataSize));
+                if (read != dataSize || stream.status() != QDataStream::Ok) {
+                    break;
+                }
+            }
 
             QString cellName = QString::fromLatin1(nameData).trimmed();
-            cellNames << cellName;
+            if (!cellName.isEmpty())
+                cellNames << cellName;
+
         } else {
-            file.seek(file.pos() + dataSize);
+            const qint64 newPos = recStartPos + size;
+            if (!file.seek(newPos)) {
+                break;
+            }
         }
     }
 
     file.close();
     return cellNames;
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Extracts the set of layer and datatype pairs from a GDSII file.
@@ -95,26 +123,50 @@ QSet<QPair<int, int>> MainWindow::extractGdsLayerNumbers(const QString &filePath
     int currentLayer = -1;
     int currentDatatype = -1;
 
-    while (!stream.atEnd()) {
-        quint16 size;
-        quint8 recordType, dataType;
+    while (file.bytesAvailable() >= 4) {
 
+        const qint64 recStart = file.pos();
+
+        quint16 size = 0;
+        quint8 recordType = 0, dataType = 0;
         stream >> size >> recordType >> dataType;
 
-        if (recordType == 0x0D && dataType == 0x02) { // LAYER
-            quint16 layer;
+        if (stream.status() != QDataStream::Ok)
+            break;
+
+        // GDS: size includes header(4) and usually is even
+        if (size < 4 || (size & 1) != 0)
+            break;
+
+        const qint64 dataSize = qint64(size) - 4;
+        if (dataSize > file.bytesAvailable())
+            break;
+
+        if (recordType == 0x0D && dataType == 0x02) { // LAYER (2 bytes)
+            if (dataSize < 2) break;
+
+            quint16 layer = 0;
             stream >> layer;
-            currentLayer = layer;
-            file.seek(file.pos() + size - 6);
-        } else if (recordType == 0x0E && dataType == 0x02) { // DATATYPE
-            quint16 dtype;
+            if (stream.status() != QDataStream::Ok) break;
+
+            currentLayer = int(layer);
+
+        } else if (recordType == 0x0E && dataType == 0x02) { // DATATYPE (2 bytes)
+            if (dataSize < 2) break;
+
+            quint16 dtype = 0;
             stream >> dtype;
-            currentDatatype = dtype;
-            layers.insert({currentLayer, currentDatatype});
-            file.seek(file.pos() + size - 6);
-        } else {
-            file.seek(file.pos() + size - 4);
+            if (stream.status() != QDataStream::Ok) break;
+
+            currentDatatype = int(dtype);
+
+            if (currentLayer >= 0 && currentDatatype >= 0)
+                layers.insert(qMakePair(currentLayer, currentDatatype));
         }
+
+        const qint64 nextPos = recStart + size;
+        if (!file.seek(nextPos))
+            break;
     }
 
     file.close();

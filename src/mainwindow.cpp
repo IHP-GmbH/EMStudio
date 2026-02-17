@@ -1150,21 +1150,40 @@ void MainWindow::updateGdsUserInfo()
     }
 
     m_sysSettings["GdsDir"] = QFileInfo(filePath).absolutePath();
-
     m_ui->btnAddPort->setEnabled(true);
 
     m_cells.clear();
     m_layers.clear();
 
-    m_cells = extractGdsCellNames(filePath);
+    m_cells  = extractGdsCellNames(filePath);
     m_layers = extractGdsLayerNumbers(filePath);
+
+    QString desired = m_simSettings.value("TopCell").toString().trimmed();
+    if (desired.isEmpty())
+        desired = m_simSettings.value("gds_cellname").toString().trimmed();
+    if (desired.isEmpty())
+        desired = m_ui->cbxTopCell->currentText().trimmed();
+
+    QSignalBlocker blocker(m_ui->cbxTopCell);
 
     m_ui->cbxTopCell->clear();
     m_ui->cbxTopCell->addItems(m_cells);
     m_ui->cbxTopCell->setSizeAdjustPolicy(QComboBox::AdjustToContents);
 
-    m_simSettings["GdsFile"] = m_ui->txtGdsFile->text();
-    m_simSettings["TopCell"] = m_ui->cbxTopCell->currentText();
+    int idx = -1;
+    if (!desired.isEmpty())
+        idx = m_ui->cbxTopCell->findText(desired);
+
+    if (idx >= 0)
+        m_ui->cbxTopCell->setCurrentIndex(idx);
+    else if (!m_cells.isEmpty())
+        m_ui->cbxTopCell->setCurrentIndex(0);
+
+    const QString top = m_ui->cbxTopCell->currentText().trimmed();
+
+    m_simSettings["GdsFile"]      = m_ui->txtGdsFile->text();
+    m_simSettings["TopCell"]      = top;
+    m_simSettings["gds_cellname"] = top;
 
     updateSubLayerNamesCheckboxState();
 }

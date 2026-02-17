@@ -154,6 +154,7 @@ private slots:
     void                            on_lstRunControl_itemClicked(QListWidgetItem *item);
     void                            onSimulationSettingChanged(QtProperty *property, const QVariant &value);
 
+    void                            onTopCellChanged(const QString &text);
     void                            on_actionExit_triggered();
     void                            on_actionSave_triggered();
     void                            on_actionSave_As_triggered();

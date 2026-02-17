@@ -212,6 +212,9 @@ MainWindow::MainWindow(QWidget *parent)
                 m_sysSettings["PYTHON_EDITOR_FONT_SIZE"] = newSize;
             });
 
+    connect(m_ui->cbxTopCell, &QComboBox::currentTextChanged,
+            this, &MainWindow::onTopCellChanged);
+
     if (m_sysSettings.contains("PYTHON_EDITOR_FONT_SIZE")) {
         qreal size = m_sysSettings["PYTHON_EDITOR_FONT_SIZE"].toDouble();
         if (size > 4.0 && size < 80.0)
@@ -243,6 +246,48 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete m_ui;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Slot: reacts to changes of the selected top cell (cbxTopCell).
+ *
+ * Updates the simulation state key "TopCell" (and the canonical "gds_cellname") and, if the Python editor
+ * is not modified by the user, synchronizes the generated script by updating the
+ * \c gds_cellname assignment via applyGdsAndXmlPaths().
+ *
+ * The function is intentionally conservative:
+ * - If the editor contains unsaved user edits (document()->isModified()), it does not overwrite the text.
+ * - It preserves cursor and scroll position when updating the editor content.
+ *
+ * \param text Newly selected top cell name.
+ **********************************************************************************************************************/
+void MainWindow::onTopCellChanged(const QString &text)
+{
+    const QString top = text.trimmed();
+    if (top.isEmpty())
+        return;
+
+    m_simSettings["TopCell"] = top;
+    m_simSettings["gds_cellname"] = top;
+
+    if (m_ui->editRunPythonScript->document()->isModified()) {
+        setStateChanged();
+        return;
+    }
+
+    QString script = m_ui->editRunPythonScript->toPlainText();
+    if (script.trimmed().isEmpty()) {
+        setStateChanged();
+        return;
+    }
+
+    const QString simKeyLower = currentSimToolKey().toLower();
+
+    applyGdsAndXmlPaths(script, simKeyLower);
+
+    setEditorScriptPreservingState(script);
+
+    setStateChanged();
 }
 
 /*!*******************************************************************************************************************

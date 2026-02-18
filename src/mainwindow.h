@@ -337,6 +337,10 @@ private:
 
     QString                         findPalaceConfigJson(const QString &runDir) const;
 
+    bool                            pathExistsPortable(const QString &path, const QString &distro = QString(), int timeoutMs = 2000) const;
+    bool                            pathIsExecutablePortable(const QString &path, const QString &distro = QString(), int timeoutMs = 2000) const;
+    QString                         toLinuxPathPortable(const QString &path, const QString &distro = QString(), int timeoutMs = 2000) const;
+
 #ifdef Q_OS_WIN
     bool                            ensureWslAvailable(QString &outError) const;
     QString                         wslToWinPath(const QString &p) const;

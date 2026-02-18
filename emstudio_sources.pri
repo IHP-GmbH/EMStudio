@@ -8,6 +8,7 @@ TOP = $$clean_path($$TOP)
 INCLUDEPATH += $$TOP $$TOP/src $$TOP/extension $$TOP/QtPropertyBrowser
 
 SOURCES += \
+    $$TOP/src/wslPaths.cpp \
     $$TOP/src/about.cpp \
     $$TOP/src/tips.cpp \
     $$TOP/src/keywordseditor.cpp \
@@ -26,6 +27,7 @@ SOURCES += \
     $$TOP/extension/qlineeditd2.cpp \
     $$TOP/extension/variantfactory.cpp \
     $$TOP/extension/variantmanager.cpp \
+    $$TOP/extension/wslHelper.cpp \
     $$TOP/src/finddialog.cpp \
     $$TOP/src/gdsreader.cpp \
     $$TOP/src/layer.cpp \
@@ -63,6 +65,7 @@ HEADERS += \
     $$TOP/extension/qlineeditd2.h \
     $$TOP/extension/variantfactory.h \
     $$TOP/extension/variantmanager.h \
+    $$TOP/extension/wslHelper.h \
     $$TOP/src/finddialog.h \
     $$TOP/src/layer.h \
     $$TOP/src/mainwindow.h \

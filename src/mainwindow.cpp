@@ -329,14 +329,35 @@ void MainWindow::refreshSimToolOptions()
 {
     QSignalBlocker blocker(m_ui->cbxSimTool);
 
-    const QString openemsPath     = m_preferences.value("Python Path").toString();
-    const QString palacePath      = m_preferences.value("PALACE_INSTALL_PATH").toString();
-    const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString();
+    const QString openemsPath      = m_preferences.value("Python Path").toString().trimmed();
+    const QString palacePath       = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
+    const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
 
-    const bool hasOpenEMS = QFileInfo(openemsPath).isExecutable();
+#ifdef Q_OS_WIN
+    const QString distro = m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed();
+#endif
 
-    const bool hasPalaceInstall = pathLooksValid(palacePath, "bin/palace");
-    const bool hasPalaceScript  = fileLooksValid(palaceScriptPath);
+    const bool hasOpenEMS = !openemsPath.isEmpty() && pathIsExecutablePortable(openemsPath);
+
+    bool hasPalaceInstall = false;
+    if (!palacePath.isEmpty()) {
+#ifdef Q_OS_WIN
+        const QString palaceRootLinux = toLinuxPathPortable(palacePath, distro);
+        const QString palaceExeLinux  = QDir(palaceRootLinux).filePath("bin/palace");
+        hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux, distro);
+#else
+        const QString palaceExe = QDir(palacePath).filePath("bin/palace");
+        hasPalaceInstall = pathIsExecutablePortable(palaceExe);
+#endif
+    }
+
+    // Launcher/script is always executed on the host OS, NOT inside WSL
+    const bool hasPalaceScript =
+        !palaceScriptPath.isEmpty() &&
+#ifdef Q_OS_WIN
+        !palaceScriptPath.startsWith('/') &&
+#endif
+        pathIsExecutablePortable(palaceScriptPath);
 
     const bool hasPalace = hasPalaceInstall || hasPalaceScript;
 
@@ -355,7 +376,7 @@ void MainWindow::refreshSimToolOptions()
     if (items == 0) {
         m_ui->cbxSimTool->addItem("No simulation tool configured");
         m_ui->cbxSimTool->setEnabled(false);
-        info("No valid simulation tools found. Set OpenEMS Python path and/or PALACE_INSTALL_PATH / PALACE_SCRIPT_PATH in Preferences.");
+        info("No valid simulation tools found. Set OpenEMS Python path and/or PALACE_INSTALL_PATH / PALACE_RUN_SCRIPT in Preferences.");
     } else {
         m_ui->cbxSimTool->setEnabled(true);
         m_ui->cbxSimTool->setCurrentIndex(0);

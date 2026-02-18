@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include "fileedit.h"
+#include "wslHelper.h"
 
 #include <QLabel>
 #include <QPalette>
@@ -114,25 +115,30 @@ void FileEdit::setIconColor(const QColor &color)
 QPalette FileEdit::getNetlistPalette(QString path)
 {
     QPalette pal;
-    if(type != COLOR && type != PASSWORD) {
-        if(QFileInfo(path).isReadable()) {
-            pal.setColor(QPalette::Text, Qt::darkGreen);
-        }
-        else {
-            pal.setColor(QPalette::Text, Qt::red);
-        }
-    }
-    else if(type != COLOR) {
-        pal.setColor(QPalette::Text, QColor("black"));
-    }
-    else {
-        QColor colorId = QColor(path);
-        if(!colorId.isValid()) {
-            colorId = QColor("black");
-        }
-        pal.setColor(QPalette::Text, colorId);
+
+    if (type != COLOR && type != PASSWORD) {
+
+#ifdef Q_OS_WIN
+        const QString distro = QStringLiteral("Ubuntu");
+        const bool readable = WslHelper::isReadableLocalThenWsl(path, distro);
+#else
+        const bool readable = QFileInfo(path).isReadable();
+#endif
+
+        pal.setColor(QPalette::Text, readable ? Qt::darkGreen : Qt::red);
+        return pal;
     }
 
+    if (type != COLOR) {
+        pal.setColor(QPalette::Text, QColor("black"));
+        return pal;
+    }
+
+    QColor colorId = QColor(path);
+    if (!colorId.isValid())
+        colorId = QColor("black");
+
+    pal.setColor(QPalette::Text, colorId);
     return pal;
 }
 

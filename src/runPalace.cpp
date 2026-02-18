@@ -201,18 +201,18 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     if (ctx.runMode == 1) {
         ctx.launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
         if (ctx.launcherWin.isEmpty()) {
-            outError = QStringLiteral("PALACE_RUN_SCRIPT is not configured or does not exist.");
+            outError = QStringLiteral("PALACE_RUN_SCRIPT is not configured.");
             return false;
         }
 
-        QFileInfo fiLaunch(ctx.launcherWin);
-        if (!fiLaunch.isExecutable()) {
+        if (!pathIsExecutablePortable(ctx.launcherWin)) {
             outError = QStringLiteral("PALACE_RUN_SCRIPT must point to an executable file.");
             return false;
         }
 
         isScriptMode = true;
     }
+
 
     const QFileInfo fi(ctx.modelWin);
     ctx.baseName = fi.completeBaseName();

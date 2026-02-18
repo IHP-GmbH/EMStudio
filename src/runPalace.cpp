@@ -26,48 +26,11 @@
 #include <QStandardPaths>
 #include <QTextCursor>
 
+#include "wslHelper.h"
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
 #ifdef Q_OS_WIN
-/*!*******************************************************************************************************************
- * \brief Executes a command inside a WSL distribution and captures its standard output.
- *
- * Runs the given command using \c wsl.exe in the specified WSL distribution and returns
- * the captured standard output as a UTF-8 string.
- *
- * The function waits synchronously for completion and returns an empty string if:
- *  - the process fails to start,
- *  - the timeout expires,
- *  - the command exits with a non-zero status.
- *
- * \param distro    Name of the WSL distribution (e.g. "Ubuntu").
- * \param cmd       Command and arguments to execute inside WSL.
- * \param timeoutMs Maximum time to wait for process completion, in milliseconds.
- *
- * \return Captured standard output on success; empty string on failure.
- **********************************************************************************************************************/
-static QString runWslCmdCapture(const QString &distro, const QStringList &cmd, int timeoutMs)
-{
-    QProcess p;
-
-    QStringList args;
-    args << "-d" << distro << "--";
-    args << cmd;
-
-    p.start(QStringLiteral("wsl"), args);
-
-    if (!p.waitForStarted(timeoutMs))
-        return QString();
-
-    if (!p.waitForFinished(timeoutMs))
-        return QString();
-
-    if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
-        return QString();
-
-    return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
-}
 
 /*!*******************************************************************************************************************
  * \brief Parses physical CPU core count from \c lscpu CSV output.
@@ -234,7 +197,9 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     if (!ensureWslAvailable(outError))
         return false;
 
-    ctx.distro = m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed();
+    ctx.distro = m_simSettings.contains("WSL_DISTRO")
+                     ? m_simSettings.value("WSL_DISTRO").toString().trimmed()
+                     : QString();
 
     QString palaceRootLinux = ctx.palaceRoot;
     if (!palaceRootLinux.startsWith('/'))
@@ -304,12 +269,18 @@ void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
 void MainWindow::startPalacePythonStage(const PalaceRunContext &ctx)
 {
 #ifdef Q_OS_WIN
+    const QString wslExe = wslExePath();
+    if (wslExe.isEmpty()) {
+        error("WSL is not available (wsl.exe not found).", false);
+        return;
+    }
+
     QStringList args;
     args << "-d" << ctx.distro
          << "--" << "bash" << "-lc"
          << QString("cd \"%1\" && %2 \"%3\"").arg(ctx.modelDirLinux, ctx.pythonCmd, ctx.modelLinux);
 
-    m_simProcess->start("wsl", args);
+    m_simProcess->start(wslExe, args);
 #else
     m_simProcess->setWorkingDirectory(ctx.modelDirLinux);
     m_simProcess->start(ctx.pythonCmd, QStringList() << ctx.modelLinux);
@@ -531,20 +502,12 @@ QString MainWindow::findPalaceConfigJson(const QString &runDir) const
  **********************************************************************************************************************/
 QString MainWindow::queryWslCpuCores(const QString &distro) const
 {
-    QProcess p;
-
-    QStringList args;
-    args << "-d" << distro << "--" << "nproc";
-
-    p.start(QStringLiteral("wsl"), args);
-
-    if (!p.waitForFinished(3000))
-        return QString();
-
-    if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
-        return QString();
-
-    return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+#ifdef Q_OS_WIN
+    return runWslCmdCapture(distro, QStringList() << "nproc", 3000).trimmed();
+#else
+    Q_UNUSED(distro);
+    return QString();
+#endif
 }
 
 /*!*******************************************************************************************************************
@@ -563,9 +526,11 @@ MainWindow::CoreCountResult MainWindow::detectMpiCoreCount() const
     CoreCountResult r;
 
 #ifdef Q_OS_WIN
-    const QString distro = m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed();
+    const QString distro = m_simSettings.value("WSL_DISTRO", QString()).toString().trimmed();
 
-    const QString lscpuOut = runWslCmdCapture(distro, QStringList() << "lscpu" << "-p=CORE,SOCKET", 2000);
+    const QString lscpuOut = runWslCmdCapture(
+        distro, QStringList() << "lscpu" << "-p=CORE,SOCKET", 2000);
+
     const QString phys = parsePhysicalCoresFromLscpuCsv(lscpuOut).trimmed();
     if (!phys.isEmpty()) {
         r.cores  = phys;
@@ -573,7 +538,9 @@ MainWindow::CoreCountResult MainWindow::detectMpiCoreCount() const
         return r;
     }
 
-    const QString nprocOut = runWslCmdCapture(distro, QStringList() << "nproc", 2000).trimmed();
+    const QString nprocOut = runWslCmdCapture(
+                                 distro, QStringList() << "nproc", 2000).trimmed();
+
     if (!nprocOut.isEmpty()) {
         r.cores  = nprocOut;
         r.source = QStringLiteral("logical (nproc)");
@@ -862,20 +829,30 @@ bool MainWindow::runPalaceSolverWindows(const PalaceRunContext &ctx, const QStri
 {
     appendToSimulationLog("\n[Starting Palace solver in WSL...]\n");
 
+    const QString wslExe = wslExePath();
+    if (wslExe.isEmpty()) {
+        error("WSL is not available (wsl.exe not found).", false);
+        return false;
+    }
+
     m_palacePhase = PalacePhase::PalaceSolver;
 
     QStringList args;
-    args << "-d" << ctx.distro
-         << "--" << "bash" << "-lc" << cmd;
+    if (!ctx.distro.trimmed().isEmpty())
+        args << "-d" << ctx.distro.trimmed();
 
-    m_simProcess->start(QStringLiteral("wsl"), args);
+    args << "--" << "bash" << "-lc" << cmd;
+
+    m_simProcess->start(wslExe, args);
 
     if (!m_simProcess->waitForStarted(3000)) {
         error("Failed to start Palace solver under WSL.", false);
         return false;
     }
+
     return true;
 }
+
 #endif
 
 /*!*******************************************************************************************************************

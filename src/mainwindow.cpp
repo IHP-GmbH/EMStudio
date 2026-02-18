@@ -223,8 +223,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     updateSubLayerNamesCheckboxState();
 
-    refreshSimToolOptions();
-
     QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_ui->editSimulationLog->setFont(mono);
 
@@ -236,6 +234,8 @@ MainWindow::MainWindow(QWidget *parent)
     setupWindowMenuDocks();
 
     refreshKeywordTipsForCurrentTool();
+
+    refreshSimToolOptions();
 
     setStateSaved();
 }
@@ -333,8 +333,14 @@ void MainWindow::refreshSimToolOptions()
     const QString palacePath       = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
     const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
 
+
 #ifdef Q_OS_WIN
-    const QString distro = m_simSettings.value("WSL_DISTRO", "Ubuntu").toString().trimmed();
+    const QString distro =
+        m_simSettings.contains("WSL_DISTRO")
+            ? m_simSettings.value("WSL_DISTRO").toString().trimmed()
+            : QString();
+
+    const int wslTimeoutMs = 8000;
 #endif
 
     const bool hasOpenEMS = !openemsPath.isEmpty() && pathIsExecutablePortable(openemsPath);
@@ -344,7 +350,7 @@ void MainWindow::refreshSimToolOptions()
 #ifdef Q_OS_WIN
         const QString palaceRootLinux = toLinuxPathPortable(palacePath, distro);
         const QString palaceExeLinux  = QDir(palaceRootLinux).filePath("bin/palace");
-        hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux, distro);
+        hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux, distro, wslTimeoutMs);
 #else
         const QString palaceExe = QDir(palacePath).filePath("bin/palace");
         hasPalaceInstall = pathIsExecutablePortable(palaceExe);

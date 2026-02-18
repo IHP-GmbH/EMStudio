@@ -465,11 +465,13 @@ void MainWindow::applyBoundaries(QString &script, bool alsoTopLevelAssignment)
  *
  * \return Converted script-friendly path string.
  **********************************************************************************************************************/
+#include "wslHelper.h"
+
 QString MainWindow::makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const
 {
 #ifdef Q_OS_WIN
     if (simKeyLower == QLatin1String("palace")) {
-        if (!QStandardPaths::findExecutable(QStringLiteral("wsl")).isEmpty())
+        if (isWslAvailable())
             return toWslPath(nativePath);
     }
 #else

@@ -1,10 +1,36 @@
 #include <QDir>
 #include <QProcess>
 #include <QFileInfo>
+#include <QStandardPaths>
 
+#include "wslHelper.h"
 #include "mainwindow.h"
 
+static QString wslExecutablePathImpl()
+{
+    const QString sys32 = QStringLiteral("C:\\Windows\\System32\\wsl.exe");
+    if (QFileInfo::exists(sys32))
+        return sys32;
+
+    const QString sysnative = QStringLiteral("C:\\Windows\\Sysnative\\wsl.exe");
+    if (QFileInfo::exists(sysnative))
+        return sysnative;
+
+    return QStandardPaths::findExecutable(QStringLiteral("wsl"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Returns absolute path to wsl.exe (System32/Sysnative preferred).
+ **********************************************************************************************************************/
+QString wslExePath()
+{
 #ifdef Q_OS_WIN
+    return wslExecutablePathImpl();
+#else
+    return QString();
+#endif
+}
+
 /*!*******************************************************************************************************************
  * \brief Executes a command inside a WSL distribution and captures its standard output.
  *
@@ -22,17 +48,27 @@
  *
  * \return Captured standard output on success; empty string on failure.
  **********************************************************************************************************************/
-static QString runWslCmdCapture(const QString &distro,
+QString runWslCmdCapture(const QString &distro,
                                 const QStringList &cmd,
                                 int timeoutMs)
 {
     QProcess p;
 
     QStringList args;
-    args << "-d" << distro << "--";
+
+    // Use explicit distro only if provided; otherwise default WSL distro is used
+    if (!distro.trimmed().isEmpty()) {
+        args << "-d" << distro;
+    }
+
+    args << "--";
     args << cmd;
 
-    p.start(QStringLiteral("wsl"), args);
+    const QString wslExe = wslExePath();
+    if (wslExe.isEmpty())
+        return QString();
+
+    p.start(wslExe, args);
 
     if (!p.waitForStarted(timeoutMs))
         return QString();
@@ -104,7 +140,6 @@ static bool wslPathIsExecutable(const QString &distro, const QString &linuxPath,
     const QString out = runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
     return out.trimmed() == QLatin1String("1");
 }
-#endif // Q_OS_WIN
 
 /*!*******************************************************************************************************************
  * \brief Checks whether a path exists in a platform-portable way (Windows / Linux / WSL).
@@ -170,6 +205,97 @@ bool MainWindow::pathIsExecutablePortable(const QString &path, const QString &di
     Q_UNUSED(distro);
     Q_UNUSED(timeoutMs);
     return QFileInfo(path).isExecutable();
+#endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Checks whether a file system path is readable inside a WSL distribution.
+ *
+ * Executes \c test -r <path> inside the given WSL distro and returns true
+ * if the path exists and is readable.
+ *
+ * \param distro    WSL distribution name (e.g. "Ubuntu").
+ * \param linuxPath Absolute Linux path inside WSL.
+ * \param timeoutMs Maximum time to wait for completion, in milliseconds.
+ * \return True if the path is readable inside WSL; false otherwise.
+ **********************************************************************************************************************/
+static bool wslPathIsReadable(const QString &distro, const QString &linuxPath, int timeoutMs)
+{
+    const QString cmd = QString("test -r %1 && echo 1 || echo 0").arg(shellQuoteSingle(linuxPath));
+    const QString out = runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
+    return out.trimmed() == QLatin1String("1");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Converts a Windows path to a Linux path suitable for WSL, preserving Linux paths.
+ *
+ * On Windows:
+ *  - If \a path starts with '/', it is assumed to be already a Linux path (WSL) and returned as-is.
+ *  - Otherwise, \c wslpath -a is used inside the selected WSL distro to convert the Windows path
+ *    into an absolute Linux path.
+ *
+ * \param path      Input path (Windows path or WSL absolute path).
+ * \param distro    WSL distribution name.
+ * \param timeoutMs Timeout for WSL conversion in milliseconds.
+ * \return Linux/WSL absolute path on success; empty string on failure.
+ **********************************************************************************************************************/
+static QString toLinuxPathForWsl(const QString &path, const QString &distro, int timeoutMs)
+{
+    const QString p = path.trimmed();
+    if (p.isEmpty())
+        return QString();
+
+    if (p.startsWith('/'))
+        return p;
+
+    const QString cmd =
+        QString("wslpath -a %1").arg(shellQuoteSingle(QDir::toNativeSeparators(p)));
+
+    const QString out =
+        runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
+
+    return out.trimmed();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Checks whether WSL is available on this system.
+ **********************************************************************************************************************/
+bool isWslAvailable()
+{
+#ifdef Q_OS_WIN
+    return !wslExePath().isEmpty();
+#else
+    return false;
+#endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Checks readability by trying local filesystem first, then WSL for Linux-style absolute paths.
+ **********************************************************************************************************************/
+bool isReadableLocalThenWsl(const QString &path, const QString &distro, int timeoutMs)
+{
+    const QString p = path.trimmed();
+    if (p.isEmpty())
+        return false;
+
+    // 1) First try locally (host FS)
+    if (QFileInfo(p).isReadable())
+        return true;
+
+#ifdef Q_OS_WIN
+    // 2) Fallback to WSL (convert Windows path if needed)
+    if (!isWslAvailable())
+        return false;
+
+    const QString linuxPath = toLinuxPathForWsl(p, distro, timeoutMs);
+    if (linuxPath.isEmpty())
+        return false;
+
+    return wslPathIsReadable(distro, linuxPath, timeoutMs);
+#else
+    Q_UNUSED(distro);
+    Q_UNUSED(timeoutMs);
+    return false;
 #endif
 }
 

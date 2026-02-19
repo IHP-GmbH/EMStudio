@@ -6,6 +6,110 @@
 #include "wslHelper.h"
 #include "mainwindow.h"
 
+#ifdef Q_OS_WIN
+
+/*!*******************************************************************************************************************
+ * \brief Quotes a string for safe use as a single-quoted literal in bash.
+ *
+ * Produces a string safe to embed into a \c bash -lc '...' command.
+ * If the input contains single quotes, they are escaped using the standard
+ * bash pattern: close quote, insert '\'' , reopen quote.
+ *
+ * \param s Input string to quote.
+ * \return Single-quoted string safe for bash.
+ **********************************************************************************************************************/
+static QString shellQuoteSingle(const QString &s)
+{
+    QString out = s;
+    out.replace('\'', "'\\''");
+    return "'" + out + "'";
+}
+
+/*!*******************************************************************************************************************
+ * \brief Checks whether a file system path is readable inside a WSL distribution.
+ *
+ * Executes \c test -r <path> inside the given WSL distro and returns true
+ * if the path exists and is readable.
+ *
+ * \param distro    WSL distribution name (e.g. "Ubuntu").
+ * \param linuxPath Absolute Linux path inside WSL.
+ * \param timeoutMs Maximum time to wait for completion, in milliseconds.
+ * \return True if the path is readable inside WSL; false otherwise.
+ **********************************************************************************************************************/
+static bool wslPathIsReadable(const QString &distro, const QString &linuxPath, int timeoutMs)
+{
+    const QString cmd = QString("test -r %1 && echo 1 || echo 0").arg(shellQuoteSingle(linuxPath));
+    const QString out = runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
+    return out.trimmed() == QLatin1String("1");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Converts a Windows path to a Linux path suitable for WSL, preserving Linux paths.
+ *
+ * On Windows:
+ *  - If \a path starts with '/', it is assumed to be already a Linux path (WSL) and returned as-is.
+ *  - Otherwise, \c wslpath -a is used inside the selected WSL distro to convert the Windows path
+ *    into an absolute Linux path.
+ *
+ * \param path      Input path (Windows path or WSL absolute path).
+ * \param distro    WSL distribution name.
+ * \param timeoutMs Timeout for WSL conversion in milliseconds.
+ * \return Linux/WSL absolute path on success; empty string on failure.
+ **********************************************************************************************************************/
+static QString toLinuxPathForWsl(const QString &path, const QString &distro, int timeoutMs)
+{
+    const QString p = path.trimmed();
+    if (p.isEmpty())
+        return QString();
+
+    if (p.startsWith('/'))
+        return p;
+
+    const QString cmd =
+        QString("wslpath -a %1").arg(shellQuoteSingle(QDir::toNativeSeparators(p)));
+
+    const QString out =
+        runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
+
+    return out.trimmed();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Checks whether a file system path exists inside a WSL distribution.
+ *
+ * Executes \c test -e <path> inside the given WSL distro and returns true
+ * if the path exists (file or directory).
+ *
+ * \param distro    WSL distribution name (e.g. "Ubuntu").
+ * \param linuxPath Absolute Linux path inside WSL (e.g. "/home/...", "/mnt/c/...").
+ * \param timeoutMs Maximum time to wait for completion, in milliseconds.
+ * \return True if the path exists inside WSL; false otherwise.
+ **********************************************************************************************************************/
+static bool wslPathExists(const QString &distro, const QString &linuxPath, int timeoutMs)
+{
+    const QString cmd = QString("test -e %1 && echo 1 || echo 0").arg(shellQuoteSingle(linuxPath));
+    const QString out = runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
+    return out.trimmed() == QLatin1String("1");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Checks whether a file system path is executable inside a WSL distribution.
+ *
+ * Executes \c test -x <path> inside the given WSL distro and returns true
+ * if the path exists and is executable.
+ *
+ * \param distro    WSL distribution name (e.g. "Ubuntu").
+ * \param linuxPath Absolute Linux path inside WSL.
+ * \param timeoutMs Maximum time to wait for completion, in milliseconds.
+ * \return True if the path is executable inside WSL; false otherwise.
+ **********************************************************************************************************************/
+static bool wslPathIsExecutable(const QString &distro, const QString &linuxPath, int timeoutMs)
+{
+    const QString cmd = QString("test -x %1 && echo 1 || echo 0").arg(shellQuoteSingle(linuxPath));
+    const QString out = runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
+    return out.trimmed() == QLatin1String("1");
+}
+
 /*!*******************************************************************************************************************
  * \brief Finds the absolute path to wsl.exe on Windows.
  *
@@ -68,6 +172,8 @@ QString decodeWslOutput(const QByteArray &ba)
 
     return QString::fromLocal8Bit(ba);
 }
+
+#endif
 
 /*!*******************************************************************************************************************
  * \brief Lists installed WSL distributions available on the system (Windows only).
@@ -204,8 +310,8 @@ QString wslExePath()
  * \return Captured standard output on success; empty string on failure.
  **********************************************************************************************************************/
 QString runWslCmdCapture(const QString &distro,
-                                const QStringList &cmd,
-                                int timeoutMs)
+                         const QStringList &cmd,
+                         int timeoutMs)
 {
     QProcess p;
 
@@ -241,59 +347,6 @@ QString runWslCmdCapture(const QString &distro,
         return QString();
 
     return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
-}
-
-/*!*******************************************************************************************************************
- * \brief Quotes a string for safe use as a single-quoted literal in bash.
- *
- * Produces a string safe to embed into a \c bash -lc '...' command.
- * If the input contains single quotes, they are escaped using the standard
- * bash pattern: close quote, insert '\'' , reopen quote.
- *
- * \param s Input string to quote.
- * \return Single-quoted string safe for bash.
- **********************************************************************************************************************/
-static QString shellQuoteSingle(const QString &s)
-{
-    QString out = s;
-    out.replace('\'', "'\\''");
-    return "'" + out + "'";
-}
-
-/*!*******************************************************************************************************************
- * \brief Checks whether a file system path exists inside a WSL distribution.
- *
- * Executes \c test -e <path> inside the given WSL distro and returns true
- * if the path exists (file or directory).
- *
- * \param distro    WSL distribution name (e.g. "Ubuntu").
- * \param linuxPath Absolute Linux path inside WSL (e.g. "/home/...", "/mnt/c/...").
- * \param timeoutMs Maximum time to wait for completion, in milliseconds.
- * \return True if the path exists inside WSL; false otherwise.
- **********************************************************************************************************************/
-static bool wslPathExists(const QString &distro, const QString &linuxPath, int timeoutMs)
-{
-    const QString cmd = QString("test -e %1 && echo 1 || echo 0").arg(shellQuoteSingle(linuxPath));
-    const QString out = runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
-    return out.trimmed() == QLatin1String("1");
-}
-
-/*!*******************************************************************************************************************
- * \brief Checks whether a file system path is executable inside a WSL distribution.
- *
- * Executes \c test -x <path> inside the given WSL distro and returns true
- * if the path exists and is executable.
- *
- * \param distro    WSL distribution name (e.g. "Ubuntu").
- * \param linuxPath Absolute Linux path inside WSL.
- * \param timeoutMs Maximum time to wait for completion, in milliseconds.
- * \return True if the path is executable inside WSL; false otherwise.
- **********************************************************************************************************************/
-static bool wslPathIsExecutable(const QString &distro, const QString &linuxPath, int timeoutMs)
-{
-    const QString cmd = QString("test -x %1 && echo 1 || echo 0").arg(shellQuoteSingle(linuxPath));
-    const QString out = runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
-    return out.trimmed() == QLatin1String("1");
 }
 
 /*!*******************************************************************************************************************
@@ -361,55 +414,6 @@ bool MainWindow::pathIsExecutablePortable(const QString &path, const QString &di
     Q_UNUSED(timeoutMs);
     return QFileInfo(path).isExecutable();
 #endif
-}
-
-/*!*******************************************************************************************************************
- * \brief Checks whether a file system path is readable inside a WSL distribution.
- *
- * Executes \c test -r <path> inside the given WSL distro and returns true
- * if the path exists and is readable.
- *
- * \param distro    WSL distribution name (e.g. "Ubuntu").
- * \param linuxPath Absolute Linux path inside WSL.
- * \param timeoutMs Maximum time to wait for completion, in milliseconds.
- * \return True if the path is readable inside WSL; false otherwise.
- **********************************************************************************************************************/
-static bool wslPathIsReadable(const QString &distro, const QString &linuxPath, int timeoutMs)
-{
-    const QString cmd = QString("test -r %1 && echo 1 || echo 0").arg(shellQuoteSingle(linuxPath));
-    const QString out = runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
-    return out.trimmed() == QLatin1String("1");
-}
-
-/*!*******************************************************************************************************************
- * \brief Converts a Windows path to a Linux path suitable for WSL, preserving Linux paths.
- *
- * On Windows:
- *  - If \a path starts with '/', it is assumed to be already a Linux path (WSL) and returned as-is.
- *  - Otherwise, \c wslpath -a is used inside the selected WSL distro to convert the Windows path
- *    into an absolute Linux path.
- *
- * \param path      Input path (Windows path or WSL absolute path).
- * \param distro    WSL distribution name.
- * \param timeoutMs Timeout for WSL conversion in milliseconds.
- * \return Linux/WSL absolute path on success; empty string on failure.
- **********************************************************************************************************************/
-static QString toLinuxPathForWsl(const QString &path, const QString &distro, int timeoutMs)
-{
-    const QString p = path.trimmed();
-    if (p.isEmpty())
-        return QString();
-
-    if (p.startsWith('/'))
-        return p;
-
-    const QString cmd =
-        QString("wslpath -a %1").arg(shellQuoteSingle(QDir::toNativeSeparators(p)));
-
-    const QString out =
-        runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
-
-    return out.trimmed();
 }
 
 /*!*******************************************************************************************************************

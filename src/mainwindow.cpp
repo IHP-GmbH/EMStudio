@@ -349,8 +349,8 @@ void MainWindow::refreshSimToolOptions()
         hasPalaceScript = !palaceScriptPath.isEmpty() && pathIsExecutablePortable(palaceScriptPath, distro, 8000);
 #else
         const QString palaceExe = QDir(palacePath).filePath("bin/palace");
-        hasPalaceInstall = pathIsExecutablePortable(palaceExe);
-        hasPalaceScript = pathIsExecutablePortable(palaceScriptPath);
+        hasPalaceInstall = pathIsExecutablePortable(palaceExe, distro, 800);
+        hasPalaceScript = pathIsExecutablePortable(palaceScriptPath, distro, 800);
 #endif
     }
 
@@ -1915,7 +1915,7 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
     QRegularExpression callRe(
         R"(simulation_ports\s*\.\s*add_port\s*\(\s*simulation_setup\s*\.\s*simulation_port\s*\(\s*(.*?)\s*\)\s*\))",
         QRegularExpression::DotMatchesEverythingOption | QRegularExpression::MultilineOption
-    );
+        );
 
     auto it = callRe.globalMatch(script);
     while (it.hasNext()) {
@@ -1928,13 +1928,13 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
             return QRegularExpression(
                 QString(R"(%1\s*=\s*([+-]?\d+))").arg(QRegularExpression::escape(key)),
                 QRegularExpression::MultilineOption
-            );
+                );
         };
         auto rxNum = [](const QString& key){
             return QRegularExpression(
                 QString(R"(%1\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?))").arg(QRegularExpression::escape(key)),
                 QRegularExpression::MultilineOption
-            );
+                );
         };
 
         auto rxStr = [](const QString& key){
@@ -1950,7 +1950,7 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
         { auto m2 = rxNum("port_Z0").match(args);    if (m2.hasMatch()) p.z0         = m2.captured(1).toDouble(); }
 
         { auto m2 = rxInt("source_layernum").match(args);
-          if (m2.hasMatch()) { p.sourceLayer = m2.captured(1); p.sourceIsNumber = true; } }
+            if (m2.hasMatch()) { p.sourceLayer = m2.captured(1); p.sourceIsNumber = true; } }
 
         if (p.sourceLayer.isEmpty()) {
             auto m2 = rxStr("source_layername").match(args);
@@ -1958,10 +1958,10 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
         }
 
         { auto m2 = rxStr("from_layername").match(args);
-          if (m2.hasMatch()) p.fromLayer = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
+            if (m2.hasMatch()) p.fromLayer = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
 
         { auto m2 = rxStr("to_layername").match(args);
-          if (m2.hasMatch()) p.toLayer = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
+            if (m2.hasMatch()) p.toLayer = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
 
         if (p.fromLayer.isEmpty() && p.toLayer.isEmpty()) {
             auto m2 = rxStr("target_layername").match(args);
@@ -1972,7 +1972,7 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
         }
 
         { auto m2 = rxStr("direction").match(args);
-          if (m2.hasMatch()) p.direction = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
+            if (m2.hasMatch()) p.direction = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
 
         if (p.portnumber > 0)
             out.push_back(p);

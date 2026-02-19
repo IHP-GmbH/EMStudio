@@ -340,16 +340,22 @@ void MainWindow::refreshSimToolOptions()
     const bool hasOpenEMS = !openemsPath.isEmpty() && pathIsExecutablePortable(openemsPath, distro, 8000);
 
     bool hasPalaceInstall = false;
-    bool hasPalaceScript = false;
     if (!palacePath.isEmpty()) {
 #ifdef Q_OS_WIN
         const QString palaceRootLinux = toLinuxPathPortable(palacePath, distro, 8000);
         const QString palaceExeLinux  = QDir(palaceRootLinux).filePath("bin/palace");
         hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux, distro, 8000);
-        hasPalaceScript = !palaceScriptPath.isEmpty() && pathIsExecutablePortable(palaceScriptPath, distro, 8000);
 #else
         const QString palaceExe = QDir(palacePath).filePath("bin/palace");
         hasPalaceInstall = pathIsExecutablePortable(palaceExe, distro, 800);
+#endif
+    }
+
+    bool hasPalaceScript = false;
+    if (!palaceScriptPath.isEmpty()) {
+#ifdef Q_OS_WIN
+        hasPalaceScript = pathIsExecutablePortable(palaceScriptPath, distro, 8000);
+#else
         hasPalaceScript = pathIsExecutablePortable(palaceScriptPath, distro, 800);
 #endif
     }

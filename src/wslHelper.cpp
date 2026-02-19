@@ -1,4 +1,5 @@
 #include <QDir>
+#include <QDebug>
 #include <QProcess>
 #include <QFileInfo>
 #include <QStandardPaths>

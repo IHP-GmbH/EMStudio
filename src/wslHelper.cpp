@@ -19,7 +19,7 @@
  * \param s Input string to quote.
  * \return Single-quoted string safe for bash.
  **********************************************************************************************************************/
-static QString shellQuoteSingle(const QString &s)
+QString shellQuoteSingle(const QString &s)
 {
     QString out = s;
     out.replace('\'', "'\\''");
@@ -63,7 +63,7 @@ static QString toLinuxPathForWsl(const QString &path, const QString &distro, int
     if (p.isEmpty())
         return QString();
 
-    if (p.startsWith('/'))
+    if (p.startsWith('~') || p.startsWith('/'))
         return p;
 
     const QString cmd =
@@ -373,7 +373,7 @@ bool MainWindow::pathExistsPortable(const QString &path, const QString &distro, 
         return false;
 
     // WSL absolute path: /home/... or /mnt/c/...
-    if (p.startsWith('/'))
+    if (p.startsWith('/') || p.startsWith('~'))
         return wslPathExists(distro, p, timeoutMs);
 
     return QFileInfo::exists(p);
@@ -406,7 +406,7 @@ bool MainWindow::pathIsExecutablePortable(const QString &path, const QString &di
     if (p.isEmpty())
         return false;
 
-    if (p.startsWith('/'))
+    if (p.startsWith('/') || p.startsWith('~'))
         return wslPathIsExecutable(distro, p, timeoutMs);
 
     return QFileInfo(p).isExecutable();
@@ -484,13 +484,17 @@ QString MainWindow::toLinuxPathPortable(const QString &path, const QString &dist
     if (p.startsWith('/'))
         return p;
 
+    if (p == QLatin1String("~") || p.startsWith("~/")) {
+        const QString tail = (p == QLatin1String("~")) ? QString() : p.mid(2);
+        const QString cmd = QString("printf '%s' \"$HOME%1\"")
+                                .arg(tail.isEmpty() ? QString() : QLatin1String("/") + tail);
+        return runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs).trimmed();
+    }
+
     const QString cmd =
         QString("wslpath -a %1").arg(shellQuoteSingle(QDir::toNativeSeparators(p)));
 
-    const QString out =
-        runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs);
-
-    return out.trimmed();
+    return runWslCmdCapture(distro, QStringList() << "bash" << "-lc" << cmd, timeoutMs).trimmed();
 #else
     Q_UNUSED(distro);
     Q_UNUSED(timeoutMs);

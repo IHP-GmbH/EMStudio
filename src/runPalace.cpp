@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include <QDir>
+#include <QDebug>
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
@@ -168,6 +169,12 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
             return false;
         }
 
+#ifdef Q_OS_WIN
+        ctx.launcherWin = toLinuxPathPortable(ctx.launcherWin, ctx.distro, 8000);
+#endif
+
+        qDebug()<<ctx.launcherWin;
+
         if (!pathIsExecutablePortable(ctx.launcherWin, ctx.distro, 8000)) {
             outError = QStringLiteral("PALACE_RUN_SCRIPT must point to an executable file.");
             return false;
@@ -200,8 +207,10 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     ctx.distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
 
     QString palaceRootLinux = ctx.palaceRoot;
-    if (!palaceRootLinux.startsWith('/'))
+    if (!palaceRootLinux.startsWith('/') &&
+        !palaceRootLinux.startsWith('~')) {
         palaceRootLinux = toWslPath(palaceRootLinux);
+    }
 
     ctx.palaceExeLinux = QDir(palaceRootLinux).filePath("bin/palace");
     ctx.modelDirLinux  = toWslPath(QFileInfo(ctx.modelWin).absolutePath());
@@ -736,20 +745,56 @@ bool MainWindow::startPalaceLauncherStage(PalaceRunContext &ctx)
 
     m_palacePhase = PalacePhase::PalaceSolver;
 
-    QString workDir = ctx.searchDirWin;
-    if (workDir.isEmpty())
-        workDir = QFileInfo(ctx.configPathWin).absolutePath();
+    QString workDirWin = ctx.searchDirWin;
+    if (workDirWin.isEmpty())
+        workDirWin = QFileInfo(ctx.configPathWin).absolutePath();
 
-    m_simProcess->setWorkingDirectory(workDir);
-    m_simProcess->start(QDir::toNativeSeparators(ctx.launcherWin),
-                        QStringList() << QDir::toNativeSeparators(ctx.configPathWin));
+#ifdef Q_OS_WIN
+    const QString launcher = ctx.launcherWin.trimmed();
+    const bool launcherIsWsl = launcher.startsWith('/') || launcher.startsWith('~');
+
+    if (launcherIsWsl) {
+        const QString wslExe = wslExePath();
+        if (wslExe.isEmpty()) {
+            error("WSL is not available (wsl.exe not found).", false);
+            return false;
+        }
+
+        const QString configLinux = toWslPath(ctx.configPathWin);
+        const QString workDirLinux = toWslPath(workDirWin);
+
+        QStringList args;
+        if (!ctx.distro.trimmed().isEmpty())
+            args << "-d" << ctx.distro.trimmed();
+
+        const QString cmd =
+            QString("cd %1 && %2 %3")
+                .arg(shellQuoteSingle(workDirLinux),
+                     shellQuoteSingle(launcher),
+                     shellQuoteSingle(configLinux));
+
+        args << "--" << "bash" << "-lc" << cmd;
+
+        m_simProcess->start(wslExe, args);
+    } else {
+        m_simProcess->setWorkingDirectory(workDirWin);
+        m_simProcess->start(QDir::toNativeSeparators(launcher),
+                            QStringList() << QDir::toNativeSeparators(ctx.configPathWin));
+    }
+#else
+    m_simProcess->setWorkingDirectory(workDirWin);
+    m_simProcess->start(ctx.launcherWin,
+                        QStringList() << ctx.configPathWin);
+#endif
 
     if (!m_simProcess->waitForStarted(3000)) {
         error("Failed to start Palace launcher script.", false);
         return false;
     }
+
     return true;
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Prepares the Palace solver launch command and execution parameters.

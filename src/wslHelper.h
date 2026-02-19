@@ -34,6 +34,8 @@ QString runWslCmdCapture(const QString &distro,
 
 QString decodeWslOutput(const QByteArray &ba);
 
+QString shellQuoteSingle(const QString &s);
+
 QStringList listWslDistrosFromSystem(int timeoutMs = 8000);
 void exportWslDistroToEnv(const QMap<QString, QVariant>& prefs);
 

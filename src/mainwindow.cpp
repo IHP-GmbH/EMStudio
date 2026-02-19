@@ -419,7 +419,7 @@ bool MainWindow::pathLooksValid(const QString &path, const QString &relativeExe)
     if (path.trimmed().isEmpty())
         return false;
 
-    const bool looksLinux = path.startsWith('/') || path.startsWith("\\\\wsl$");
+    const bool looksLinux = path.startsWith('~') || path.startsWith('/') || path.startsWith("\\\\wsl$");
     if (looksLinux) {
         return true;
     }
@@ -460,6 +460,7 @@ bool MainWindow::fileLooksValid(const QString &path) const
  **********************************************************************************************************************/
 QString MainWindow::toWslPath(const QString &winPath) const
 {
+    if (winPath.startsWith('~')) return winPath;
     if (winPath.startsWith('/')) return winPath;
     if (winPath.startsWith("\\\\wsl$")) return winPath;
 

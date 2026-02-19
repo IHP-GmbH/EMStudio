@@ -120,7 +120,7 @@ QPalette FileEdit::getNetlistPalette(QString path)
 
 #ifdef Q_OS_WIN
         const QString distro = QString::fromLocal8Bit(qgetenv("EMSTUDIO_WSL_DISTRO")).trimmed();
-        const bool readable = isReadableLocalThenWsl(path, distro);
+        const bool readable = isReadableLocalThenWsl(path, distro, 8000);
 #else
         const bool readable = QFileInfo(path).isReadable();
 #endif

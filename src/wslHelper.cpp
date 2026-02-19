@@ -6,6 +6,16 @@
 #include "wslHelper.h"
 #include "mainwindow.h"
 
+/*!*******************************************************************************************************************
+ * \brief Finds the absolute path to wsl.exe on Windows.
+ *
+ * Tries common locations in order:
+ *  - C:\Windows\System32\wsl.exe
+ *  - C:\Windows\Sysnative\wsl.exe
+ *  - PATH lookup via QStandardPaths::findExecutable("wsl")
+ *
+ * \return Absolute path to wsl.exe if found; empty string otherwise.
+ **********************************************************************************************************************/
 static QString wslExecutablePathImpl()
 {
     const QString sys32 = QStringLiteral("C:\\Windows\\System32\\wsl.exe");
@@ -17,6 +27,151 @@ static QString wslExecutablePathImpl()
         return sysnative;
 
     return QStandardPaths::findExecutable(QStringLiteral("wsl"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Decodes raw output bytes produced by wsl.exe into a QString.
+ *
+ * In some Windows configurations, wsl.exe writes UTF-16LE text when stdout/stderr
+ * is redirected to a pipe (as with QProcess). This helper detects such output by
+ * the presence of NUL bytes and decodes it as UTF-16 (handling optional BOM).
+ * Otherwise it falls back to QString::fromLocal8Bit().
+ *
+ * \param ba Raw output bytes (stdout or stderr).
+ * \return Decoded text (may be empty if input is empty or cannot be decoded).
+ **********************************************************************************************************************/
+QString decodeWslOutput(const QByteArray &ba)
+{
+    if (ba.isEmpty())
+        return {};
+
+    if (ba.contains('\0')) {
+        int offset = 0;
+
+        if (ba.size() >= 2) {
+            const uchar b0 = static_cast<uchar>(ba[0]);
+            const uchar b1 = static_cast<uchar>(ba[1]);
+            if ((b0 == 0xFF && b1 == 0xFE) || (b0 == 0xFE && b1 == 0xFF))
+                offset = 2;
+        }
+
+        const int bytes = ba.size() - offset;
+        const int u16len = bytes / 2;
+        if (u16len > 0) {
+            return QString::fromUtf16(
+                reinterpret_cast<const ushort*>(ba.constData() + offset),
+                u16len
+                );
+        }
+        return {};
+    }
+
+    return QString::fromLocal8Bit(ba);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Lists installed WSL distributions available on the system (Windows only).
+ *
+ * Runs: \c wsl.exe -l -v, then parses the output and returns distro names.
+ * The parser:
+ *  - skips the header line starting with "NAME"
+ *  - removes a leading '*' marker from the default distro line
+ *  - extracts the distro name from the first column
+ *
+ * If WSL is not available, the command fails, or a timeout occurs, returns an empty list.
+ *
+ * \param timeoutMs Maximum time to wait for process start and completion, in milliseconds.
+ * \return List of distro names; empty on failure or non-Windows platforms.
+ **********************************************************************************************************************/
+QStringList listWslDistrosFromSystem(int timeoutMs)
+{
+#ifdef Q_OS_WIN
+    const QString wslExe = wslExePath();
+    if (wslExe.isEmpty())
+        return {};
+
+    QProcess p;
+    p.setProcessChannelMode(QProcess::SeparateChannels);
+
+    p.start(wslExe, QStringList() << "-l" << "-v");
+
+    if (!p.waitForStarted(timeoutMs))
+        return {};
+
+    if (!p.waitForFinished(timeoutMs)) {
+        p.kill();
+        p.waitForFinished(200);
+        return {};
+    }
+
+    const QByteArray outBa = p.readAllStandardOutput();
+    const QByteArray errBa = p.readAllStandardError();
+
+    const QString out  = decodeWslOutput(outBa);
+    const QString err  = decodeWslOutput(errBa);
+
+    const QString text = (out + "\n" + err);
+
+    QStringList result;
+
+    const QStringList lines = text.split(QRegExp("[\r\n]+"), Qt::SkipEmptyParts);
+    for (QString line : lines) {
+        line = line.trimmed();
+        if (line.isEmpty())
+            continue;
+
+        if (line.startsWith("NAME", Qt::CaseInsensitive))
+            continue;
+
+        if (line.startsWith('*')) {
+            line.remove(0, 1);
+            line = line.trimmed();
+        }
+
+        int sep = line.indexOf(QRegExp("\\s{2,}"));
+        QString name = (sep > 0) ? line.left(sep).trimmed()
+                                 : line.section(' ', 0, 0).trimmed();
+
+        if (!name.isEmpty() && !result.contains(name))
+            result << name;
+    }
+
+    return result;
+#else
+    Q_UNUSED(timeoutMs);
+    return {};
+#endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Exports the selected WSL distribution to a process environment variable.
+ *
+ * Reads the WSL distribution name from the preferences map and stores it in the
+ * process-local environment variable \c EMSTUDIO_WSL_DISTRO. This allows parts of
+ * the application that do not have direct access to the preferences map to determine
+ * the selected WSL distribution via \c qgetenv().
+ *
+ * On Windows:
+ *  - If the stored distribution name is empty, the environment variable is cleared.
+ *  - Otherwise, the distribution name is exported as-is.
+ *
+ * On non-Windows platforms, this function has no effect.
+ *
+ * \param prefs Preferences map containing the \c WSL_DISTRO entry.
+ **********************************************************************************************************************/
+void exportWslDistroToEnv(const QMap<QString, QVariant>& prefs)
+{
+#ifdef Q_OS_WIN
+    const QString distro = prefs.value("WSL_DISTRO").toString().trimmed();
+
+    if (distro.isEmpty()) {
+        qputenv("EMSTUDIO_WSL_DISTRO", QByteArray());
+    } else {
+        qputenv("EMSTUDIO_WSL_DISTRO", distro.toLocal8Bit());
+    }
+#else
+    Q_UNUSED(prefs);
+#endif
 }
 
 /*!*******************************************************************************************************************

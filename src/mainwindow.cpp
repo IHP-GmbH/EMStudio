@@ -47,12 +47,14 @@
 #include "QtPropertyBrowser/qttreepropertybrowser.h"
 
 #include "about.h"
+#include "wslHelper.h"
 #include "mainwindow.h"
 #include "preferences.h"
 #include "ui_mainwindow.h"
 #include "substrateview.h"
 #include "pythonparser.h"
 #include "keywordseditor.h"
+
 
 /*!*******************************************************************************************************************
  * \brief Checks whether a string represents an integer value.
@@ -333,37 +335,24 @@ void MainWindow::refreshSimToolOptions()
     const QString palacePath       = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
     const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
 
+    const QString distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
 
-#ifdef Q_OS_WIN
-    const QString distro =
-        m_simSettings.contains("WSL_DISTRO")
-            ? m_simSettings.value("WSL_DISTRO").toString().trimmed()
-            : QString();
-
-    const int wslTimeoutMs = 8000;
-#endif
-
-    const bool hasOpenEMS = !openemsPath.isEmpty() && pathIsExecutablePortable(openemsPath);
+    const bool hasOpenEMS = !openemsPath.isEmpty() && pathIsExecutablePortable(openemsPath, distro, 8000);
 
     bool hasPalaceInstall = false;
+    bool hasPalaceScript = false;
     if (!palacePath.isEmpty()) {
 #ifdef Q_OS_WIN
-        const QString palaceRootLinux = toLinuxPathPortable(palacePath, distro);
+        const QString palaceRootLinux = toLinuxPathPortable(palacePath, distro, 8000);
         const QString palaceExeLinux  = QDir(palaceRootLinux).filePath("bin/palace");
-        hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux, distro, wslTimeoutMs);
+        hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux);
+        hasPalaceScript = !palaceScriptPath.isEmpty() && pathIsExecutablePortable(palaceScriptPath);
 #else
         const QString palaceExe = QDir(palacePath).filePath("bin/palace");
         hasPalaceInstall = pathIsExecutablePortable(palaceExe);
+        hasPalaceScript = pathIsExecutablePortable(palaceScriptPath);
 #endif
     }
-
-    // Launcher/script is always executed on the host OS, NOT inside WSL
-    const bool hasPalaceScript =
-        !palaceScriptPath.isEmpty() &&
-#ifdef Q_OS_WIN
-        !palaceScriptPath.startsWith('/') &&
-#endif
-        pathIsExecutablePortable(palaceScriptPath);
 
     const bool hasPalace = hasPalaceInstall || hasPalaceScript;
 
@@ -737,6 +726,29 @@ void MainWindow::loadSettings()
     for (const QString& key : settings.childKeys())
         m_preferences[key] = settings.value(key);
     settings.endGroup();
+
+#ifdef Q_OS_WIN
+    // -------------------------------------------------------------------------------------------------------------
+    // WSL distro bootstrap: if not configured yet, pick the first available distro from the system.
+    // -------------------------------------------------------------------------------------------------------------
+    const QString savedDistro = m_preferences.value(QStringLiteral("WSL_DISTRO")).toString().trimmed();
+    if (savedDistro.isEmpty()) {
+        const QStringList distros = listWslDistrosFromSystem(8000);
+        if (!distros.isEmpty()) {
+            m_preferences[QStringLiteral("WSL_DISTRO")] = distros.first();
+
+            // Optional: persist immediately so next start doesn't need probing
+            settings.beginGroup("Preferences");
+            settings.setValue(QStringLiteral("WSL_DISTRO"), distros.first());
+            settings.endGroup();
+        }
+    }
+
+    // Export (even if empty -> clears env var)
+    exportWslDistroToEnv(m_preferences);
+#else
+    exportWslDistroToEnv(m_preferences);
+#endif
 }
 
 /*!*******************************************************************************************************************

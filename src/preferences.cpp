@@ -18,11 +18,13 @@
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
-
 #include <QDir>
 #include <QMap>
+#include <QDebug>
 #include <QString>
+#include <QProcess>
 #include <QVariant>
+#include <QFileInfo>
 #include <QVBoxLayout>
 
 #include "extension/variantmanager.h"
@@ -31,6 +33,7 @@
 #include "QtPropertyBrowser/qtvariantproperty.h"
 #include "QtPropertyBrowser/qttreepropertybrowser.h"
 
+#include "wslHelper.h"
 #include "preferences.h"
 #include "ui_preferences.h"
 
@@ -173,6 +176,48 @@ void Preferences::setupPreferencesPanel()
     pythonWslPathProp->setValue(m_preferences.value(QStringLiteral("PALACE_PYTHON"), QString()));
     palaceGroup->addSubProperty(pythonWslPathProp);
 
+#ifdef Q_OS_WIN
+    QtVariantProperty *wslDistroProp =
+        m_variantManager->addProperty(QtVariantPropertyManager::enumTypeId(),
+                                      QLatin1String("WSL_DISTRO"));
+
+    wslDistroProp->setToolTip(tr("WSL distribution used for Palace checks and commands.\n\n"
+                                 "EMStudio will pass \"wsl.exe -d <distro>\".\n"
+                                 "If empty, the default WSL distro will be used."));
+
+    QStringList distros = listWslDistrosFromSystem(); // uses: wsl.exe -l -v (parsed)
+    distros.removeDuplicates();
+
+    QString savedDistro = m_preferences.value(QStringLiteral("WSL_DISTRO")).toString().trimmed();
+
+    bool okNum = false;
+    const int savedIdx = savedDistro.toInt(&okNum);
+    if (okNum && savedIdx >= 0 && savedIdx < distros.size()) {
+        savedDistro = distros.at(savedIdx).trimmed();
+    }
+
+    if (distros.isEmpty()) {
+        distros << QStringLiteral("No WSL distros found");
+        wslDistroProp->setEnabled(false);
+    }
+
+    if (!savedDistro.isEmpty() && !distros.contains(savedDistro)) {
+        distros << savedDistro;
+    }
+
+    wslDistroProp->setAttribute(QStringLiteral("enumNames"), distros);
+
+    int idx = 0;
+    if (!savedDistro.isEmpty()) {
+        const int found = distros.indexOf(savedDistro);
+        if (found >= 0)
+            idx = found;
+    }
+
+    wslDistroProp->setValue(idx);
+    palaceGroup->addSubProperty(wslDistroProp);
+#endif
+
     m_palaceRunModeProp =
         m_variantManager->addProperty(QtVariantPropertyManager::enumTypeId(), QLatin1String("PALACE_RUN_MODE"));
     m_palaceRunModeProp->setToolTip(tr("Select how Palace should be launched:\n"
@@ -232,6 +277,23 @@ void Preferences::onVariantValueChanged(QtProperty *property, const QVariant &va
 
     const QString name = property->propertyName();
 
+#ifdef Q_OS_WIN
+    if (name == QLatin1String("WSL_DISTRO")) {
+        const int idx = value.toInt();
+        const QStringList distros =
+            m_variantManager->attributeValue(property, QStringLiteral("enumNames")).toStringList();
+
+        const QString selected = distros.value(idx).trimmed();
+
+        if (selected.isEmpty() || selected == QLatin1String("No WSL distros found")) {
+            m_preferences[QStringLiteral("WSL_DISTRO")] = QString();
+        } else {
+            m_preferences[QStringLiteral("WSL_DISTRO")] = selected;
+        }
+        return;
+    }
+#endif
+
     m_preferences.insert(name, value);
 
     if (name == QLatin1String("PALACE_RUN_MODE")) {
@@ -246,6 +308,7 @@ void Preferences::onVariantValueChanged(QtProperty *property, const QVariant &va
     }
 }
 
+
 /*!*******************************************************************************************************************
  * \brief Applies changes made in the preferences UI to the internal preferences map and closes the dialog.
  **********************************************************************************************************************/
@@ -253,9 +316,27 @@ void Preferences::on_btnApply_clicked()
 {
     for (QtProperty* topLevelProp : m_propertyBrowser->properties()) {
         for (QtProperty* prop : topLevelProp->subProperties()) {
-            QString name = prop->propertyName();
-            QVariant value = m_variantManager->value(prop);
-            if (m_preferences[name] != value) {
+            const QString name = prop->propertyName();
+
+#ifdef Q_OS_WIN
+            if (name == QLatin1String("WSL_DISTRO")) {
+                const int idx = m_variantManager->value(prop).toInt();
+                const QStringList distros =
+                    m_variantManager->attributeValue(prop, QStringLiteral("enumNames")).toStringList();
+
+                const QString selected = distros.value(idx).trimmed();
+
+                if (selected.isEmpty() || selected == QLatin1String("No WSL distros found")) {
+                    m_preferences[name] = QString();
+                } else {
+                    m_preferences[name] = selected;
+                }
+                continue;
+            }
+#endif
+
+            const QVariant value = m_variantManager->value(prop);
+            if (m_preferences.value(name) != value) {
                 m_preferences[name] = value;
             }
         }
@@ -263,5 +344,3 @@ void Preferences::on_btnApply_clicked()
 
     close();
 }
-
-

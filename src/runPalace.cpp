@@ -197,9 +197,7 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     if (!ensureWslAvailable(outError))
         return false;
 
-    ctx.distro = m_simSettings.contains("WSL_DISTRO")
-                     ? m_simSettings.value("WSL_DISTRO").toString().trimmed()
-                     : QString();
+    ctx.distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
 
     QString palaceRootLinux = ctx.palaceRoot;
     if (!palaceRootLinux.startsWith('/'))
@@ -526,7 +524,7 @@ MainWindow::CoreCountResult MainWindow::detectMpiCoreCount() const
     CoreCountResult r;
 
 #ifdef Q_OS_WIN
-    const QString distro = m_simSettings.value("WSL_DISTRO", QString()).toString().trimmed();
+    const QString distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
 
     const QString lscpuOut = runWslCmdCapture(
         distro, QStringList() << "lscpu" << "-p=CORE,SOCKET", 2000);

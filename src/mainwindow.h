@@ -102,11 +102,7 @@ class MainWindow : public QMainWindow
         QString runDirGuessWin;
 
         QString palaceRoot;
-
-#ifdef Q_OS_WIN
         QString distro;
-#endif
-
         QString pythonCmd;
 
         QString palaceExeLinux;
@@ -337,9 +333,9 @@ private:
 
     QString                         findPalaceConfigJson(const QString &runDir) const;
 
-    bool                            pathExistsPortable(const QString &path, const QString &distro = QString(), int timeoutMs = 2000) const;
-    bool                            pathIsExecutablePortable(const QString &path, const QString &distro = QString(), int timeoutMs = 2000) const;
-    QString                         toLinuxPathPortable(const QString &path, const QString &distro = QString(), int timeoutMs = 2000) const;
+    bool                            pathExistsPortable(const QString &path, const QString &distro, int timeoutMs) const;
+    bool                            pathIsExecutablePortable(const QString &path, const QString &distro, int timeoutMs) const;
+    QString                         toLinuxPathPortable(const QString &path, const QString &distro, int timeoutMs) const;
 
 #ifdef Q_OS_WIN
     bool                            ensureWslAvailable(QString &outError) const;

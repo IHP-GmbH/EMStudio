@@ -168,7 +168,7 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
             return false;
         }
 
-        if (!pathIsExecutablePortable(ctx.launcherWin)) {
+        if (!pathIsExecutablePortable(ctx.launcherWin, ctx.distro, 8000)) {
             outError = QStringLiteral("PALACE_RUN_SCRIPT must point to an executable file.");
             return false;
         }

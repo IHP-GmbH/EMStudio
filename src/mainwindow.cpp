@@ -345,8 +345,8 @@ void MainWindow::refreshSimToolOptions()
 #ifdef Q_OS_WIN
         const QString palaceRootLinux = toLinuxPathPortable(palacePath, distro, 8000);
         const QString palaceExeLinux  = QDir(palaceRootLinux).filePath("bin/palace");
-        hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux);
-        hasPalaceScript = !palaceScriptPath.isEmpty() && pathIsExecutablePortable(palaceScriptPath);
+        hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux, distro, 8000);
+        hasPalaceScript = !palaceScriptPath.isEmpty() && pathIsExecutablePortable(palaceScriptPath, distro, 8000);
 #else
         const QString palaceExe = QDir(palacePath).filePath("bin/palace");
         hasPalaceInstall = pathIsExecutablePortable(palaceExe);

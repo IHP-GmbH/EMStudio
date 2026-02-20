@@ -46,12 +46,15 @@
 #include "QtPropertyBrowser/qtvariantproperty.h"
 #include "QtPropertyBrowser/qttreepropertybrowser.h"
 
+#include "about.h"
+#include "wslHelper.h"
 #include "mainwindow.h"
 #include "preferences.h"
 #include "ui_mainwindow.h"
 #include "substrateview.h"
 #include "pythonparser.h"
 #include "keywordseditor.h"
+
 
 /*!*******************************************************************************************************************
  * \brief Checks whether a string represents an integer value.
@@ -211,6 +214,9 @@ MainWindow::MainWindow(QWidget *parent)
                 m_sysSettings["PYTHON_EDITOR_FONT_SIZE"] = newSize;
             });
 
+    connect(m_ui->cbxTopCell, &QComboBox::currentTextChanged,
+            this, &MainWindow::onTopCellChanged);
+
     if (m_sysSettings.contains("PYTHON_EDITOR_FONT_SIZE")) {
         qreal size = m_sysSettings["PYTHON_EDITOR_FONT_SIZE"].toDouble();
         if (size > 4.0 && size < 80.0)
@@ -218,8 +224,6 @@ MainWindow::MainWindow(QWidget *parent)
     }
 
     updateSubLayerNamesCheckboxState();
-
-    refreshSimToolOptions();
 
     QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_ui->editSimulationLog->setFont(mono);
@@ -233,6 +237,8 @@ MainWindow::MainWindow(QWidget *parent)
 
     refreshKeywordTipsForCurrentTool();
 
+    refreshSimToolOptions();
+
     setStateSaved();
 }
 
@@ -242,6 +248,48 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete m_ui;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Slot: reacts to changes of the selected top cell (cbxTopCell).
+ *
+ * Updates the simulation state key "TopCell" (and the canonical "gds_cellname") and, if the Python editor
+ * is not modified by the user, synchronizes the generated script by updating the
+ * \c gds_cellname assignment via applyGdsAndXmlPaths().
+ *
+ * The function is intentionally conservative:
+ * - If the editor contains unsaved user edits (document()->isModified()), it does not overwrite the text.
+ * - It preserves cursor and scroll position when updating the editor content.
+ *
+ * \param text Newly selected top cell name.
+ **********************************************************************************************************************/
+void MainWindow::onTopCellChanged(const QString &text)
+{
+    const QString top = text.trimmed();
+    if (top.isEmpty())
+        return;
+
+    m_simSettings["TopCell"] = top;
+    m_simSettings["gds_cellname"] = top;
+
+    if (m_ui->editRunPythonScript->document()->isModified()) {
+        setStateChanged();
+        return;
+    }
+
+    QString script = m_ui->editRunPythonScript->toPlainText();
+    if (script.trimmed().isEmpty()) {
+        setStateChanged();
+        return;
+    }
+
+    const QString simKeyLower = currentSimToolKey().toLower();
+
+    applyGdsAndXmlPaths(script, simKeyLower);
+
+    setEditorScriptPreservingState(script);
+
+    setStateChanged();
 }
 
 /*!*******************************************************************************************************************
@@ -283,14 +331,34 @@ void MainWindow::refreshSimToolOptions()
 {
     QSignalBlocker blocker(m_ui->cbxSimTool);
 
-    const QString openemsPath     = m_preferences.value("Python Path").toString();
-    const QString palacePath      = m_preferences.value("PALACE_INSTALL_PATH").toString();
-    const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString();
+    const QString openemsPath      = m_preferences.value("Python Path").toString().trimmed();
+    const QString palacePath       = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
+    const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
 
-    const bool hasOpenEMS = QFileInfo(openemsPath).isExecutable();
+    const QString distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
 
-    const bool hasPalaceInstall = pathLooksValid(palacePath, "bin/palace");
-    const bool hasPalaceScript  = fileLooksValid(palaceScriptPath);
+    const bool hasOpenEMS = !openemsPath.isEmpty() && pathIsExecutablePortable(openemsPath, distro, 8000);
+
+    bool hasPalaceInstall = false;
+    if (!palacePath.isEmpty()) {
+#ifdef Q_OS_WIN
+        const QString palaceRootLinux = toLinuxPathPortable(palacePath, distro, 8000);
+        const QString palaceExeLinux  = QDir(palaceRootLinux).filePath("bin/palace");
+        hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux, distro, 8000);
+#else
+        const QString palaceExe = QDir(palacePath).filePath("bin/palace");
+        hasPalaceInstall = pathIsExecutablePortable(palaceExe, distro, 800);
+#endif
+    }
+
+    bool hasPalaceScript = false;
+    if (!palaceScriptPath.isEmpty()) {
+#ifdef Q_OS_WIN
+        hasPalaceScript = pathIsExecutablePortable(palaceScriptPath, distro, 8000);
+#else
+        hasPalaceScript = pathIsExecutablePortable(palaceScriptPath, distro, 800);
+#endif
+    }
 
     const bool hasPalace = hasPalaceInstall || hasPalaceScript;
 
@@ -309,7 +377,7 @@ void MainWindow::refreshSimToolOptions()
     if (items == 0) {
         m_ui->cbxSimTool->addItem("No simulation tool configured");
         m_ui->cbxSimTool->setEnabled(false);
-        info("No valid simulation tools found. Set OpenEMS Paython path and/or PALACE_INSTALL_PATH / PALACE_SCRIPT_PATH in Preferences.");
+        info("No valid simulation tools found. Set OpenEMS Python path and/or PALACE_INSTALL_PATH / PALACE_RUN_SCRIPT in Preferences.");
     } else {
         m_ui->cbxSimTool->setEnabled(true);
         m_ui->cbxSimTool->setCurrentIndex(0);
@@ -351,7 +419,7 @@ bool MainWindow::pathLooksValid(const QString &path, const QString &relativeExe)
     if (path.trimmed().isEmpty())
         return false;
 
-    const bool looksLinux = path.startsWith('/') || path.startsWith("\\\\wsl$");
+    const bool looksLinux = path.startsWith('~') || path.startsWith('/') || path.startsWith("\\\\wsl$");
     if (looksLinux) {
         return true;
     }
@@ -392,6 +460,7 @@ bool MainWindow::fileLooksValid(const QString &path) const
  **********************************************************************************************************************/
 QString MainWindow::toWslPath(const QString &winPath) const
 {
+    if (winPath.startsWith('~')) return winPath;
     if (winPath.startsWith('/')) return winPath;
     if (winPath.startsWith("\\\\wsl$")) return winPath;
 
@@ -627,22 +696,66 @@ void MainWindow::saveSettings()
 void MainWindow::loadSettings()
 {
     QSettings settings("EMStudio", "EMStudioApp");
-    restoreGeometry(settings.value("MainWindow/geometry").toByteArray());
-    restoreState(settings.value("MainWindow/state").toByteArray());
+
+    const QByteArray geom  = settings.value("MainWindow/geometry").toByteArray();
+    const QByteArray state = settings.value("MainWindow/state").toByteArray();
+
+    if (!geom.isEmpty())
+        restoreGeometry(geom);
+
+    bool okState = true;
+    if (!state.isEmpty())
+        okState = restoreState(state);
+
+    if (!okState) {
+        settings.remove("MainWindow/state");
+
+        if (m_ui && m_ui->dockRunControl)
+            m_ui->dockRunControl->show();
+
+        if (m_ui && m_ui->dockLog)
+            m_ui->dockLog->show();
+    }
+
+    if (m_ui && m_ui->dockRunControl && m_ui->dockLog) {
+        if (!m_ui->dockRunControl->isVisible() && !m_ui->dockLog->isVisible()) {
+            m_ui->dockRunControl->show();
+            m_ui->dockLog->show();
+        }
+    }
 
     settings.beginGroup("SystemSettings");
-    QStringList keys = settings.childKeys();
-    for (const QString &key : keys) {
+    for (const QString &key : settings.childKeys())
         m_sysSettings[key] = settings.value(key);
-    }
     settings.endGroup();
 
     settings.beginGroup("Preferences");
-    const QStringList prefKeys = settings.childKeys();
-    for (const QString& key : prefKeys) {
+    for (const QString& key : settings.childKeys())
         m_preferences[key] = settings.value(key);
-    }
     settings.endGroup();
+
+#ifdef Q_OS_WIN
+    // -------------------------------------------------------------------------------------------------------------
+    // WSL distro bootstrap: if not configured yet, pick the first available distro from the system.
+    // -------------------------------------------------------------------------------------------------------------
+    const QString savedDistro = m_preferences.value(QStringLiteral("WSL_DISTRO")).toString().trimmed();
+    if (savedDistro.isEmpty()) {
+        const QStringList distros = listWslDistrosFromSystem(8000);
+        if (!distros.isEmpty()) {
+            m_preferences[QStringLiteral("WSL_DISTRO")] = distros.first();
+
+            // Optional: persist immediately so next start doesn't need probing
+            settings.beginGroup("Preferences");
+            settings.setValue(QStringLiteral("WSL_DISTRO"), distros.first());
+            settings.endGroup();
+        }
+    }
+
+    // Export (even if empty -> clears env var)
+    exportWslDistroToEnv(m_preferences);
+#else
+    exportWslDistroToEnv(m_preferences);
+#endif
 }
 
 /*!*******************************************************************************************************************
@@ -1083,21 +1196,40 @@ void MainWindow::updateGdsUserInfo()
     }
 
     m_sysSettings["GdsDir"] = QFileInfo(filePath).absolutePath();
-
     m_ui->btnAddPort->setEnabled(true);
 
     m_cells.clear();
     m_layers.clear();
 
-    m_cells = extractGdsCellNames(filePath);
+    m_cells  = extractGdsCellNames(filePath);
     m_layers = extractGdsLayerNumbers(filePath);
+
+    QString desired = m_simSettings.value("TopCell").toString().trimmed();
+    if (desired.isEmpty())
+        desired = m_simSettings.value("gds_cellname").toString().trimmed();
+    if (desired.isEmpty())
+        desired = m_ui->cbxTopCell->currentText().trimmed();
+
+    QSignalBlocker blocker(m_ui->cbxTopCell);
 
     m_ui->cbxTopCell->clear();
     m_ui->cbxTopCell->addItems(m_cells);
     m_ui->cbxTopCell->setSizeAdjustPolicy(QComboBox::AdjustToContents);
 
-    m_simSettings["GdsFile"] = m_ui->txtGdsFile->text();
-    m_simSettings["TopCell"] = m_ui->cbxTopCell->currentText();
+    int idx = -1;
+    if (!desired.isEmpty())
+        idx = m_ui->cbxTopCell->findText(desired);
+
+    if (idx >= 0)
+        m_ui->cbxTopCell->setCurrentIndex(idx);
+    else if (!m_cells.isEmpty())
+        m_ui->cbxTopCell->setCurrentIndex(0);
+
+    const QString top = m_ui->cbxTopCell->currentText().trimmed();
+
+    m_simSettings["GdsFile"]      = m_ui->txtGdsFile->text();
+    m_simSettings["TopCell"]      = top;
+    m_simSettings["gds_cellname"] = top;
 
     updateSubLayerNamesCheckboxState();
 }
@@ -1790,7 +1922,7 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
     QRegularExpression callRe(
         R"(simulation_ports\s*\.\s*add_port\s*\(\s*simulation_setup\s*\.\s*simulation_port\s*\(\s*(.*?)\s*\)\s*\))",
         QRegularExpression::DotMatchesEverythingOption | QRegularExpression::MultilineOption
-    );
+        );
 
     auto it = callRe.globalMatch(script);
     while (it.hasNext()) {
@@ -1803,13 +1935,13 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
             return QRegularExpression(
                 QString(R"(%1\s*=\s*([+-]?\d+))").arg(QRegularExpression::escape(key)),
                 QRegularExpression::MultilineOption
-            );
+                );
         };
         auto rxNum = [](const QString& key){
             return QRegularExpression(
                 QString(R"(%1\s*=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?))").arg(QRegularExpression::escape(key)),
                 QRegularExpression::MultilineOption
-            );
+                );
         };
 
         auto rxStr = [](const QString& key){
@@ -1825,7 +1957,7 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
         { auto m2 = rxNum("port_Z0").match(args);    if (m2.hasMatch()) p.z0         = m2.captured(1).toDouble(); }
 
         { auto m2 = rxInt("source_layernum").match(args);
-          if (m2.hasMatch()) { p.sourceLayer = m2.captured(1); p.sourceIsNumber = true; } }
+            if (m2.hasMatch()) { p.sourceLayer = m2.captured(1); p.sourceIsNumber = true; } }
 
         if (p.sourceLayer.isEmpty()) {
             auto m2 = rxStr("source_layername").match(args);
@@ -1833,10 +1965,10 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
         }
 
         { auto m2 = rxStr("from_layername").match(args);
-          if (m2.hasMatch()) p.fromLayer = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
+            if (m2.hasMatch()) p.fromLayer = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
 
         { auto m2 = rxStr("to_layername").match(args);
-          if (m2.hasMatch()) p.toLayer = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
+            if (m2.hasMatch()) p.toLayer = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
 
         if (p.fromLayer.isEmpty() && p.toLayer.isEmpty()) {
             auto m2 = rxStr("target_layername").match(args);
@@ -1847,7 +1979,7 @@ QVector<MainWindow::PortInfo> MainWindow::parsePortsFromScript(const QString& sc
         }
 
         { auto m2 = rxStr("direction").match(args);
-          if (m2.hasMatch()) p.direction = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
+            if (m2.hasMatch()) p.direction = m2.captured(1).isEmpty() ? m2.captured(2) : m2.captured(1); }
 
         if (p.portnumber > 0)
             out.push_back(p);
@@ -2874,4 +3006,22 @@ void MainWindow::tryAutoLoadRecentPythonForTopCell()
     loadPythonScriptToEditor(bestMatch);
 
     applyPythonScriptFromEditor();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Opens the "About EMStudio" dialog.
+ *
+ * Triggered from the Help → About EMStudio... menu action.
+ * Displays application information such as:
+ *  - application name and version,
+ *  - copyright notice,
+ *  - license information,
+ *  - build and Qt version details.
+ *
+ * The dialog is shown modally and does not modify any application state.
+ **********************************************************************************************************************/
+void MainWindow::on_actionAbout_EMStudio_triggered()
+{
+    AboutDialog dlg(this);
+    dlg.exec();
 }

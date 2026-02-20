@@ -13,6 +13,7 @@ include(emstudio_sources.pri)
 SOURCES += src/main.cpp
 
 FORMS += \
+    src/about.ui \
     src/mainwindow.ui \
     src/preferences.ui
 
@@ -41,7 +42,7 @@ win32 {
     TARGET_EXE           = $${TARGET}.exe
     COPY_CMD             = $$system_path($$clean_path($$PWD/tools/copy_assets.cmd))
 
-    QMAKE_POST_LINK += cmd /c call \"$$COPY_CMD\" \"$$OUT_DIR_WIN\" \"$$TARGET_EXE\" \"$$SCRIPTS_SRC_DIR_WIN\" \"$$KEYWORDS_SRC_DIR_WIN\"
+    QMAKE_POST_LINK += $$quote(cmd /c ""$$COPY_CMD" "$$OUT_DIR_WIN" "$$TARGET_EXE" "$$SCRIPTS_SRC_DIR_WIN" "$$KEYWORDS_SRC_DIR_WIN"")
 }
 
 unix {
@@ -71,3 +72,38 @@ unix {
         fi; \
     fi) $$escape_expand(\\n\\t)
 }
+
+# -----------------------------------------------------------------------------
+# Versioning: MAJOR.MINOR
+# - MAJOR is set manually
+# - MINOR = number of commits since tag v<MAJOR>.0
+# - If tag does not exist, fallback to total commit count
+# -----------------------------------------------------------------------------
+
+EMSTUDIO_MAJOR = 1
+EMSTUDIO_TAG   = v$${EMSTUDIO_MAJOR}.0
+
+win32 {
+    # Ensure git is available
+    GIT_EXISTS = $$system(git --version >NUL 2>NUL && echo yes)
+
+    equals(GIT_EXISTS, yes) {
+
+        # Check if tag v<MAJOR>.0 exists
+        HAS_TAG = $$system(git rev-parse -q --verify refs/tags/$${EMSTUDIO_TAG} >NUL 2>NUL && echo yes)
+
+        equals(HAS_TAG, yes) {
+            EMSTUDIO_MINOR = $$system(git rev-list --count $${EMSTUDIO_TAG}..HEAD)
+        } else {
+            EMSTUDIO_MINOR = $$system(git rev-list --count HEAD)
+        }
+
+    } else {
+        EMSTUDIO_MINOR = 0
+    }
+
+    EMSTUDIO_VERSION = $${EMSTUDIO_MAJOR}.$${EMSTUDIO_MINOR}
+}
+
+DEFINES += EMSTUDIO_VERSION_STR=\\\"$$EMSTUDIO_VERSION\\\"
+DEFINES += EMSTUDIO_MAJOR=$$EMSTUDIO_MAJOR

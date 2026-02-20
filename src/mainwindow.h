@@ -102,11 +102,7 @@ class MainWindow : public QMainWindow
         QString runDirGuessWin;
 
         QString palaceRoot;
-
-#ifdef Q_OS_WIN
         QString distro;
-#endif
-
         QString pythonCmd;
 
         QString palaceExeLinux;
@@ -154,6 +150,7 @@ private slots:
     void                            on_lstRunControl_itemClicked(QListWidgetItem *item);
     void                            onSimulationSettingChanged(QtProperty *property, const QVariant &value);
 
+    void                            onTopCellChanged(const QString &text);
     void                            on_actionExit_triggered();
     void                            on_actionSave_triggered();
     void                            on_actionSave_As_triggered();
@@ -185,6 +182,7 @@ private slots:
     void                            on_actionOpen_Python_Model_triggered();
     void                            onOpenRecentPythonModel();
     void                            on_actionKeywords_triggered();
+    void                            on_actionAbout_EMStudio_triggered();
 
 private:
     void                            saveSettings();
@@ -334,6 +332,10 @@ private:
     QString                         chooseSearchDir(const QString &detectedRunDir, const QString &defaultRunDir) const;
 
     QString                         findPalaceConfigJson(const QString &runDir) const;
+
+    bool                            pathExistsPortable(const QString &path, const QString &distro, int timeoutMs) const;
+    bool                            pathIsExecutablePortable(const QString &path, const QString &distro, int timeoutMs) const;
+    QString                         toLinuxPathPortable(const QString &path, const QString &distro, int timeoutMs) const;
 
 #ifdef Q_OS_WIN
     bool                            ensureWslAvailable(QString &outError) const;

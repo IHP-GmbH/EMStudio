@@ -114,6 +114,15 @@ static bool writeUtf8Atomic(const QString& path, const QString& text, QString* o
     return true;
 }
 
+static QString ensureTestPalaceLauncher()
+{
+#ifdef Q_OS_WIN
+    return QFINDTESTDATA("tools/palace_launcher_stub.cmd");
+#else
+    return QFINDTESTDATA("tools/palace_launcher_stub.sh");
+#endif
+}
+
 void PalaceGolden::defaultPalace_changeSettings_ports_and_compare()
 {
     MainWindow w;
@@ -131,7 +140,23 @@ void PalaceGolden::defaultPalace_changeSettings_ports_and_compare()
     w.setTopCell("t1");
     w.setSubstrateFile(xmlPath);
 
-    w.testSetPreference("PALACE_INSTALL_PATH", "/tmp");
+    const QString launcherPath = ensureTestPalaceLauncher();
+    QVERIFY2(!launcherPath.isEmpty(), "Test Palace launcher stub not found via QFINDTESTDATA");
+
+#ifndef Q_OS_WIN
+    // Ensure executable bit on Linux
+    QFile::setPermissions(launcherPath,
+                          QFile::permissions(launcherPath) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.testSetPreference("PALACE_RUN_MODE", 1);
+    w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
+
+    w.testSetPreference("PALACE_INSTALL_PATH", QString());
+
     w.refreshSimToolOptionsForTests();
 
     QString terr;

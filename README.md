@@ -20,7 +20,7 @@
 It provides an integrated workflow for:
 
 - Loading GDS layout data  
-- Defining and editing substrate stacks (dielectrics, metals, layers)  
+- Choosing substrate stacks (dielectrics, metals, layers)  
 - Visualizing a 2.5D cross-section  
 - Configuring simulation parameters  
 - Generating configuration files for EM solvers (OpenEMS, Palace)  
@@ -118,11 +118,6 @@ EMStudio.exe [options] [run_file.json]
 - **`-topcell <name>`**  
   Top-level GDS cell
 
-- **`run_file.json` (optional)**  
-  If provided, its settings override other commandline arguments.  
-  If omitted, EMStudio automatically loads `<topcell>.json`  
-  from the same folder as the GDS file (if it exists).
-
 ### Example
 
 ```bash
@@ -210,37 +205,39 @@ When you start EMStudio, you first need to configure some path settings using **
 
 <img src="./doc/png/preferences1.png" alt="preferences" width="700">
 
+- **MODEL_TEMPLATES_DIR**
+  EMStudio provides templates for openEMS and Palace workflows, so that you can start from scratch with no existing Python model code. The path configured here points to the template directory where `openems_model.py` and `palace_model.py`are located.
 
-- **Python Path**  
+- **OpenEMS Python Path**  
   Path to the Python interpreter used for the **openEMS** workflow. 
   If you installed openEMS and the IHP workflow files into 
   a venv named "openEMS" located in your home directory "home/venv/openEMS", the python interpreter would be "home/venv/openEMS/bin/python"
 
-- **OPENEMS_INSTALL_PATH**  
-  This is where you installed openEMS. If you built openEMS according to the defaults, this is "~/opt/openEMS" in your user home directory.
-
-- **PALACE_WSL_PYTHON**  
-  Path to the Python interpreter used for the **Palace** workflow.
+- **PALACE_PYTHON**  
+  Path to the Python interpreter used for the **Palace** workflow. 
   If you installed the gds2palace workflow files into 
   a venv named "palace" located in "home/venv/palace", the python interpreter would be "home/venv/palace/bin/python".
   If you don't want to use Palace, you can leave this empty.
 
+  IMPORTANT: When using EMStudio on Windows, you need to have gds2palace installed in a WSL virtual machine, and this path points to the venv for gds2palace in your WSL installation! 
+
 - **PALACE_RUN_MODE**  
   This setting is used to define how Palace is started after creating the model files (config.json and *.msh). 
-  "Executable" is used if Palace is installed into the normal file system, e.g. using spack installation. 
+  "Executable" is used if Palace is installed into the "normal" file system, e.g. using spack installation. 
   "Script" is used if you want/need more control over starting Palace, e.g. because you installed it in an apptainer container, or if you want to send jobs to remote machines. An example run script is shown in the gds2palace repository [here](https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/tree/main/scripts).
 
 - **PALACE_INSTALL_PATH**  
-  This is where you have installed Palace when using the "Executable" run mode.
-  If you don't want to use Palace, you can leave this empty.
+  This is where you have installed Palace when using the "Executable" run mode. When using EMStudio on Windows, this points to Palace in your WSL virtual machine.
+
+  If you don't want to use Palace, or start Palace using script, you can leave this empty.
 
   <img src="./doc/png/path_executable1.png" alt="exepath" width="700">
 
   In this case, Palace will be started with the maximum number of cores available on your system. 
 
 - **PALACE_RUN_SCRIPT**  
-  This is the script used to start Palace when using the "Script" run mode.
-  If you don't want to use Palace, you can leave this empty.
+  This is the script used to start Palace when using the "Script" run mode. When using EMStudio on Windows, this points to Palace in your WSL virtual machine.
+  If you don't want to use Palace, or start Palace using the "Executable" run mode, you can leave this empty.
 
   
 
@@ -277,7 +274,7 @@ Before leaving any tab, save your changes using File > Save or Ctrl+S
 
 On the Python tab, you can see the Python model code that is used to run openEMS or Palace workflows. When you start EMStudio, you will see an empty editor window. You can now generate a default model code (Button "Generate Default") or you can load an existing model code (Menu: File > Load Python Model ...). 
 
-Python model templates are read from the  `scripts` folder in EMStudio, with one template each for openEMS and Plaace. You could modify these files if required.
+Python model templates are read from the  `scripts` folder in EMStudio, with one template each for openEMS and Palace. You could modify these files if required.
 
 The model code will be synchronized automatically with settings on the "Main" tab, where you can edit your simulation settings. Synchronization works both ways, you can apply changes in the editor on the "Python" tab or in the Settings grid on the "Main" tab.
 
@@ -365,10 +362,10 @@ https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2
 
 This repository shows a complete **Palace EM simulation flow** including:
 
-- GDS examples  
-- SG13G2 XML substrate  
-- Palace Python driver scripts  
-- S‑parameter generation  
+- SG13G2 example GDS files  
+- SG13G2 technology XML  
+- Palace Python model scripts  
+- S‑parameter generation 
 
 ### Using with EMStudio
 

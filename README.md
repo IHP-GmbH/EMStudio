@@ -221,7 +221,7 @@ The screenshot shows the configuration of EMStudio on a Windows machine, with op
   a venv named "palace" located in "home/venv/palace", the python interpreter would be "home/venv/palace/bin/python".
   If you don't want to use Palace, you can leave this empty.
 
-  IMPORTANT: THere is no native Palace version for Windows. When running Palace from EMStudio on Windows, you need to have gds2palace installed in a WSL virtual machine, and PALACE_PYTHON points to the venv for gds2palace in your WSL subsystem! 
+  IMPORTANT: There is no native Palace version for Windows. When running Palace from EMStudio on Windows, you need to have gds2palace installed in a WSL virtual machine, and PALACE_PYTHON points to the venv for gds2palace in your WSL subsystem! In that case, gds2palace and the Palace solver will all run in the WSL subsystem.
 
 - **PALACE_RUN_MODE**  
   This setting is used to define how Palace is started after creating the model files (config.json and *.msh). 

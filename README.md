@@ -203,6 +203,8 @@ When you start EMStudio, you first need to configure some path settings using **
 
 ## Configuration 
 
+The screenshot shows the configuration of EMStudio on a Windows machine, with openEMS installed on Windows and Palace installed in Windows Subsystem for Linux (WSL).
+
 <img src="./doc/png/preferences1.png" alt="preferences" width="700">
 
 - **MODEL_TEMPLATES_DIR**
@@ -219,7 +221,7 @@ When you start EMStudio, you first need to configure some path settings using **
   a venv named "palace" located in "home/venv/palace", the python interpreter would be "home/venv/palace/bin/python".
   If you don't want to use Palace, you can leave this empty.
 
-  IMPORTANT: When using EMStudio on Windows, you need to have gds2palace installed in a WSL virtual machine, and this path points to the venv for gds2palace in your WSL installation! 
+  IMPORTANT: THere is no native Palace version for Windows. When running Palace from EMStudio on Windows, you need to have gds2palace installed in a WSL virtual machine, and PALACE_PYTHON points to the venv for gds2palace in your WSL subsystem! 
 
 - **PALACE_RUN_MODE**  
   This setting is used to define how Palace is started after creating the model files (config.json and *.msh). 

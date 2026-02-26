@@ -1034,8 +1034,19 @@ void MainWindow::updateSimulationSettings()
     if (m_simSettings.contains("SubstrateFile"))
         m_ui->txtSubstrate->setText(m_simSettings["SubstrateFile"].toString());
 
-    if (m_simSettings.contains("TopCell"))
-        m_ui->cbxTopCell->setCurrentText(m_simSettings["TopCell"].toString());
+    if (QFileInfo().exists(m_ui->txtGdsFile->text())) {
+        updateGdsUserInfo();
+    }
+
+    if (m_simSettings.contains("TopCell")) {
+        QSignalBlocker b(m_ui->cbxTopCell);
+        const QString top = m_simSettings["TopCell"].toString().trimmed();
+        const int idx = m_ui->cbxTopCell->findText(top);
+        if (idx >= 0)
+            m_ui->cbxTopCell->setCurrentIndex(idx);
+        else if (!top.isEmpty())
+            m_ui->cbxTopCell->setCurrentText(top);
+    }
 
     if (m_simSettings.contains("RunPythonScript")) {
         m_ui->txtRunPythonScript->setText(m_simSettings["RunPythonScript"].toString());
@@ -1190,10 +1201,9 @@ void MainWindow::setLineEditPalette(QLineEdit* lineEdit, const QString& path)
  **********************************************************************************************************************/
 void MainWindow::updateGdsUserInfo()
 {
-    QString filePath = m_ui->txtGdsFile->text();
-    if(!QFileInfo().exists(filePath)) {
+    const QString filePath = m_ui->txtGdsFile->text();
+    if (!QFileInfo().exists(filePath))
         return;
-    }
 
     m_sysSettings["GdsDir"] = QFileInfo(filePath).absolutePath();
     m_ui->btnAddPort->setEnabled(true);
@@ -1220,16 +1230,29 @@ void MainWindow::updateGdsUserInfo()
     if (!desired.isEmpty())
         idx = m_ui->cbxTopCell->findText(desired);
 
-    if (idx >= 0)
+    bool topWasResolved = false;
+    QString top;
+
+    if (idx >= 0) {
         m_ui->cbxTopCell->setCurrentIndex(idx);
-    else if (!m_cells.isEmpty())
-        m_ui->cbxTopCell->setCurrentIndex(0);
+        top = desired;
+        topWasResolved = true;
+    } else if (!m_cells.isEmpty()) {
+        if (desired.isEmpty()) {
+            m_ui->cbxTopCell->setCurrentIndex(0);
+            top = m_ui->cbxTopCell->currentText().trimmed();
+            topWasResolved = true;
+        } else {
+            info(QString("TopCell '%1' not found in GDS. Keeping parsed value.").arg(desired));
+        }
+    }
 
-    const QString top = m_ui->cbxTopCell->currentText().trimmed();
+    m_simSettings["GdsFile"] = m_ui->txtGdsFile->text();
 
-    m_simSettings["GdsFile"]      = m_ui->txtGdsFile->text();
-    m_simSettings["TopCell"]      = top;
-    m_simSettings["gds_cellname"] = top;
+    if (topWasResolved) {
+        m_simSettings["TopCell"]      = top;
+        m_simSettings["gds_cellname"] = top;
+    }
 
     updateSubLayerNamesCheckboxState();
 }
@@ -1758,8 +1781,25 @@ void MainWindow::on_btnStop_clicked()
  **********************************************************************************************************************/
 void MainWindow::setGdsFile(const QString &filePath)
 {
-    m_ui->txtGdsFile->setText(filePath);
+    const QString wantedTop =
+        m_simSettings.value("TopCell").toString().trimmed().isEmpty()
+            ? m_ui->cbxTopCell->currentText().trimmed()
+            : m_simSettings.value("TopCell").toString().trimmed();
+
+    {
+        QSignalBlocker b(m_ui->txtGdsFile);
+        m_ui->txtGdsFile->setText(filePath);
+    }
+
     updateGdsUserInfo();
+
+    if (!wantedTop.isEmpty()) {
+        QSignalBlocker b(m_ui->cbxTopCell);
+        const int idx = m_ui->cbxTopCell->findText(wantedTop);
+        if (idx >= 0)
+            m_ui->cbxTopCell->setCurrentIndex(idx);
+    }
+
     setStateSaved();
 }
 
@@ -2419,18 +2459,6 @@ void MainWindow::loadPythonModel(const QString &fileName)
     m_modelGdsKey.clear();
     m_modelXmlKey.clear();
 
-    if (!res.getCellName().isEmpty())
-    {
-        const QString cellName = res.getCellName();
-
-        const int idx = m_ui->cbxTopCell->findText(cellName);
-        if (idx >= 0) {
-            m_ui->cbxTopCell->setCurrentIndex(idx);
-            m_simSettings[QStringLiteral("gds_cellname")] = cellName;
-        }
-    }
-
-
     if (!res.gdsFilename.isEmpty())
     {
         QString gdsPath = fromWslPath(res.gdsFilename);
@@ -2446,6 +2474,17 @@ void MainWindow::loadPythonModel(const QString &fileName)
         m_simSettings[m_modelGdsKey] = gdsPath;
         m_simSettings[QStringLiteral("GdsFile")] = gdsPath; // keep canonical for existing code
         m_sysSettings["GdsDir"] = QFileInfo(gdsPath).absolutePath();
+    }
+
+    if (!res.getCellName().isEmpty())
+    {
+        const QString cellName = res.getCellName();
+
+        const int idx = m_ui->cbxTopCell->findText(cellName);
+        if (idx >= 0) {
+            m_ui->cbxTopCell->setCurrentIndex(idx);
+            m_simSettings[QStringLiteral("gds_cellname")] = cellName;
+        }
     }
 
     if (!res.xmlFilename.isEmpty())
@@ -3024,4 +3063,33 @@ void MainWindow::on_actionAbout_EMStudio_triggered()
 {
     AboutDialog dlg(this);
     dlg.exec();
+}
+
+void MainWindow::applyTopCellFromModel(const QString& cellName)
+{
+    const QString top = cellName.trimmed();
+    if (top.isEmpty() || !m_ui || !m_ui->cbxTopCell)
+        return;
+
+    m_simSettings[QStringLiteral("TopCell")]      = top;
+    m_simSettings[QStringLiteral("gds_cellname")] = top;
+
+    {
+        QSignalBlocker b(m_ui->cbxTopCell);
+        const int idx = m_ui->cbxTopCell->findText(top);
+        if (idx >= 0) {
+            m_ui->cbxTopCell->setCurrentIndex(idx);
+            return;
+        }
+    }
+
+    QTimer::singleShot(0, this, [this, top]() {
+        if (!m_ui || !m_ui->cbxTopCell)
+            return;
+
+        QSignalBlocker b(m_ui->cbxTopCell);
+        const int idx = m_ui->cbxTopCell->findText(top);
+        if (idx >= 0)
+            m_ui->cbxTopCell->setCurrentIndex(idx);
+    });
 }

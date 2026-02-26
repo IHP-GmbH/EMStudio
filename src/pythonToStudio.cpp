@@ -102,19 +102,42 @@ bool MainWindow::applyPythonScriptFromEditor()
 
     m_curPythonData = res;
 
+    const QString parsedTop = res.getCellName().trimmed();
+    if (!parsedTop.isEmpty()) {
+        m_simSettings["TopCell"]      = parsedTop;
+        m_simSettings["gds_cellname"] = parsedTop;
+    }
+
     rebuildSimulationSettingsFromPalace(res.settings, res.settingTips, res.topLevel);
 
     QFileInfo fi(filePath);
     const QDir modelDir(fi.absolutePath());
 
-    if (!res.gdsFilename.isEmpty()) {
+    if (!res.gdsFilename.isEmpty())
+    {
         QString gdsPath = fromWslPath(res.gdsFilename);
         if (QFileInfo(gdsPath).isRelative())
             gdsPath = modelDir.filePath(gdsPath);
 
-        m_ui->txtGdsFile->setText(gdsPath);
+        {
+            QSignalBlocker b(m_ui->txtGdsFile);
+            m_ui->txtGdsFile->setText(gdsPath);
+        }
+
         m_simSettings["GdsFile"] = gdsPath;
         m_sysSettings["GdsDir"]  = QFileInfo(gdsPath).absolutePath();
+
+        updateGdsUserInfo();
+
+        const QString cellName = res.getCellName().trimmed();
+        if (!cellName.isEmpty()) {
+            m_simSettings["TopCell"]      = cellName;
+            m_simSettings["gds_cellname"] = cellName;
+
+            QSignalBlocker b(m_ui->cbxTopCell);
+            const int idx = m_ui->cbxTopCell->findText(cellName);
+            if (idx >= 0) m_ui->cbxTopCell->setCurrentIndex(idx);
+        }
     }
 
     if (!res.xmlFilename.isEmpty()) {

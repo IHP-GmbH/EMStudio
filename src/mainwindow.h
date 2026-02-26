@@ -198,6 +198,8 @@ private:
     void                            hookPortCombo(QComboBox* box);
     void                            drawSubstrate(const QString &filePath);
 
+    void                            applyTopCellFromModel(const QString& cellName);
+
     void                            initRecentMenu();
     void                            updateRecentMenu();
     void                            addRecentPythonModel(const QString& filePath);

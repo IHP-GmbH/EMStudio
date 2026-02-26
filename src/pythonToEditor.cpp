@@ -501,7 +501,22 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
     const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
     if (!topCell.isEmpty()) {
         QRegularExpression re(R"(^\s*gds_cellname\s*=.*$)",  QRegularExpression::MultilineOption);
-        script.replace(re, QStringLiteral("gds_cellname = \"%1\"").arg(topCell));
+        if(script.contains(re)) {
+            script.replace(re, QStringLiteral("gds_cellname = \"%1\"").arg(topCell));
+        }
+        else {
+            QRegularExpression reGdsFile(R"((?m)^[ \t]*gds_filename\s*=.*$)");
+            QRegularExpressionMatch m = reGdsFile.match(script);
+
+            const QString line = QStringLiteral("gds_cellname = \"%1\"\n").arg(topCell);
+
+            if (m.hasMatch()) {
+                const int insertPos = m.capturedStart();
+                script.insert(insertPos, line);
+            } else {
+                script.prepend(line + QStringLiteral("\n"));
+            }
+        }
     }
 
     if (m_simSettings.contains("SubstrateFile")) {

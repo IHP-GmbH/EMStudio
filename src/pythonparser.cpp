@@ -31,6 +31,23 @@
 namespace
 {
 
+static void inferCellNameFromTopLevel(PythonParser::Result& result)
+{
+    if (!result.cellName.trimmed().isEmpty())
+        return;
+
+    auto takeIfString = [](const QVariant& v) -> QString {
+        return (v.type() == QVariant::String) ? v.toString().trimmed() : QString();
+    };
+
+    // приоритет: gds_cellname, потом cellname
+    const QString a = takeIfString(result.topLevel.value(QStringLiteral("gds_cellname")));
+    if (!a.isEmpty()) { result.cellName = a; return; }
+
+    const QString b = takeIfString(result.topLevel.value(QStringLiteral("cellname")));
+    if (!b.isEmpty()) { result.cellName = b; return; }
+}
+
 /*!*******************************************************************************************************************
  * \brief Parses a simple Python literal into a QVariant.
  *
@@ -115,12 +132,11 @@ static void parseTopLevelAssignments(const QString& script,
         const QString name = m.captured(1).trimmed();
         const QString rhs  = m.captured(2).trimmed();
 
-        // skip names you never want to treat as settings-like parameters
         static const QSet<QString> kSkip = {
             QStringLiteral("gds_filename"),
             QStringLiteral("XML_filename"),
             QStringLiteral("cellname"),
-            QStringLiteral("gds_cellname"),
+            //QStringLiteral("gds_cellname"),
             QStringLiteral("layernumbers"),
             QStringLiteral("metals_list"),
             QStringLiteral("allpolygons"),
@@ -821,6 +837,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     inferFilesFromSettings(result);
     parseSettingTips(content, result);
     parseTopLevelAssignments(content, &result.topLevel);
+    inferCellNameFromTopLevel(result);
     finalizeResult(scriptDir, baseName, contextForErrors, result);
 
     for (auto it = result.topLevel.begin(); it != result.topLevel.end(); ++it) {

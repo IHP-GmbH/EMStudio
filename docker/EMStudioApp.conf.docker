@@ -1,0 +1,21 @@
+# EMStudioApp.conf (docker defaults)
+[Preferences]
+MODEL_TEMPLATES_DIR=/opt/src/EMStudio/scripts
+OPENEMS_INSTALL_PATH=/opt/openems
+PALACE_INSTALL_PATH=/opt/palace
+
+
+# --- OpenEMS ---
+Python Path=/opt/venv/bin/python3
+
+# gds2palace workflow and default model
+PALACE_MODEL_DIR=/opt/gds2palace_ihp_sg13g2/workflow
+PALACE_MODEL_FILE=/opt/gds2palace_ihp_sg13g2/workflow/palace_L2n0.py
+
+# optional / leave empty if EMStudio finds python itself
+PALACE_PYTHON=/opt/venv/bin/python3
+PALACE_RUN_MODE=0
+
+# keep empty unless you use it
+Python%20Path=
+RECENT_PYTHON_MODELS=@Invalid()

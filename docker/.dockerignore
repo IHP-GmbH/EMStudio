@@ -1,0 +1,10 @@
+workspace/
+tmp/
+build.log
+*.log
+*.tar
+*.tar.gz
+*.7z
+.git/
+**/.cache/
+**/__pycache__/

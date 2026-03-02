@@ -23,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb-render-util0 libxcb-render0 libxcb-shape0 libxcb-shm0 libxcb-sync1 \
     libxcb-xfixes0 libxcb-xinerama0 libxcb-randr0 libxcb-glx0 \
     libgl1 mesa-utils \
+    xterm \
     libfftw3-dev libhdf5-dev libboost-all-dev \
     libvtk9-dev \
  && rm -rf /var/lib/apt/lists/*

@@ -143,6 +143,9 @@ public:
     void                            refreshSimToolOptionsForTests();
     void                            testSetPreference(const QString& key, const QVariant& value);
     QVector<PortInfo>               testParsePortsFromEditor() const;
+    bool                            testInitDefaultOpenemsModel();
+    int                             testPortsRowCount() const;
+    void                            testSetSubLayerNamesChecked(bool on);
 #endif
 
 private slots:

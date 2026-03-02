@@ -1,3 +1,4 @@
+#include "test_utils.h"
 #include "tst_palace_golden.h"
 
 #include <QtTest/QtTest>
@@ -8,111 +9,7 @@
 
 #include "mainwindow.h"
 
-static QString readUtf8(const QString& path)
-{
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
-        return {};
-    return QString::fromUtf8(f.readAll());
-}
-
-static QString normalize(QString s)
-{
-    s.replace("\r\n", "\n");
-    s.replace(QRegularExpression(R"([ \t]+(?=\n))"), "");
-
-    // Mask absolute paths (Windows + Linux)
-    s.replace(QRegularExpression(R"(([A-Za-z]:[\\/][^ \n'"]+\.gds))"), "<GDS_PATH>");
-    s.replace(QRegularExpression(R"(([A-Za-z]:[\\/][^ \n'"]+\.xml))"), "<XML_PATH>");
-    s.replace(QRegularExpression(R"((/[^ \n'"]+\.gds))"), "<GDS_PATH>");
-    s.replace(QRegularExpression(R"((/[^ \n'"]+\.xml))"), "<XML_PATH>");
-    s.replace(QRegularExpression(R"(e([+-])0+(\d+))"), "e\\1\\2");
-
-    return s.trimmed() + "\n";
-}
-
-static QString diffText(const QString& expected,
-                        const QString& actual,
-                        int contextLines = 2)
-{
-    const QStringList exp = expected.split('\n');
-    const QStringList act = actual.split('\n');
-
-    const int maxLines = qMax(exp.size(), act.size());
-
-    for (int i = 0; i < maxLines; ++i) {
-        const QString e = (i < exp.size()) ? exp[i] : "<EOF>";
-        const QString a = (i < act.size()) ? act[i] : "<EOF>";
-
-        if (e != a) {
-            QString out;
-            out += QString("Difference at line %1:\n").arg(i + 1);
-
-            const int from = qMax(0, i - contextLines);
-            const int to   = qMin(maxLines - 1, i + contextLines);
-
-            for (int j = from; j <= to; ++j) {
-                const QString ee = (j < exp.size()) ? exp[j] : "<EOF>";
-                const QString aa = (j < act.size()) ? act[j] : "<EOF>";
-
-                if (j == i) {
-                    out += QString(">> EXPECTED: %1\n").arg(ee);
-                    out += QString(">> ACTUAL  : %1\n").arg(aa);
-                } else {
-                    out += QString("   exp: %1\n").arg(ee);
-                    out += QString("   act: %1\n").arg(aa);
-                }
-            }
-            return out;
-        }
-    }
-
-    return QString();
-}
-
-static bool writeUtf8Atomic(const QString& path, const QString& text, QString* outErr = nullptr)
-{
-    const QFileInfo fi(path);
-    if (!fi.exists()) {
-        if (outErr) *outErr = QString("Golden file does not exist: %1").arg(path);
-        return false;
-    }
-
-    // ensure dir exists and is writable
-    const QDir dir = fi.absoluteDir();
-    if (!dir.exists()) {
-        if (outErr) *outErr = QString("Directory does not exist: %1").arg(dir.absolutePath());
-        return false;
-    }
-
-    // atomic write: write to temp then replace
-    const QString tmpPath = fi.absoluteFilePath() + ".tmp";
-
-    QFile tmp(tmpPath);
-    if (!tmp.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        if (outErr) *outErr = QString("Cannot open temp for write: %1 (%2)")
-                          .arg(tmpPath, tmp.errorString());
-        return false;
-    }
-
-    tmp.write(text.toUtf8());
-    if (!tmp.flush()) {
-        if (outErr) *outErr = QString("Flush failed for: %1 (%2)")
-                          .arg(tmpPath, tmp.errorString());
-        return false;
-    }
-    tmp.close();
-
-    // Replace destination
-    QFile::remove(fi.absoluteFilePath());
-    if (!QFile::rename(tmpPath, fi.absoluteFilePath())) {
-        if (outErr) *outErr = QString("Cannot replace golden file: %1").arg(fi.absoluteFilePath());
-        QFile::remove(tmpPath);
-        return false;
-    }
-
-    return true;
-}
+using namespace GoldenTestUtils;
 
 static QString ensureTestPalaceLauncher()
 {
@@ -215,5 +112,3 @@ void PalaceGolden::defaultPalace_changeSettings_ports_and_compare()
         QFAIL(qPrintable(QString("Mismatch vs golden:\n\n%1").arg(diff)));
     }
 }
-
-QTEST_MAIN(PalaceGolden)

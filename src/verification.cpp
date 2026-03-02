@@ -257,5 +257,67 @@ void MainWindow::refreshSimToolOptionsForTests()
     refreshSimToolOptions();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Initializes a default OpenEMS Python model for test purposes without any UI dialogs.
+ *
+ * Forces the simulation tool selection to "openems", generates the default OpenEMS
+ * Python script, inserts it into the editor and imports ports into the table.
+ *
+ * \return True if the default OpenEMS script was generated successfully, false otherwise.
+ **********************************************************************************************************************/
+bool MainWindow::testInitDefaultOpenemsModel()
+{
+    const int idx = m_ui->cbxSimTool->findData("openems");
+    if (idx >= 0) {
+        QSignalBlocker b(m_ui->cbxSimTool);
+        m_ui->cbxSimTool->setCurrentIndex(idx);
+    }
+
+    const QString script = createDefaultOpenemsScript();
+    if (script.trimmed().isEmpty())
+        return false;
+
+    testSetEditorText(script);
+    m_ui->editRunPythonScript->document()->setModified(false);
+
+    m_ui->tblPorts->setRowCount(0);
+    importPortsFromEditor();
+
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Returns the current number of rows in the Ports table.
+ *
+ * \return Row count of tblPorts, or -1 if the table is not available.
+ **********************************************************************************************************************/
+int MainWindow::testPortsRowCount() const
+{
+    return (m_ui && m_ui->tblPorts) ? m_ui->tblPorts->rowCount() : -1;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Programmatically toggles the "Use Substrate Layer Names" checkbox for tests.
+ *
+ * Updates the checkbox state and explicitly invokes the corresponding slot
+ * to ensure the same behavior as in normal UI interaction.
+ *
+ * \param on True to enable substrate layer names, false to switch to numeric GDS layers.
+ **********************************************************************************************************************/
+void MainWindow::testSetSubLayerNamesChecked(bool on)
+{
+    if (!m_ui || !m_ui->cbSubLayerNames)
+        return;
+
+    updateSubLayerNamesCheckboxState();
+
+    {
+        QSignalBlocker b(m_ui->cbSubLayerNames);
+        m_ui->cbSubLayerNames->setChecked(on);
+    }
+
+    on_cbSubLayerNames_stateChanged(on ? Qt::Checked : Qt::Unchecked);
+}
+
 #endif
 

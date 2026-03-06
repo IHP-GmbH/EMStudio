@@ -217,6 +217,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_ui->cbxTopCell, &QComboBox::currentTextChanged,
             this, &MainWindow::onTopCellChanged);
 
+    connect(m_ui->cbxSimTool, &QComboBox::currentTextChanged,
+            this, &MainWindow::updateBoundaryOptionsForCurrentTool);
+
     if (m_sysSettings.contains("PYTHON_EDITOR_FONT_SIZE")) {
         qreal size = m_sysSettings["PYTHON_EDITOR_FONT_SIZE"].toDouble();
         if (size > 4.0 && size < 80.0)
@@ -248,6 +251,18 @@ MainWindow::MainWindow(QWidget *parent)
 MainWindow::~MainWindow()
 {
     delete m_ui;
+}
+
+void MainWindow::showEvent(QShowEvent* e)
+{
+    QMainWindow::showEvent(e);
+    static bool once = false;
+    if (once) return;
+    once = true;
+
+    QTimer::singleShot(0, this, [this](){
+        updateBoundaryTooltipsForCurrentTool();
+    });
 }
 
 /*!*******************************************************************************************************************
@@ -495,7 +510,7 @@ QString MainWindow::fromWslPath(const QString &path) const
     QRegularExpression re(R"(^/mnt/([a-zA-Z])/(.*)$)");
     auto m = re.match(path.trimmed());
     if (!m.hasMatch())
-        return path; // not a WSL path, return as-is
+        return path;
 
     const QString drive = m.captured(1).toUpper();
     QString rest = m.captured(2);
@@ -764,105 +779,110 @@ void MainWindow::loadSettings()
 void MainWindow::setupSettingsPanel()
 {
     m_propertyBrowser = new QtTreePropertyBrowser(this);
-    m_variantManager = new VariantManager(m_propertyBrowser);
+    m_variantManager  = new VariantManager(m_propertyBrowser);
 
     m_propertyBrowser->setResizeMode(QtTreePropertyBrowser::ResizeToContents);
     m_propertyBrowser->setPropertiesWithoutValueMarked(true);
     m_propertyBrowser->setHeaderVisible(false);
 
-    QVBoxLayout* layout = new QVBoxLayout(m_ui->wdgSettings);
+    QVBoxLayout *layout = new QVBoxLayout(m_ui->wdgSettings);
     layout->setContentsMargins(0, 0, 0, 0);
     layout->addWidget(m_propertyBrowser);
 
-    QtVariantEditorFactory* factory = new VariantFactory();
+    QtVariantEditorFactory *factory = new VariantFactory();
     m_propertyBrowser->setFactoryForManager(m_variantManager, factory);
 
-    QtVariantProperty* simGroup = m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), "Simulation Settings");
+    QtVariantProperty *simGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), QLatin1String("Simulation Settings"));
     m_simSettingsGroup = simGroup;
 
-    /*auto addDouble = [&](const QString& name, double value) {
-        QtVariantProperty* prop = m_variantManager->addProperty(QVariant::Double, name);
-
-        prop->setAttribute(QLatin1String("decimals"), 12);
-        prop->setAttribute(QLatin1String("minimum"), -std::numeric_limits<double>::max());
-        prop->setAttribute(QLatin1String("maximum"),  std::numeric_limits<double>::max());
-        prop->setAttribute(QLatin1String("singleStep"), 0.0);
-
-        prop->setValue(value);
-        simGroup->addSubProperty(prop);
-    };
-
-    auto addInt = [&](const QString& name, int value) {
-        QtVariantProperty* prop = m_variantManager->addProperty(QVariant::Int, name);
-        prop->setValue(value);
-        simGroup->addSubProperty(prop);
-    };
-
-    auto addBool = [&](const QString& name, bool value) {
-        QtVariantProperty* prop = m_variantManager->addProperty(QVariant::Bool, name);
-        prop->setValue(value);
-        simGroup->addSubProperty(prop);
-    };
-
-    addBool("preview_only", false);
-    addBool("postprocess_only", false);
-    addDouble("unit", 1e-6);
-    addInt("margin", 50);
-    addDouble("fstart", 0.0);
-    addDouble("fstop", 110e9);
-    addInt("numfreq", 401);
-    addDouble("refined_cellsize", 1.0); */
-
-    const QString simTool = m_preferences.value("SIMULATION_TOOL_KEY", QLatin1String("OpenEMS")).toString();
+    const QString simTool =
+        m_preferences.value(QLatin1String("SIMULATION_TOOL_KEY"), QLatin1String("OpenEMS")).toString();
 
     QStringList boundaryOptions;
-
     if (simTool.compare(QLatin1String("OpenEMS"), Qt::CaseInsensitive) == 0) {
-        boundaryOptions.clear();
-        boundaryOptions
-            << QStringLiteral("PEC")
-            << QStringLiteral("PMC")
-            << QStringLiteral("MUR")
-            << QStringLiteral("PML_8");
+        boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
+        << QLatin1String("MUR") << QLatin1String("PML_8");
     } else if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0) {
-        boundaryOptions.clear();
-        boundaryOptions
-            << QStringLiteral("PEC")
-            << QStringLiteral("PMC")
-            << QStringLiteral("Absorbing")
-            << QStringLiteral("Impedance")
-            << QStringLiteral("Conductivity");
+        boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
+        << QLatin1String("ABC") << QLatin1String("PML");
     } else {
-        boundaryOptions.clear();
-        boundaryOptions
-            << QStringLiteral("PEC")
-            << QStringLiteral("PMC");
+        boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC");
     }
 
     QtVariantProperty *boundariesGroup =
         m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), QLatin1String("Boundaries"));
 
-    QStringList boundaryNames    = { QStringLiteral("X-"), QStringLiteral("X+"),
-                                 QStringLiteral("Y-"), QStringLiteral("Y+"),
-                                 QStringLiteral("Z-"), QStringLiteral("Z+") };
-    QStringList boundaryDefaults = { QStringLiteral("PEC"), QStringLiteral("PEC"),
-                                    QStringLiteral("PEC"), QStringLiteral("PEC"),
-                                    QStringLiteral("PEC"), QStringLiteral("PEC") };
+    const QStringList boundaryNames = {
+        QLatin1String("X-"), QLatin1String("X+"),
+        QLatin1String("Y-"), QLatin1String("Y+"),
+        QLatin1String("Z-"), QLatin1String("Z+")
+    };
 
-    for (int i = 0; i < boundaryNames.size(); ++i) {
+    const QVariantMap bndMap = m_simSettings.value(QLatin1String("Boundaries")).toMap();
+
+    auto tipForBoundary = [&](const QString &opt) -> QString {
+        if (simTool.compare(QLatin1String("OpenEMS"), Qt::CaseInsensitive) == 0) {
+            if (opt == QLatin1String("PEC"))   return QLatin1String("PEC: perfect electric conductor (default)");
+            if (opt == QLatin1String("PMC"))   return QLatin1String("PMC: perfect magnetic conductor (symmetry)");
+            if (opt == QLatin1String("MUR"))   return QLatin1String("MUR: simple absorbing boundary condition");
+            if (opt == QLatin1String("PML_8")) return QLatin1String("PML_8: absorbing boundary condition (8 layers)");
+        } else if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0) {
+            if (opt == QLatin1String("PEC")) return QLatin1String("PEC: perfect electric conductor (default)");
+            if (opt == QLatin1String("PMC")) return QLatin1String("PMC: perfect magnetic conductor (symmetry)");
+            if (opt == QLatin1String("ABC")) return QLatin1String("ABC: absorbing boundary condition");
+            if (opt == QLatin1String("PML")) return QLatin1String("PML: currently converted to ABC internally (PML not implemented yet)");
+        } else {
+            if (opt == QLatin1String("PEC")) return QLatin1String("PEC: perfect electric conductor (default)");
+            if (opt == QLatin1String("PMC")) return QLatin1String("PMC: perfect magnetic conductor (symmetry)");
+        }
+        return QString();
+    };
+
+    for (const QString &name : boundaryNames) {
         QtVariantProperty *bndProp =
-            m_variantManager->addProperty(QtVariantPropertyManager::enumTypeId(), boundaryNames.at(i));
-        bndProp->setAttribute(QStringLiteral("enumNames"), boundaryOptions);
-        bndProp->setValue(boundaryOptions.indexOf(boundaryDefaults.at(i)));
+            m_variantManager->addProperty(QtVariantPropertyManager::enumTypeId(), name);
+
+        bndProp->setAttribute(QLatin1String("enumNames"), boundaryOptions);
+
+        QStringList boundaryTips;
+        boundaryTips.reserve(boundaryOptions.size());
+        for (const QString& opt : boundaryOptions)
+            boundaryTips << tipForBoundary(opt);
+
+        bndProp->setAttribute(QLatin1String("enumToolTips"), boundaryTips);
+
+        const QString savedText = bndMap.value(name, QLatin1String("PEC")).toString().trimmed();
+
+        int idx = boundaryOptions.indexOf(savedText);
+        if (idx < 0)
+            idx = boundaryOptions.indexOf(QLatin1String("PEC"));
+        if (idx < 0)
+            idx = 0;
+
+        bndProp->setValue(idx);
+        bndProp->setToolTip(boundaryTips.value(idx));
+
         boundariesGroup->addSubProperty(bndProp);
     }
 
+    QVariantMap initBndMap;
+    for (QtProperty *sub : boundariesGroup->subProperties()) {
+        const QString side = sub->propertyName();
+        const int idx = m_variantManager->value(sub).toInt();
+        const QStringList names =
+            m_variantManager->attributeValue(sub, QLatin1String("enumNames")).toStringList();
+        initBndMap[side] = names.value(idx, QLatin1String("PEC"));
+    }
+    m_simSettings[QLatin1String("Boundaries")] = initBndMap;
 
     m_propertyBrowser->addProperty(simGroup);
     m_propertyBrowser->addProperty(boundariesGroup);
 
     connect(m_variantManager, &QtVariantPropertyManager::valueChanged,
             this, &MainWindow::onSimulationSettingChanged);
+
+    updateBoundaryTooltipsForCurrentTool();
 }
 
 /*!*******************************************************************************************************************
@@ -872,34 +892,43 @@ void MainWindow::setupSettingsPanel()
  **********************************************************************************************************************/
 void MainWindow::onSimulationSettingChanged(QtProperty* property, const QVariant& value)
 {
-    QString name = property->propertyName();
+    if (!property || !m_variantManager || !m_propertyBrowser)
+        return;
 
-    QtProperty* parent = nullptr;
-    for (QtProperty* topProp : m_propertyBrowser->properties()) {
-        for (QtProperty* prop : topProp->subProperties()) {
-            if (prop->subProperties().contains(property)) {
-                parent = prop;
+    const QString name = property->propertyName();
+
+    static const QSet<QString> boundarySides = {
+        QLatin1String("X-"), QLatin1String("X+"),
+        QLatin1String("Y-"), QLatin1String("Y+"),
+        QLatin1String("Z-"), QLatin1String("Z+")
+    };
+
+    if (boundarySides.contains(name)) {
+        QtProperty* boundariesGroup = nullptr;
+
+        for (QtProperty* topProp : m_propertyBrowser->properties()) {
+            if (topProp->propertyName() == QLatin1String("Boundaries")) {
+                boundariesGroup = topProp;
                 break;
             }
         }
-        if (parent)
-            break;
-    }
 
-    if (parent && parent->propertyName() == "Boundaries") {
-        QVariantMap bndMap;
-        for (QtProperty* sub : parent->subProperties()) {
-            QString side = sub->propertyName();
-            int idx = m_variantManager->value(sub).toInt();
-            QStringList enumNames = m_variantManager->attributeValue(sub, "enumNames").toStringList();
-            QString text = enumNames.value(idx);
-            bndMap[side] = text;
+        if (boundariesGroup) {
+            QVariantMap bndMap;
+            for (QtProperty* sub : boundariesGroup->subProperties()) {
+                const QString side = sub->propertyName();
+                const int idx = m_variantManager->value(sub).toInt();
+                const QStringList enumNames =
+                    m_variantManager->attributeValue(sub, QLatin1String("enumNames")).toStringList();
+                bndMap[side] = enumNames.value(idx, QLatin1String("PEC"));
+            }
+            m_simSettings[QLatin1String("Boundaries")] = bndMap;
         }
-        m_simSettings["Boundaries"] = bndMap;
     } else {
         m_simSettings[name] = value;
     }
 
+    updateBoundaryTooltipsForCurrentTool();
     setStateChanged();
 }
 
@@ -961,7 +990,7 @@ void MainWindow::on_actionSave_As_triggered()
  * In both cases, after a successful applyPythonScriptFromEditor(), settings are saved and
  * the window is marked as "saved" (no '*').
  **********************************************************************************************************************/
-void MainWindow::on_actionSave_triggered()
+/*void MainWindow::on_actionSave_triggered()
 {
     bool pythonEditorActive = false;
     if (QWidget *fw = QApplication::focusWidget()) {
@@ -984,7 +1013,65 @@ void MainWindow::on_actionSave_triggered()
     setStateSaved();
 
     info("All changes saved successfully.", true);
+}*/
+void MainWindow::on_actionSave_triggered()
+{
+    bool pythonEditorActive = false;
+    if (QWidget *fw = QApplication::focusWidget()) {
+        pythonEditorActive =
+            (fw == m_ui->editRunPythonScript) ||
+            m_ui->editRunPythonScript->isAncestorOf(fw);
+    }
+
+    if (pythonEditorActive) {
+        if (!applyPythonScriptFromEditor())
+            return;
+    } else {
+        QString script = m_ui->editRunPythonScript->toPlainText();
+        const QString simKey = currentSimToolKey().toLower();
+
+        if (script.trimmed().isEmpty()) {
+            if (simKey == QLatin1String("openems"))
+                script = createDefaultOpenemsScript();
+            else
+                script = createDefaultPalaceScript();
+        }
+
+        applySimSettingsToScript(script, simKey);
+        applyGdsAndXmlPaths(script, simKey);
+        applyBoundaries(script, true);
+
+        setEditorScriptPreservingState(script);
+
+        QString filePath = m_ui->txtRunPythonScript->text().trimmed();
+        if (filePath.isEmpty()) {
+            if (!ensurePythonScriptPathBySaveAs(false))
+                return;
+            filePath = m_ui->txtRunPythonScript->text().trimmed();
+            if (filePath.isEmpty())
+                return;
+        }
+
+        QFile f(filePath);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            error(tr("Failed to save Python script:\n%1").arg(f.errorString()), false);
+            return;
+        }
+
+        QTextStream out(&f);
+        out << script;
+        f.close();
+
+        m_ui->editRunPythonScript->document()->setModified(false);
+        m_simSettings["RunPythonScript"] = filePath;
+        m_preferences["PALACE_MODEL_FILE"] = filePath;
+    }
+
+    saveSettings();
+    setStateSaved();
+    info("All changes saved successfully.", true);
 }
+
 
 /*!*******************************************************************************************************************
  * \brief Updates simulation parameters in the GUI using values stored in \c m_simSettings.
@@ -1646,45 +1733,135 @@ void MainWindow::updateBoundaryOptionsForCurrentTool()
     if (!m_variantManager || !m_propertyBrowser)
         return;
 
-    const QString key = m_preferences.value("SIMULATION_TOOL_KEY").toString().trimmed().toLower();
+    const QString key =
+        m_preferences.value(QLatin1String("SIMULATION_TOOL_KEY"), QLatin1String("OpenEMS"))
+            .toString().trimmed().toLower();
 
     QStringList boundaryOptions;
     if (key == QLatin1String("openems")) {
-        boundaryOptions << "PEC" << "PMC" << "MUR" << "PML_8";
+        boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
+        << QLatin1String("MUR") << QLatin1String("PML_8");
     } else if (key == QLatin1String("palace")) {
-        boundaryOptions << "PEC" << "PMC" << "Absorbing" << "Impedance" << "Conductivity";
+        boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
+        << QLatin1String("ABC") << QLatin1String("PML");
     } else {
-        boundaryOptions << "PEC" << "PMC";
+        boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC");
     }
 
-    QtProperty* boundariesGroup = nullptr;
-    for (QtProperty* top : m_propertyBrowser->properties()) {
-        for (QtProperty* sub : top->subProperties()) {
-            if (sub->propertyName() == QLatin1String("Boundaries")) {
-                boundariesGroup = sub;
-                break;
-            }
+    if (boundaryOptions.isEmpty())
+        return;
+
+    QtProperty *boundariesGroup = nullptr;
+
+    for (QtProperty *top : m_propertyBrowser->properties()) {
+        if (top->propertyName() == QLatin1String("Boundaries")) {
+            boundariesGroup = top;
+            break;
         }
-        if (boundariesGroup) break;
     }
-    if (!boundariesGroup) return;
 
-    QSignalBlocker b(m_variantManager);
+    if (!boundariesGroup) {
+        for (QtProperty *top : m_propertyBrowser->properties()) {
+            for (QtProperty *sub : top->subProperties()) {
+                if (sub->propertyName() == QLatin1String("Boundaries")) {
+                    boundariesGroup = sub;
+                    break;
+                }
+            }
+            if (boundariesGroup)
+                break;
+        }
+    }
 
-    for (QtProperty* prop : boundariesGroup->subProperties()) {
+    if (!boundariesGroup)
+        return;
+
+    QSignalBlocker blocker(m_variantManager);
+
+    for (QtProperty *prop : boundariesGroup->subProperties()) {
         const int oldIdx = m_variantManager->value(prop).toInt();
+
         const QStringList oldNames =
-            m_variantManager->attributeValue(prop, "enumNames").toStringList();
+            m_variantManager->attributeValue(prop, QLatin1String("enumNames")).toStringList();
+
         const QString oldText = oldNames.value(oldIdx);
 
-        m_variantManager->setAttribute(prop, "enumNames", boundaryOptions);
+        m_variantManager->setAttribute(prop, QLatin1String("enumNames"), boundaryOptions);
 
         int newIdx = boundaryOptions.indexOf(oldText);
-        if (newIdx < 0) newIdx = 0;
+        if (newIdx < 0)
+            newIdx = boundaryOptions.indexOf(QLatin1String("PEC"));
+        if (newIdx < 0 || newIdx >= boundaryOptions.size())
+            newIdx = 0;
+
         m_variantManager->setValue(prop, newIdx);
     }
+
+    updateBoundaryTooltipsForCurrentTool();
+    m_propertyBrowser->update();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Updates tooltips for boundary enum properties based on the currently selected simulation engine.
+ *
+ * Uses SIMULATION_TOOL_KEY to choose the correct explanation texts for each boundary option and applies them to
+ * the enum items inside the "Boundaries" group.
+ **********************************************************************************************************************/
+void MainWindow::updateBoundaryTooltipsForCurrentTool()
+{
+    if (!m_variantManager || !m_propertyBrowser)
+        return;
+
+    const QString key =
+        m_preferences.value("SIMULATION_TOOL_KEY", "openems").toString().trimmed().toLower();
+
+    auto tipFor = [&](const QString &opt) -> QString {
+        if (key == "openems") {
+            if (opt == "PEC")   return "PEC: perfect electric conductor (default)";
+            if (opt == "PMC")   return "PMC: perfect magnetic conductor (symmetry)";
+            if (opt == "MUR")   return "MUR: simple absorbing boundary condition";
+            if (opt == "PML_8") return "PML_8: absorbing boundary condition (8 layers)";
+        } else if (key == "palace") {
+            if (opt == "PEC") return "PEC: perfect electric conductor (default)";
+            if (opt == "PMC") return "PMC: perfect magnetic conductor (symmetry)";
+            if (opt == "ABC") return "ABC: absorbing boundary condition";
+            if (opt == "PML") return "PML: currently converted to ABC internally (PML not implemented yet)";
+        } else {
+            if (opt == "PEC") return "PEC: perfect electric conductor (default)";
+            if (opt == "PMC") return "PMC: perfect magnetic conductor (symmetry)";
+        }
+        return {};
+    };
+
+    QtProperty *boundariesGroup = nullptr;
+    for (QtProperty *top : m_propertyBrowser->properties()) {
+        if (top->propertyName() == "Boundaries") {
+            boundariesGroup = top;
+            break;
+        }
+    }
+    if (!boundariesGroup)
+        return;
+
+    QSignalBlocker blocker(m_variantManager);
+
+    for (QtProperty *prop : boundariesGroup->subProperties()) {
+        const int idx = m_variantManager->value(prop).toInt();
+        const QStringList names =
+            m_variantManager->attributeValue(prop, "enumNames").toStringList();
+
+        QStringList tips;
+        tips.reserve(names.size());
+        for (const QString& n : names)
+            tips << tipFor(n);
+
+        m_variantManager->setAttribute(prop, "enumToolTips", tips);
+
+        prop->setToolTip(tips.value(idx));
+    }
+
+    m_propertyBrowser->update();
+}
 
 /*!*******************************************************************************************************************
  * \brief Starts the simulation by dispatching to the selected backend (OpenEMS or Palace).

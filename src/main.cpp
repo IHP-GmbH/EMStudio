@@ -88,13 +88,16 @@
  **********************************************************************************************************************/
 void printHelp()
 {
-    qDebug() << "Usage: EMStudio [options] [run_file.json]";
+    qDebug() << "Usage: EMStudio [options] [model.py]";
     qDebug() << "\nOptions:";
-    qDebug() << "  -h, --help           Show this help message";
-    qDebug() << "  -gdsfile <path>      Specify path to GDS file";
-    qDebug() << "  -topcell <name>      Specify name of the top cell in the GDS file";
+    qDebug() << "  -h, --help            Show this help message";
+    qDebug() << "  -gdsfile <path>       Specify path to GDS file";
+    qDebug() << "  -topcell <name>       Specify name of the top cell in the GDS file";
+    qDebug() << "  -run                  Run simulation headless (no GUI)";
+    qDebug() << "  -palace               Select Palace backend (with -run)";
+    qDebug() << "  -openems              Select OpenEMS backend (with -run)";
     qDebug() << "\nArguments:";
-    qDebug() << "  run_file.json        JSON file to load simulation settings from";
+    qDebug() << "  model.py              Python model to load (optional, but usually needed)";
 }
 
 /*!*******************************************************************************************************************
@@ -114,24 +117,12 @@ int main(int argc, char *argv[])
     QCoreApplication::setApplicationName("EMStudio");
     QCoreApplication::setApplicationVersion(QStringLiteral(EMSTUDIO_VERSION_STR));
 
-    QPixmap pixmap(":/logo");
-    QPixmap scaledPixmap = pixmap.scaled(
-        pixmap.width() / 3,
-        pixmap.height() / 3,
-        Qt::KeepAspectRatio,
-        Qt::SmoothTransformation
-    );
-
-    QSplashScreen splash(scaledPixmap);
-    splash.show();
-
-    a.processEvents();
-
-    MainWindow w;
-
     QString gdsFile;
     QString topCell;
     QString pythonFile;
+
+    bool headlessRun = false;
+    QString runTool;
 
     const QStringList args = QCoreApplication::arguments();
     for (int i = 1; i < args.size(); ++i) {
@@ -141,9 +132,15 @@ int main(int argc, char *argv[])
             printHelp();
             return 0;
         } else if (arg == "-gdsfile" && i + 1 < args.size()) {
-            gdsFile = args[++i];  // Consume next argument as value
+            gdsFile = args[++i];
         } else if (arg == "-topcell" && i + 1 < args.size()) {
-            topCell = args[++i];  // Consume next argument as value
+            topCell = args[++i];
+        } else if (arg == "-run") {
+            headlessRun = true;
+        } else if (arg == "-palace") {
+            runTool = "palace";
+        } else if (arg == "-openems") {
+            runTool = "openems";
         } else if (arg.endsWith(".py", Qt::CaseInsensitive)) {
             pythonFile = arg;
         } else {
@@ -153,10 +150,32 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (!pythonFile.isEmpty()) {
-        if (QFileInfo::exists(pythonFile)) {
-            w.loadPythonModel(pythonFile);
+    if (headlessRun) {
+        if (runTool.isEmpty()) {
+            qWarning() << "Headless mode requires backend: use -palace or -openems together with -run";
+            printHelp();
+            return 1;
         }
+    }
+
+    QScopedPointer<QSplashScreen> splash;
+    if (!headlessRun) {
+        QPixmap pixmap(":/logo");
+        QPixmap scaledPixmap = pixmap.scaled(
+            pixmap.width() / 3,
+            pixmap.height() / 3,
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation
+            );
+        splash.reset(new QSplashScreen(scaledPixmap));
+        splash->show();
+        a.processEvents();
+    }
+
+    MainWindow w;
+
+    if (!pythonFile.isEmpty() && QFileInfo::exists(pythonFile)) {
+        w.loadPythonModel(pythonFile);
     }
 
     if (!gdsFile.isEmpty())
@@ -165,8 +184,15 @@ int main(int argc, char *argv[])
     if (!topCell.isEmpty())
         w.setTopCell(topCell);
 
+    if (headlessRun) {
+        QTimer::singleShot(0, &w, [&w, runTool]() {
+            w.runHeadless(runTool);
+        });
+        return a.exec();
+    }
+
     QTimer::singleShot(1000, [&]() {
-        splash.finish(&w);
+        if (splash) splash->finish(&w);
         w.tryAutoLoadRecentPythonForTopCell();
         w.show();
     });

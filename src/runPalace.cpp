@@ -86,19 +86,33 @@ static QString parsePhysicalCoresFromLscpuCsv(QString out)
  *
  * The function manages process lifetime, logging, and phase transitions internally.
  **********************************************************************************************************************/
-void MainWindow::runPalace()
+void MainWindow::runPalace(bool interactive)
 {
     if (m_simProcess && m_simProcess->state() == QProcess::Running) {
         info("Simulation is already running.", true);
         return;
     }
 
-    on_actionSave_triggered();
+    if (interactive) {
+        on_actionSave_triggered();
+    } else {
+        if (!applyPythonScriptFromEditor()) {
+            error("Failed to apply Python script in headless mode.", true);
+            QCoreApplication::exit(2);
+            return;
+        }
+        saveSettings();
+        setStateSaved();
+    }
 
     PalaceRunContext ctx;
     QString err;
     if (!buildPalaceRunContext(ctx, err)) {
         error(err, true);
+        if (!interactive) {
+            QCoreApplication::exit(1);
+        }
+
         return;
     }
 
@@ -128,6 +142,9 @@ void MainWindow::runPalace()
         m_simProcess->deleteLater();
         m_simProcess = nullptr;
         m_palacePhase = PalacePhase::None;
+
+        if (!interactive)
+            QCoreApplication::exit(3);
     }
 }
 
@@ -324,6 +341,11 @@ void MainWindow::appendToSimulationLog(const QByteArray &data)
     if (data.isEmpty())
         return;
 
+    if (m_headless) {
+        fwrite(data.constData(), 1, size_t(data.size()), stdout);
+        fflush(stdout);
+    }
+
     QSignalBlocker blocker(m_ui->editSimulationLog);
     m_ui->editSimulationLog->moveCursor(QTextCursor::End);
     m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
@@ -346,43 +368,67 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
 
     if (m_palacePhase == PalacePhase::PythonModel) {
         if (exitCode != 0) {
-            appendToSimulationLog(QString("\n[Palace Python preprocessing finished with exit code %1]\n")
-                                      .arg(exitCode).toUtf8());
+            appendToSimulationLog(
+                QString("\n[Palace Python preprocessing finished with exit code %1]\n")
+                    .arg(exitCode).toUtf8());
 
-            m_simProcess->deleteLater();
-            m_simProcess = nullptr;
+            if (m_simProcess) {
+                m_simProcess->deleteLater();
+                m_simProcess = nullptr;
+            }
             m_palacePhase = PalacePhase::None;
+
+            if (m_headless)
+                QCoreApplication::exit(exitCode);
+
             return;
         }
 
-        // detect run dir from log (optional)
         const QString detectedRunDir = detectRunDirFromLog();
         if (!detectedRunDir.isEmpty()) {
             m_simSettings["RunDir"] = detectedRunDir;
-        }
-        else {
+        } else {
             const QString scriptPath = m_simSettings.value("RunPythonScript").toString().trimmed();
             if (scriptPath.isEmpty() || !QFileInfo::exists(scriptPath)) {
                 error(QString("Python file '%1' does not exist.").arg(scriptPath), true);
+
+                if (m_simProcess) {
+                    m_simProcess->deleteLater();
+                    m_simProcess = nullptr;
+                }
+                m_palacePhase = PalacePhase::None;
+
+                if (m_headless)
+                    QCoreApplication::exit(1);
+
                 return;
             }
 
             m_simSettings["RunDir"] = QFileInfo(scriptPath).absolutePath();
         }
 
-        appendToSimulationLog("\n[Palace Python preprocessing finished successfully, searching for config...]\n");
+        appendToSimulationLog(
+            "\n[Palace Python preprocessing finished successfully, searching for config...]\n");
 
         PalaceRunContext ctx;
         QString err;
         if (!buildPalaceRunContext(ctx, err)) {
             error(err, true);
-            m_simProcess->deleteLater();
-            m_simProcess = nullptr;
+
+            if (m_simProcess) {
+                m_simProcess->deleteLater();
+                m_simProcess = nullptr;
+            }
             m_palacePhase = PalacePhase::None;
+
+            if (m_headless)
+                QCoreApplication::exit(1);
+
             return;
         }
 
         ctx.detectedRunDirWin = detectedRunDir;
+
         startPalaceSolverStage(ctx);
         return;
     }
@@ -394,10 +440,20 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
 
         appendToSimulationLog(msg.toUtf8());
 
-        m_simProcess->deleteLater();
-        m_simProcess = nullptr;
+        if (m_simProcess) {
+            m_simProcess->deleteLater();
+            m_simProcess = nullptr;
+        }
         m_palacePhase = PalacePhase::None;
+
+        if (m_headless)
+            QCoreApplication::exit(exitCode);
+
+        return;
     }
+
+    if (m_headless)
+        QCoreApplication::exit(exitCode);
 }
 
 /*!*******************************************************************************************************************

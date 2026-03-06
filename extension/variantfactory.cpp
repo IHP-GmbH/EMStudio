@@ -22,6 +22,7 @@
     ****************************************************************************/
 
     #include <QDebug>
+    #include <QComboBox>
     #include <QFileInfo>
     #include <QMessageBox>
 
@@ -49,7 +50,8 @@
     }
 
     QWidget *VariantFactory::createEditor(QtVariantPropertyManager *manager,
-            QtProperty *property, QWidget *parent)
+                                          QtProperty *property,
+                                          QWidget *parent)
     {
         if (manager->propertyType(property) == QVariant::Double) {
             auto *w = new SciDoubleSpinBox(parent);
@@ -69,49 +71,35 @@
         }
 
         if (manager->propertyType(property) == VariantManager::filePathTypeId()) {
-            FileEdit *editor;
+            FileEdit *editor = nullptr;
 
-            //QString keys = property->whatsThis();
-            //QMessageBox::information(0, "INFO", keys);
-
-            if( property->whatsThis() == "folder" ) {
+            if (property->whatsThis() == QLatin1String("folder")) {
                 editor = new FileEdit(parent, FileEdit::FOLDER);
-            }
-            else if( property->whatsThis() == "color" ) {
+            } else if (property->whatsThis() == QLatin1String("color")) {
                 editor = new FileEdit(parent, FileEdit::COLOR);
                 editor->setIconColor(property->valueColor());
-            }
-            else if( property->whatsThis() == "keywords" ) {
+            } else if (property->whatsThis() == QLatin1String("keywords")) {
                 editor = new FileEdit(parent, FileEdit::KEYWORDS);
                 editor->setKeywords(property->toolTip());
-            }
-            else if( property->whatsThis() == "runmode" ) {
+            } else if (property->whatsThis() == QLatin1String("runmode")) {
                 editor = new FileEdit(parent, FileEdit::RUNMODE);
-            }
-            else if( property->whatsThis() == "password" ) {
+            } else if (property->whatsThis() == QLatin1String("password")) {
                 editor = new FileEdit(parent, FileEdit::PASSWORD);
-            }
-            else {
+            } else {
                 editor = new FileEdit(parent, FileEdit::FILE);
             }
 
             QPalette pal;
-            if(property->whatsThis() != "color" && property->whatsThis() != "keywords") {
-                if(QFileInfo( manager->value(property).toString()).isReadable()) {
+            if (property->whatsThis() != QLatin1String("color") &&
+                property->whatsThis() != QLatin1String("keywords"))
+            {
+                if (QFileInfo(manager->value(property).toString()).isReadable())
                     pal.setColor(QPalette::Text, Qt::blue);
-                }
-                else {
+                else
                     pal.setColor(QPalette::Text, Qt::red);
-                }
-            }
-            else {
+            } else {
                 QColor colorId = QColor(manager->value(property).toString());
-                if(colorId.isValid()) {
-                    pal.setColor(QPalette::Text, colorId);
-                }
-                else {
-                    pal.setColor(QPalette::Text, Qt::black);
-                }
+                pal.setColor(QPalette::Text, colorId.isValid() ? colorId : Qt::black);
             }
 
             editor->setPalette(pal);
@@ -119,6 +107,7 @@
             editor->setDialogTitle(property->statusTip());
             editor->setFilePath(manager->value(property).toString());
             editor->setFilter(manager->attributeValue(property, QLatin1String("filter")).toString());
+
             theCreatedEditors[property].append(editor);
             theEditorToProperty[editor] = property;
 
@@ -126,6 +115,7 @@
                     this, SLOT(slotSetValue(const QString &)));
             connect(editor, SIGNAL(destroyed(QObject *)),
                     this, SLOT(slotEditorDestroyed(QObject *)));
+
             return editor;
         }
 

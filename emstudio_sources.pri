@@ -8,6 +8,7 @@ TOP = $$clean_path($$TOP)
 INCLUDEPATH += $$TOP $$TOP/src $$TOP/extension $$TOP/QtPropertyBrowser
 
 SOURCES += \
+    $$TOP/src/headless.cpp \
     $$TOP/src/wslHelper.cpp \
     $$TOP/src/about.cpp \
     $$TOP/src/tips.cpp \

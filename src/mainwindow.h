@@ -132,6 +132,7 @@ public:
     void                            setSubstrateFile(const QString &filePath);
     void                            tryAutoLoadRecentPythonForTopCell();
     void                            loadPythonModel(const QString &fileName);
+    void                            runHeadless(const QString& simKeyLower);
 
 #ifdef EMSTUDIO_TESTING
     bool                            testInitDefaultPalaceModel();
@@ -149,6 +150,7 @@ public:
 #endif
 
 private slots:
+    void                            showEvent(QShowEvent *event);
     void                            closeEvent(QCloseEvent *event);
     void                            on_lstRunControl_itemClicked(QListWidgetItem *item);
     void                            onSimulationSettingChanged(QtProperty *property, const QVariant &value);
@@ -186,6 +188,7 @@ private slots:
     void                            onOpenRecentPythonModel();
     void                            on_actionKeywords_triggered();
     void                            on_actionAbout_EMStudio_triggered();
+    void                            updateBoundaryOptionsForCurrentTool();
 
 private:
     void                            saveSettings();
@@ -218,7 +221,7 @@ private:
     void                            info(const QString &msg, bool clear = false);
     void                            error(const QString &msg, bool clear = false);
 
-    void                            updateBoundaryOptionsForCurrentTool();
+    void                            updateBoundaryTooltipsForCurrentTool();
 
     void                            loadPythonScriptToEditor(const QString &filePath);
     void                            setLineEditPalette(QLineEdit* lineEdit, const QString& path);
@@ -301,8 +304,8 @@ private:
     QString                         createDefaultOpenemsScript();
     QString                         createDefaultPalaceScript();
 
-    void                            runOpenEMS();
-    void                            runPalace();
+    void                            runPalace(bool interactive = true);
+    void                            runOpenEMS(bool interactive = true);
 
     bool                            buildPalaceRunContext(PalaceRunContext &ctx, QString &outError);
     void                            logPalaceStartupInfo(const PalaceRunContext &ctx);
@@ -379,6 +382,7 @@ private:
     QMap<QString, QVariant>         m_simSettings;
     QMap<QString, QVariant>         m_sysSettings;
 
+    bool                            m_headless = false;
     bool                            m_blockPortChanges;
 
     QProcess                        *m_simProcess = nullptr;

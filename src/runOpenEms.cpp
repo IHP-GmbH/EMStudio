@@ -28,45 +28,51 @@
 #include <QTextStream>
 #include <QMessageBox>
 
-#include "extension/variantmanager.h"
-#include "extension/variantfactory.h"
-
-#include "QtPropertyBrowser/qtvariantproperty.h"
-#include "QtPropertyBrowser/qttreepropertybrowser.h"
-
 #include "mainwindow.h"
-#include "preferences.h"
 #include "ui_mainwindow.h"
-#include "substrateview.h"
-#include "pythonparser.h"
 
 /*!*******************************************************************************************************************
  * \brief Runs OpenEMS: writes the Python script, configures env, and launches the Python process.
  **********************************************************************************************************************/
-void MainWindow::runOpenEMS()
+void MainWindow::runOpenEMS(bool interactive)
 {
     if (m_simProcess && m_simProcess->state() == QProcess::Running) {
         info("Simulation is already running.", true);
         return;
     }
 
-    on_actionSave_triggered();
+    // Headless flag (same idea as Palace)
+    m_headless = !interactive;
+
+    if (interactive) {
+        on_actionSave_triggered();
+    } else {
+        if (!applyPythonScriptFromEditor()) {
+            error("Failed to apply Python script in headless mode.", true);
+            QCoreApplication::exit(2);
+            return;
+        }
+        saveSettings();
+        setStateSaved();
+    }
 
     QString pythonPath = m_preferences.value("Python Path").toString().trimmed();
     if (pythonPath.isEmpty()) {
-        pythonPath = "python";
+        pythonPath = QStringLiteral("python");
     } else if (!QFileInfo::exists(pythonPath)) {
         error(QString("Python executable not found: %1").arg(pythonPath), true);
+        if (!interactive) QCoreApplication::exit(1);
         return;
     }
 
     const QString scriptPath = m_simSettings.value("RunPythonScript").toString().trimmed();
     if (scriptPath.isEmpty() || !QFileInfo::exists(scriptPath)) {
         error(QString("Python file '%1' does not exist.").arg(scriptPath), true);
+        if (!interactive) QCoreApplication::exit(1);
         return;
     }
 
-    QString runDir = m_simSettings.value("RunDir").toString();
+    QString runDir = m_simSettings.value("RunDir").toString().trimmed();
     if (runDir.isEmpty() || !QDir(runDir).exists()) {
         runDir = QFileInfo(scriptPath).absolutePath();
     }
@@ -78,13 +84,13 @@ void MainWindow::runOpenEMS()
         const QString key = it.key();
         const QString value = it.value().toString();
 
-        if (key == "Python Path") {
+        if (key == QLatin1String("Python Path")) {
             QFileInfo pythonFile(value);
-            QString pythonDir = pythonFile.absolutePath();
-            QString currentPath = env.value("PATH");
+            const QString pythonDir = pythonFile.absolutePath();
+            const QString currentPath = env.value(QStringLiteral("PATH"));
 
             if (!currentPath.contains(pythonDir, Qt::CaseInsensitive)) {
-                env.insert("PATH", pythonDir + QDir::listSeparator() + currentPath);
+                env.insert(QStringLiteral("PATH"), pythonDir + QDir::listSeparator() + currentPath);
             }
         } else if (!env.contains(key)) {
             env.insert(key, value);
@@ -97,13 +103,14 @@ void MainWindow::runOpenEMS()
 #else
     const QString pathSep = ":";
 #endif
-    if (env.contains("PYTHONPATH")) {
-        env.insert("PYTHONPATH", origScriptPath + pathSep + env.value("PYTHONPATH"));
+    if (env.contains(QStringLiteral("PYTHONPATH"))) {
+        env.insert(QStringLiteral("PYTHONPATH"),
+                   origScriptPath + pathSep + env.value(QStringLiteral("PYTHONPATH")));
     } else {
-        env.insert("PYTHONPATH", origScriptPath);
+        env.insert(QStringLiteral("PYTHONPATH"), origScriptPath);
     }
 
-    env.remove("PYTHONHOME");
+    env.remove(QStringLiteral("PYTHONHOME"));
 
     m_simProcess->setProcessEnvironment(env);
     m_simProcess->setWorkingDirectory(runDir);
@@ -113,41 +120,68 @@ void MainWindow::runOpenEMS()
         if (data.isEmpty())
             return;
 
+        if (m_headless) {
+            fwrite(data.constData(), 1, size_t(data.size()), stdout);
+            fflush(stdout);
+        }
+
         QSignalBlocker blocker(m_ui->editSimulationLog);
         m_ui->editSimulationLog->moveCursor(QTextCursor::End);
         m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
         m_ui->editSimulationLog->moveCursor(QTextCursor::End);
     };
 
-
-    connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [=]() {
+    connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [this, appendLog]() {
+        if (!m_simProcess) return;
         appendLog(m_simProcess->readAllStandardOutput());
     });
-    connect(m_simProcess, &QProcess::readyReadStandardError, this, [=]() {
+    connect(m_simProcess, &QProcess::readyReadStandardError, this, [this, appendLog]() {
+        if (!m_simProcess) return;
         appendLog(m_simProcess->readAllStandardError());
     });
-    connect(m_simProcess, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-            this, [=](int exitCode, QProcess::ExitStatus) {
-                const QString msg = QString("\n[Simulation finished with exit code %1]\n").arg(exitCode);
-                QSignalBlocker blocker(m_ui->editSimulationLog);
-                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                m_ui->editSimulationLog->insertPlainText(msg);
-                m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                m_simProcess->deleteLater();
-                m_simProcess = nullptr;
+
+    connect(m_simProcess,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this,
+            [this](int exitCode, QProcess::ExitStatus)
+            {
+                const QString msg =
+                    QString("\n[Simulation finished with exit code %1]\n").arg(exitCode);
+
+                {
+                    QSignalBlocker blocker(m_ui->editSimulationLog);
+                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+                    m_ui->editSimulationLog->insertPlainText(msg);
+                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+                }
+
+                if (m_simProcess) {
+                    m_simProcess->deleteLater();
+                    m_simProcess = nullptr;
+                }
+
+                if (m_headless)
+                    QCoreApplication::exit(exitCode);
             });
 
     m_ui->editSimulationLog->clear();
     m_ui->editSimulationLog->insertPlainText("Starting OpenEMS simulation...\n");
-
-    m_ui->editSimulationLog->insertPlainText(QString("[RUN] %1 %2\n")
-                                                 .arg(QDir::toNativeSeparators(pythonPath),
-                                                  QDir::toNativeSeparators(scriptPath)));
+    m_ui->editSimulationLog->insertPlainText(
+        QString("[RUN] %1 %2\n")
+            .arg(QDir::toNativeSeparators(pythonPath),
+                 QDir::toNativeSeparators(scriptPath)));
 
     m_simProcess->start(pythonPath, QStringList() << scriptPath);
+
     if (!m_simProcess->waitForStarted(3000)) {
         error("Failed to start simulation process.", false);
-        m_simProcess->deleteLater();
-        m_simProcess = nullptr;
+
+        if (m_simProcess) {
+            m_simProcess->deleteLater();
+            m_simProcess = nullptr;
+        }
+
+        if (!interactive)
+            QCoreApplication::exit(3);
     }
 }

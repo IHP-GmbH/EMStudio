@@ -225,6 +225,8 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         prop->setValue(info.value);
         m_simSettingsGroup->addSubProperty(prop);
     }
+
+    updateBoundaryTooltipsForCurrentTool();
 }
 
 /*!*******************************************************************************************************************
@@ -322,55 +324,96 @@ void MainWindow::applyBoundariesToUiAndSettings(const QStringList &items, const 
         QStringLiteral("Z-"), QStringLiteral("Z+")
     };
 
-    // Locate Boundaries group among top-level props
+    if (items.size() != 6)
+        return;
+
+    auto normalizeForTool = [&](QString v) -> QString {
+        v = v.trimmed().toUpper();
+
+        const bool isPalace = (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0);
+        const bool isOpenEMS = (simTool.compare(QLatin1String("OpenEMS"), Qt::CaseInsensitive) == 0);
+
+        if (isPalace) {
+            if (v == QLatin1String("MUR"))   return QStringLiteral("ABC");
+            if (v == QLatin1String("PML_8")) return QStringLiteral("PML");
+
+            if (v == QLatin1String("PEC") || v == QLatin1String("PMC") ||
+                v == QLatin1String("ABC") || v == QLatin1String("PML"))
+                return v;
+            return QStringLiteral("PEC");
+        }
+
+        if (isOpenEMS) {
+            if (v == QLatin1String("ABC")) return QStringLiteral("MUR");
+            if (v == QLatin1String("PML")) return QStringLiteral("PML_8");
+
+            if (v == QLatin1String("PEC") || v == QLatin1String("PMC") ||
+                v == QLatin1String("MUR") || v == QLatin1String("PML_8"))
+                return v;
+            return QStringLiteral("PEC");
+        }
+
+        if (v == QLatin1String("PEC") || v == QLatin1String("PMC"))
+            return v;
+        return QStringLiteral("PEC");
+    };
+
     QtProperty* boundariesGroup = nullptr;
-    const auto topProps = m_propertyBrowser->properties();
-    for (QtProperty* top : topProps) {
+
+    for (QtProperty* top : m_propertyBrowser->properties()) {
         if (top->propertyName() == QLatin1String("Boundaries")) {
             boundariesGroup = top;
             break;
         }
     }
 
-    QStringList mappedItems = items;
-
-    if (boundariesGroup) {
-        const auto subProps = boundariesGroup->subProperties();
-        for (QtProperty* sub : subProps) {
-            const QString sideName = sub->propertyName();
-            const int idx = sides.indexOf(sideName);
-            if (idx < 0 || idx >= mappedItems.size())
-                continue;
-
-            QString mappedValue = mappedItems.at(idx);
-
-            if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0) {
-                if (mappedValue.compare(QLatin1String("MUR"),   Qt::CaseInsensitive) == 0 ||
-                    mappedValue.compare(QLatin1String("PML_8"), Qt::CaseInsensitive) == 0 ||
-                    mappedValue.compare(QLatin1String("ABC"),   Qt::CaseInsensitive) == 0) {
-                    mappedValue = QStringLiteral("Absorbing");
-                }
-            } else if (simTool.compare(QLatin1String("OpenEMS"), Qt::CaseInsensitive) == 0) {
-                if (mappedValue.compare(QLatin1String("Absorbing"), Qt::CaseInsensitive) == 0) {
-                    mappedValue = QStringLiteral("MUR");
+    if (!boundariesGroup) {
+        for (QtProperty* top : m_propertyBrowser->properties()) {
+            for (QtProperty* sub : top->subProperties()) {
+                if (sub->propertyName() == QLatin1String("Boundaries")) {
+                    boundariesGroup = sub;
+                    break;
                 }
             }
+            if (boundariesGroup) break;
+        }
+    }
 
-            mappedItems[idx] = mappedValue;
+    QStringList normalized = items;
+    for (int i = 0; i < 6; ++i)
+        normalized[i] = normalizeForTool(normalized[i]);
+
+    if (boundariesGroup) {
+        QSignalBlocker b(m_variantManager);
+
+        for (QtProperty* sub : boundariesGroup->subProperties()) {
+            const QString sideName = sub->propertyName();
+            const int idxSide = sides.indexOf(sideName);
+            if (idxSide < 0)
+                continue;
+
+            const QString valueWanted = normalized.at(idxSide);
 
             const QStringList enumNames =
                 m_variantManager->attributeValue(sub, QLatin1String("enumNames")).toStringList();
-            const int enumIndex = enumNames.indexOf(mappedValue);
-            if (enumIndex >= 0)
-                m_variantManager->setValue(sub, enumIndex);
+
+            int enumIndex = enumNames.indexOf(valueWanted);
+            if (enumIndex < 0) {
+                enumIndex = enumNames.indexOf(QStringLiteral("PEC"));
+                if (enumIndex < 0) enumIndex = 0;
+            }
+
+            m_variantManager->setValue(sub, enumIndex);
         }
     }
 
     QVariantMap bndMap;
-    for (int i = 0; i < mappedItems.size() && i < sides.size(); ++i)
-        bndMap[sides.at(i)] = mappedItems.at(i);
+    for (int i = 0; i < 6; ++i)
+        bndMap[sides.at(i)] = normalized.at(i);
 
     m_simSettings[QStringLiteral("Boundaries")] = bndMap;
+
+    updateBoundaryTooltipsForCurrentTool();
 }
 
 /*!*******************************************************************************************************************

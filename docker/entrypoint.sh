@@ -18,10 +18,4 @@ if [ ! -f "$CFG_FILE" ]; then
   cp /etc/emstudio/EMStudioApp.conf "$CFG_FILE"
 fi
 
-if [ -n "${DISPLAY:-}" ]; then
-  xterm &
-else
-  echo "DISPLAY is not set; skip xterm"
-fi
-
 exec "$@"

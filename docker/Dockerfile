@@ -25,7 +25,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 mesa-utils \
     xterm \
     libfftw3-dev libhdf5-dev libboost-all-dev \
-    libvtk9-dev \
+    libvtk9-dev libvtk9-qt-dev \
+    gengetopt help2man groff pod2pdf bison flex libhpdf-dev libtool \
  && rm -rf /var/lib/apt/lists/*
 
 # ----------------------------
@@ -53,19 +54,19 @@ RUN git clone --recursive https://github.com/awslabs/palace.git \
  && cmake -S . -B build -G "Unix Makefiles" \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_INSTALL_PREFIX=/opt/palace \
- && cmake --build build -j16 \
+ && cmake --build build --parallel 1 --verbose 2>&1 | tee /tmp/palace-build.log \
  && cmake --install build
 
 # ----------------------------
-# Build openEMS (source)
+# Build openEMS (C++ install) + manual Python install
 # ----------------------------
 WORKDIR /opt/src
 RUN git clone --recursive https://github.com/thliebig/openEMS-Project.git \
  && cd openEMS-Project \
- && mkdir -p build && cd build \
- && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/openems \
- && cmake --build . -j"$(nproc)" --target openEMS
-
+ && source /opt/venv/bin/activate \
+ && ./update_openEMS.sh /opt/openems --python --disable-GUI \
+ || (echo "===== openEMS build log =====" && tail -n 200 /opt/src/openEMS-Project/build_*.log && false)
+ 
 # ----------------------------
 # Build EMStudio (qmake)
 # ----------------------------

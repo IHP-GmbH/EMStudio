@@ -3243,6 +3243,28 @@ void MainWindow::on_actionAbout_EMStudio_triggered()
     dlg.exec();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Applies the selected top cell name coming from the model.
+ *
+ * This method updates the simulation settings when a top cell is selected
+ * from the cell model (for example from the library/cell browser).
+ *
+ * The function:
+ *  - trims the provided cell name,
+ *  - stores it in the simulation settings under the keys
+ *      - "TopCell"
+ *      - "gds_cellname",
+ *  - synchronizes the UI combobox (cbxTopCell) with the selected cell.
+ *
+ * If the combobox does not yet contain the cell entry (for example when the
+ * UI model is still being populated), a delayed update is scheduled using
+ * QTimer::singleShot() to retry the synchronization.
+ *
+ * Signals from the combobox are temporarily blocked using QSignalBlocker
+ * to avoid triggering unwanted UI updates or recursive signal handling.
+ *
+ * \param cellName Name of the top cell selected from the model.
+ **********************************************************************************************************************/
 void MainWindow::applyTopCellFromModel(const QString& cellName)
 {
     const QString top = cellName.trimmed();
@@ -3270,4 +3292,120 @@ void MainWindow::applyTopCellFromModel(const QString& cellName)
         if (idx >= 0)
             m_ui->cbxTopCell->setCurrentIndex(idx);
     });
+}
+
+/*!*******************************************************************************************************************
+ * \brief Opens a system terminal window.
+ *
+ * Triggered from the Setup → Terminal menu action.
+ *
+ * This function launches a detached system terminal process using
+ * QProcess::startDetached(). The terminal is opened in the current
+ * working directory of the application.
+ *
+ * Platform-specific behavior:
+ *
+ * Windows:
+ *  - Prefers launching PowerShell (powershell.exe) with the -NoExit option.
+ *  - Falls back to the classic Command Prompt (cmd.exe /K) if PowerShell
+ *    is not available.
+ *
+ * Linux:
+ *  - Attempts to launch a terminal emulator from a list of common candidates:
+ *        x-terminal-emulator
+ *        xterm
+ *        gnome-terminal
+ *        konsole
+ *        xfce4-terminal
+ *        mate-terminal
+ *        lxterminal
+ *  - The first available terminal executable found in PATH is used.
+ *
+ * If no suitable terminal application is found or the process cannot be
+ * started, a warning message is displayed to the user.
+ *
+ * The terminal process is started detached and does not block the GUI.
+ **********************************************************************************************************************/
+void MainWindow::on_actionTerminal_triggered()
+{
+    const QString workDir = QDir::currentPath();
+
+#if defined(Q_OS_WIN)
+
+    const QString cmd = QStandardPaths::findExecutable("cmd.exe");
+    if (cmd.isEmpty()) {
+        QMessageBox::warning(this, tr("Terminal"),
+                             tr("cmd.exe was not found."));
+        return;
+    }
+
+    const QString ps = QStandardPaths::findExecutable("powershell.exe");
+
+    QStringList arguments;
+    if (!ps.isEmpty()) {
+        arguments << "/C"
+                  << "start"
+                  << ""   // empty window title is required by 'start'
+                  << ps
+                  << "-NoExit"
+                  << "-Command"
+                  << QString("Set-Location -LiteralPath '%1'")
+                         .arg(QDir::toNativeSeparators(workDir).replace("'", "''"));
+    } else {
+        arguments << "/C"
+                  << "start"
+                  << ""   // empty window title
+                  << "cmd.exe"
+                  << "/K"
+                  << QString("cd /d \"%1\"").arg(QDir::toNativeSeparators(workDir));
+    }
+
+    if (!QProcess::startDetached(cmd, arguments, workDir)) {
+        QMessageBox::warning(this, tr("Terminal"),
+                             tr("Failed to start terminal."));
+    }
+
+#elif defined(Q_OS_LINUX)
+
+    struct TerminalCandidate
+    {
+        QString program;
+        QStringList arguments;
+    };
+
+    const QList<TerminalCandidate> candidates = {
+        { "x-terminal-emulator", {} },
+        { "xterm", {} },
+        { "gnome-terminal", { "--working-directory", workDir } },
+        { "konsole", { "--workdir", workDir } },
+        { "xfce4-terminal", { "--working-directory", workDir } },
+        { "mate-terminal", { "--working-directory", workDir } },
+        { "lxterminal", { "--working-directory", workDir } }
+    };
+
+    bool started = false;
+
+    for (const TerminalCandidate &candidate : candidates) {
+        const QString exe = QStandardPaths::findExecutable(candidate.program);
+        if (exe.isEmpty())
+            continue;
+
+        if (QProcess::startDetached(exe, candidate.arguments, workDir)) {
+            started = true;
+            break;
+        }
+    }
+
+    if (!started) {
+        QMessageBox::warning(this, tr("Terminal"),
+                             tr("No supported terminal emulator was found.\n"
+                                "Please install xterm or another terminal."));
+    }
+
+#else
+
+    QMessageBox::information(this, tr("Terminal"),
+                             tr("Terminal launching is not implemented for this platform."));
+
+#endif
 }

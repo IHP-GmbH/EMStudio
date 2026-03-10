@@ -332,6 +332,7 @@
     </property>
     <addaction name="actionPrefernces"/>
     <addaction name="actionKeywords"/>
+    <addaction name="actionTerminal"/>
    </widget>
    <widget class="QMenu" name="menuWindow">
     <property name="title">
@@ -476,6 +477,11 @@
   <action name="actionAbout_EMStudio">
    <property name="text">
     <string>About EMStudio...</string>
+   </property>
+  </action>
+  <action name="actionTerminal">
+   <property name="text">
+    <string>Terminal...</string>
    </property>
   </action>
   <zorder>dockRunControl</zorder>

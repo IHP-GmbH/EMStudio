@@ -189,6 +189,7 @@ private slots:
     void                            on_actionKeywords_triggered();
     void                            on_actionAbout_EMStudio_triggered();
     void                            updateBoundaryOptionsForCurrentTool();
+    void                            on_actionTerminal_triggered();
 
 private:
     void                            saveSettings();

@@ -2442,6 +2442,7 @@ QString MainWindow::createDefaultPalaceScript()
         const QString simKeyLower = QStringLiteral("palace");
         applySimSettingsToScript(script, simKeyLower);
         applyGdsAndXmlPaths(script, simKeyLower);
+        applyBoundaries(script, true);
         PythonParser::Result finalResult = PythonParser::parseSettingsFromText(script);
         if (finalResult.ok) {
             m_curPythonData = finalResult;

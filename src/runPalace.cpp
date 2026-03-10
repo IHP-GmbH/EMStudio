@@ -190,8 +190,6 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
         ctx.launcherWin = toLinuxPathPortable(ctx.launcherWin, ctx.distro, 8000);
 #endif
 
-        qDebug()<<ctx.launcherWin;
-
         if (!pathIsExecutablePortable(ctx.launcherWin, ctx.distro, 8000)) {
             outError = QStringLiteral("PALACE_RUN_SCRIPT must point to an executable file.");
             return false;

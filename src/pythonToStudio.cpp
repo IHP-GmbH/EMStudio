@@ -384,7 +384,7 @@ void MainWindow::applyBoundariesToUiAndSettings(const QStringList &items, const 
         normalized[i] = normalizeForTool(normalized[i]);
 
     if (boundariesGroup) {
-        QSignalBlocker b(m_variantManager);
+        //QSignalBlocker b(m_variantManager);
 
         for (QtProperty* sub : boundariesGroup->subProperties()) {
             const QString sideName = sub->propertyName();
@@ -404,6 +404,14 @@ void MainWindow::applyBoundariesToUiAndSettings(const QStringList &items, const 
             }
 
             m_variantManager->setValue(sub, enumIndex);
+
+            QStringList tips =
+                m_variantManager->attributeValue(sub, QLatin1String("enumToolTips")).toStringList();
+
+            if (!tips.isEmpty())
+                sub->setToolTip(tips.value(enumIndex));
+
+            onSimulationSettingChanged(sub, QVariant(enumIndex));
         }
     }
 
@@ -414,6 +422,11 @@ void MainWindow::applyBoundariesToUiAndSettings(const QStringList &items, const 
     m_simSettings[QStringLiteral("Boundaries")] = bndMap;
 
     updateBoundaryTooltipsForCurrentTool();
+
+    m_propertyBrowser->setUpdatesEnabled(false);
+    m_propertyBrowser->setUpdatesEnabled(true);
+    m_propertyBrowser->update();
+    m_propertyBrowser->repaint();
 }
 
 /*!*******************************************************************************************************************

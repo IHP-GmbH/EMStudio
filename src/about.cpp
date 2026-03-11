@@ -92,10 +92,10 @@ void AboutDialog::initUi()
     const QString buildType = QStringLiteral("Release");
 #endif
 
-    // Build info (type + timestamp)
+    QString commitDate = QStringLiteral(EMSTUDIO_GIT_DATE_STR);
+
     m_ui->lblBuild->setText(
         QStringLiteral("%1 | %2")
-            .arg(buildType,
-                 QDateTime::currentDateTime().toString(Qt::ISODate))
+            .arg(buildType, commitDate)
         );
 }

@@ -118,3 +118,6 @@ message(EMStudio version: $${EMSTUDIO_VERSION})
 
 DEFINES += EMSTUDIO_VERSION_STR=\\\"$${EMSTUDIO_VERSION}\\\"
 DEFINES += EMSTUDIO_MAJOR=$$EMSTUDIO_MAJOR
+
+EMSTUDIO_GIT_DATE = $$system(git log -1 --format=%cd --date=format:%Y-%m-%dT%H:%M:%S)
+DEFINES += EMSTUDIO_GIT_DATE_STR=\\\"$${EMSTUDIO_GIT_DATE}\\\"

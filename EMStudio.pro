@@ -82,14 +82,12 @@ unix {
 
 EMSTUDIO_MAJOR = 1
 EMSTUDIO_TAG   = v$${EMSTUDIO_MAJOR}.0
+EMSTUDIO_MINOR = 0
 
 win32 {
-    # Ensure git is available
     GIT_EXISTS = $$system(git --version >NUL 2>NUL && echo yes)
 
     equals(GIT_EXISTS, yes) {
-
-        # Check if tag v<MAJOR>.0 exists
         HAS_TAG = $$system(git rev-parse -q --verify refs/tags/$${EMSTUDIO_TAG} >NUL 2>NUL && echo yes)
 
         equals(HAS_TAG, yes) {
@@ -97,13 +95,26 @@ win32 {
         } else {
             EMSTUDIO_MINOR = $$system(git rev-list --count HEAD)
         }
-
-    } else {
-        EMSTUDIO_MINOR = 0
     }
-
-    EMSTUDIO_VERSION = $${EMSTUDIO_MAJOR}.$${EMSTUDIO_MINOR}
 }
 
-DEFINES += EMSTUDIO_VERSION_STR=\\\"$$EMSTUDIO_VERSION\\\"
+unix {
+    GIT_EXISTS = $$system(git --version >/dev/null 2>&1 && echo yes)
+
+    equals(GIT_EXISTS, yes) {
+        HAS_TAG = $$system(git rev-parse -q --verify refs/tags/$${EMSTUDIO_TAG} >/dev/null 2>&1 && echo yes)
+
+        equals(HAS_TAG, yes) {
+            EMSTUDIO_MINOR = $$system(git rev-list --count $${EMSTUDIO_TAG}..HEAD)
+        } else {
+            EMSTUDIO_MINOR = $$system(git rev-list --count HEAD)
+        }
+    }
+}
+
+EMSTUDIO_VERSION = $${EMSTUDIO_MAJOR}.$${EMSTUDIO_MINOR}
+
+message(EMStudio version: $${EMSTUDIO_VERSION})
+
+DEFINES += EMSTUDIO_VERSION_STR=\\\"$${EMSTUDIO_VERSION}\\\"
 DEFINES += EMSTUDIO_MAJOR=$$EMSTUDIO_MAJOR

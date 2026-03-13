@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QtTest/QtTest>
 
+#include "tst_about_dialog.h"
 #include "tst_palace_golden.h"
 #include "tst_openems_golden.h"
 
@@ -16,6 +17,10 @@ int main(int argc, char** argv)
     }
     {
         OpenemsGolden tc;
+        status |= QTest::qExec(&tc, argc, argv);
+    }
+    {
+        AboutDialogTest tc;
         status |= QTest::qExec(&tc, argc, argv);
     }
 

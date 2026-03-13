@@ -9,11 +9,13 @@ include($$TOP/emstudio_sources.pri)
 SOURCES += \
     main.cpp \
     test_utils.cpp \
+    tst_about_dialog.cpp \
     tst_openems_golden.cpp \
     tst_palace_golden.cpp
 
 HEADERS += \
     test_utils.h \
+    tst_about_dialog.h \
     tst_openems_golden.h \
     tst_palace_golden.h
 

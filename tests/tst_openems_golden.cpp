@@ -151,3 +151,86 @@ void OpenemsGolden::subLayerNames_toggle_convertsPorts()
 
     QVERIFY2(w.testPortsRowCount() >= 0, "Ports table not accessible");
 }
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that runOpenEMS() starts a process and writes log output in headless test mode.
+ *
+ * The test does not require a real OpenEMS installation. Instead, it injects a lightweight
+ * Python launcher stub through the "Python Path" preference, generates a deterministic
+ * OpenEMS model, writes it to a temporary file, and starts runOpenEMS(false).
+ *
+ * The test verifies:
+ *  - the simulation process starts,
+ *  - the process finishes within timeout,
+ *  - the log contains the start banner,
+ *  - the log contains the executed command,
+ *  - the log contains the finish banner.
+ **********************************************************************************************************************/
+void OpenemsGolden::runOpenems_headless_startsProcess_and_logsOutput()
+{
+    MainWindow w;
+
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    QVERIFY2(!gdsPath.isEmpty(), "Golden GDS file not found via QFINDTESTDATA");
+
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY2(!xmlPath.isEmpty(), "Golden XML file not found via QFINDTESTDATA");
+
+    w.setGdsFile(gdsPath);
+    w.setTopCell("t1");
+    w.setSubstrateFile(xmlPath);
+
+    const QString pyStub = ensureTestOpenemsPythonStub();
+    QVERIFY2(!pyStub.isEmpty(), "OpenEMS python stub not found via QFINDTESTDATA");
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(pyStub,
+                          QFile::permissions(pyStub) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.testSetPreference("Python Path", pyStub);
+    w.refreshSimToolOptionsForTests();
+
+    QString terr;
+    QVERIFY2(w.testSetSimToolKey("openems", &terr), qPrintable(terr));
+
+    QVERIFY2(w.testInitDefaultOpenemsModel(),
+             "testInitDefaultOpenemsModel() failed");
+
+    QString err;
+    const QString regenerated = w.testGenerateScriptFromGuiState(&err);
+    QVERIFY2(!regenerated.isEmpty(), qPrintable(err));
+
+    w.testSetEditorText(regenerated);
+
+    const QString scriptPath =
+        w.testWriteEditorToTempPyFile("openems_run_test.py");
+    QVERIFY2(!scriptPath.isEmpty(),
+             "Failed to create temporary OpenEMS python script");
+
+    w.testSetRunPythonScriptPath(scriptPath);
+    w.testSetSimSetting("RunDir", QFileInfo(scriptPath).absolutePath());
+
+    w.testRunOpenems(false);
+
+    const bool finished = QTest::qWaitFor([&w]() {
+        return !w.testIsSimulationRunning();
+    }, 5000);
+
+    QVERIFY2(finished, "Simulation process did not finish within timeout");
+
+    const QString log = w.testSimulationLogText();
+
+    QVERIFY2(log.contains("Starting OpenEMS simulation"),
+             qPrintable(QString("Missing start message:\n%1").arg(log)));
+
+    QVERIFY2(log.contains("[RUN]"),
+             qPrintable(QString("Missing run command:\n%1").arg(log)));
+
+    QVERIFY2(log.contains("Simulation finished") ||
+                 log.contains("[Simulation finished with exit code"),
+             qPrintable(QString("Missing finish message:\n%1").arg(log)));
+}

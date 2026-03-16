@@ -135,6 +135,8 @@ public:
     void                            runHeadless(const QString& simKeyLower);
 
 #ifdef EMSTUDIO_TESTING
+    friend class OpenemsGolden;
+
     bool                            testInitDefaultPalaceModel();
     void                            testSetSimSetting(const QString& key, const QVariant& val);
     QString                         testGenerateScriptFromGuiState(QString *outError = nullptr);
@@ -147,6 +149,11 @@ public:
     bool                            testInitDefaultOpenemsModel();
     int                             testPortsRowCount() const;
     void                            testSetSubLayerNamesChecked(bool on);
+    QString                         testWriteEditorToTempPyFile(const QString& fileNameHint = QString()) const;
+    QString                         testSimulationLogText() const;
+    bool                            testIsSimulationRunning() const;
+    void                            testSetRunPythonScriptPath(const QString& path);
+    void                            testRunOpenems(bool interactive = false);
 #endif
 
 private slots:

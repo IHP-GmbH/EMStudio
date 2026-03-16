@@ -4,6 +4,8 @@
 #include <QString>
 #include <QVector>
 #include <QDebug>
+#include <QDir>
+#include <QProcess>
 
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
@@ -317,6 +319,107 @@ void MainWindow::testSetSubLayerNamesChecked(bool on)
     }
 
     on_cbSubLayerNames_stateChanged(on ? Qt::Checked : Qt::Unchecked);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Writes the current editor text into a temporary Python file for process-based tests.
+ *
+ * \param fileNameHint Optional file name hint.
+ * \return Absolute path to the created file, or empty string on failure.
+ **********************************************************************************************************************/
+QString MainWindow::testWriteEditorToTempPyFile(const QString& fileNameHint) const
+{
+    const QString baseDir =
+        QDir::temp().filePath(QStringLiteral("emstudio_test_runopenems"));
+    QDir().mkpath(baseDir);
+
+    const QString fileName = fileNameHint.isEmpty()
+                                 ? QStringLiteral("test_script.py")
+                                 : fileNameHint;
+
+    const QString path = QDir(baseDir).filePath(fileName);
+
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+        return {};
+
+    f.write(testEditorText().toUtf8());
+    f.close();
+
+    return path;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Returns the current simulation log text for test inspection.
+ *
+ * \return Full text content of the simulation log editor.
+ **********************************************************************************************************************/
+QString MainWindow::testSimulationLogText() const
+{
+    return (m_ui && m_ui->editSimulationLog)
+    ? m_ui->editSimulationLog->toPlainText()
+    : QString();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Returns whether a simulation process is currently running.
+ *
+ * \return True if m_simProcess exists and is running, false otherwise.
+ **********************************************************************************************************************/
+bool MainWindow::testIsSimulationRunning() const
+{
+    return m_simProcess && m_simProcess->state() == QProcess::Running;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the Python script path for OpenEMS runs in test mode.
+ *
+ * This helper assigns the Python model path both to the GUI line edit
+ * (txtRunPythonScript) and to the internal simulation settings map.
+ * It avoids triggering any UI signals and ensures that headless runs
+ * (e.g. runOpenEMS(false)) do not open a "Save As" dialog during tests.
+ *
+ * Intended for automated tests that prepare a temporary Python script
+ * and want to run it through the normal OpenEMS execution path.
+ *
+ * \param path Absolute path to the Python script file to use for the run.
+ **********************************************************************************************************************/
+void MainWindow::testSetRunPythonScriptPath(const QString& path)
+{
+    if (!m_ui || !m_ui->txtRunPythonScript)
+        return;
+
+    {
+        QSignalBlocker b(m_ui->txtRunPythonScript);
+        m_ui->txtRunPythonScript->setText(path);
+    }
+
+    m_simSettings["RunPythonScript"] = path;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Starts an OpenEMS simulation from tests without requiring user interaction.
+ *
+ * This helper forwards the call directly to runOpenEMS(), allowing unit
+ * and golden tests to execute the normal simulation launch path without
+ * accessing private methods.
+ *
+ * It is typically used together with:
+ *  - testSetRunPythonScriptPath()
+ *  - testWriteEditorToTempPyFile()
+ *  - a Python stub executable configured via "Python Path"
+ *
+ * This allows CI tests to verify process startup, logging behaviour,
+ * and proper termination of the simulation process without requiring
+ * a real OpenEMS installation.
+ *
+ * \param interactive If true, the normal interactive workflow is used.
+ *                    If false, the simulation runs in headless mode
+ *                    (used by automated tests).
+ **********************************************************************************************************************/
+void MainWindow::testRunOpenems(bool interactive)
+{
+    runOpenEMS(interactive);
 }
 
 #endif

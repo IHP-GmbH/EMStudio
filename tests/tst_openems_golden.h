@@ -11,6 +11,7 @@ private slots:
     void defaultOpenems_changeSettings_and_compare();
     void boundaryOptions_switchTool_updatesEnumList();
     void subLayerNames_toggle_convertsPorts();
+    void runOpenems_headless_startsProcess_and_logsOutput();
 };
 
 #endif // TST_OPENEMS_GOLDEN_H

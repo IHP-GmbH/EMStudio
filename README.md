@@ -45,18 +45,24 @@ It provides an integrated workflow for:
 
 # Installation
 
-## Pre-built binaries (Windows)
+## Pre-built Installer (Windows)
 
-A ready-to-use **Windows installer** is produced by the CI pipeline.
+You can download a pre-built Windows installation if you are logged into your GitHub account.
+Without login, downloading the installer is not possible!
 
-You can download it from **GitHub → Actions → Workflows → latest successful run**.  
-In the workflow artifacts (job `build-windows`) you will find the Windows installer.
+- Go to Actions (In the Bar next to Code, Issues, Pull requests, etc.)
+- Click on the latest run with a green checkmark
+- Scroll to the bottom of the page
+- Press the download button on the right next to emstudio-windows-installer
 
-> Linux users typically build EMStudio from source (see below).
+<img src="./doc/png/prebuilt_win.png" alt="installer" width="700">
+
 
 ---
 
 ## Build from source (Linux)
+
+Linux users typically build EMStudio from source:
 
 ```bash
 cd /path/to/EMStudio

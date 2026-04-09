@@ -141,7 +141,7 @@ scripts/klEmsDriver.py
 3. Launch KLayout with:
 
 ```bash
-"<path>\klayout_app.exe" -e -rm "<path>\EMStudio\scripts\klEmsDriver.py"
+"<path>/klayout -e -rm <path>/EMStudio/scripts/klEmsDriver.py"
 ```
 
 ## Desktop Shortcut (Windows)

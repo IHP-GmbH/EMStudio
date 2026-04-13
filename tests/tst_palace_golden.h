@@ -9,6 +9,7 @@ class PalaceGolden : public QObject
 
 private slots:
     void defaultPalace_changeSettings_ports_and_compare();
+    void runPalace_headless_startsProcess_and_logsOutput();
 };
 
 #endif // TST_PALACE_GOLDEN_H

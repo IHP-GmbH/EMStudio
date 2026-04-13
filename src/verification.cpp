@@ -422,5 +422,15 @@ void MainWindow::testRunOpenems(bool interactive)
     runOpenEMS(interactive);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Starts Palace simulation from tests without exposing private production API.
+ *
+ * \param interactive If true, runs in interactive mode; otherwise in headless mode.
+ **********************************************************************************************************************/
+void MainWindow::testRunPalace(bool interactive)
+{
+    runPalace(interactive);
+}
+
 #endif
 

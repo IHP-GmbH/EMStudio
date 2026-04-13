@@ -4,6 +4,7 @@
 #include "tst_about_dialog.h"
 #include "tst_palace_golden.h"
 #include "tst_openems_golden.h"
+#include "tst_preferences_dialog.h"
 
 int main(int argc, char** argv)
 {
@@ -21,6 +22,10 @@ int main(int argc, char** argv)
     }
     {
         AboutDialogTest tc;
+        status |= QTest::qExec(&tc, argc, argv);
+    }
+    {
+        PreferencesDialogTest tc;
         status |= QTest::qExec(&tc, argc, argv);
     }
 

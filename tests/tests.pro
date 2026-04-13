@@ -11,13 +11,15 @@ SOURCES += \
     test_utils.cpp \
     tst_about_dialog.cpp \
     tst_openems_golden.cpp \
-    tst_palace_golden.cpp
+    tst_palace_golden.cpp \
+    tst_preferences_dialog.cpp \
 
 HEADERS += \
     test_utils.h \
     tst_about_dialog.h \
     tst_openems_golden.h \
-    tst_palace_golden.h
+    tst_palace_golden.h \
+    tst_preferences_dialog.h
 
 FORMS += \
     $$PWD/../src/about.ui \

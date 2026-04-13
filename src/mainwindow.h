@@ -154,6 +154,7 @@ public:
     bool                            testIsSimulationRunning() const;
     void                            testSetRunPythonScriptPath(const QString& path);
     void                            testRunOpenems(bool interactive = false);
+    void                            testRunPalace(bool interactive = false);
 #endif
 
 private slots:

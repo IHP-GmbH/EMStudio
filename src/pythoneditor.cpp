@@ -542,3 +542,31 @@ void PythonEditor::setExtraHighlightKeywords(const QStringList &words)
     if (m_highlighter)
         m_highlighter->setExtraKeywords(words);
 }
+
+#ifdef EMSTUDIO_TESTING
+
+/*!*******************************************************************************************************************
+ * \brief Test helper that exposes updateVariableList() in test builds.
+ **********************************************************************************************************************/
+void PythonEditor::testUpdateVariableList()
+{
+    updateVariableList();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Test helper that exposes zoomInText() in test builds.
+ **********************************************************************************************************************/
+void PythonEditor::testZoomInText()
+{
+    zoomInText();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Test helper that exposes zoomOutText() in test builds.
+ **********************************************************************************************************************/
+void PythonEditor::testZoomOutText()
+{
+    zoomOutText();
+}
+
+#endif

@@ -58,6 +58,13 @@ public:
     void                                setPlainTextUndoable(const QString &text);
     void                                setExtraHighlightKeywords(const QStringList &words);
 
+#ifdef EMSTUDIO_TESTING
+public:
+    void                                testUpdateVariableList();
+    void                                testZoomInText();
+    void                                testZoomOutText();
+#endif
+
 signals:
     void                                sigFontSizeChanged(qreal newSize);
 

@@ -4,6 +4,7 @@
 #include "tst_find_dialog.h"
 #include "tst_about_dialog.h"
 #include "tst_palace_golden.h"
+#include "tst_python_editor.h"
 #include "tst_openems_golden.h"
 #include "tst_headless_dispatch.h"
 #include "tst_preferences_dialog.h"
@@ -17,6 +18,10 @@ int main(int argc, char** argv)
 
     {
         HeadlessDispatchTest tc;
+        status |= QTest::qExec(&tc, argc, argv);
+    }
+    {
+        PythonEditorTest tc;
         status |= QTest::qExec(&tc, argc, argv);
     }
     {

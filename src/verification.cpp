@@ -432,5 +432,25 @@ void MainWindow::testRunPalace(bool interactive)
     runPalace(interactive);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Starts headless backend dispatch from tests without exposing private production API.
+ *
+ * \param simKeyLower Backend key to dispatch ("palace", "openems", or other).
+ **********************************************************************************************************************/
+void MainWindow::testRunHeadless(const QString& simKeyLower)
+{
+    runHeadless(simKeyLower);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Returns whether MainWindow is currently in headless mode.
+ *
+ * \return True if headless mode is enabled, false otherwise.
+ **********************************************************************************************************************/
+bool MainWindow::testIsHeadless() const
+{
+    return m_headless;
+}
+
 #endif
 

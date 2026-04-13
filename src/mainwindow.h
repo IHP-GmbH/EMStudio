@@ -155,6 +155,8 @@ public:
     void                            testSetRunPythonScriptPath(const QString& path);
     void                            testRunOpenems(bool interactive = false);
     void                            testRunPalace(bool interactive = false);
+    void                            testRunHeadless(const QString& simKeyLower);
+    bool                            testIsHeadless() const;
 #endif
 
 private slots:

@@ -157,6 +157,12 @@ public:
     void                            testRunPalace(bool interactive = false);
     void                            testRunHeadless(const QString& simKeyLower);
     bool                            testIsHeadless() const;
+    QString                         testToLinuxPathPortable(const QString& path,
+                                    const QString& distro,
+                                    int timeoutMs) const;
+    bool                            testPathExistsPortable(const QString& path,
+                                                           const QString& distro,
+                                                           int timeoutMs) const;
 #endif
 
 private slots:

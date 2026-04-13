@@ -452,5 +452,35 @@ bool MainWindow::testIsHeadless() const
     return m_headless;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Exposes toLinuxPathPortable() for automated tests.
+ *
+ * \param path Input path.
+ * \param distro WSL distribution name.
+ * \param timeoutMs Timeout in milliseconds.
+ * \return Converted Linux path.
+ **********************************************************************************************************************/
+QString MainWindow::testToLinuxPathPortable(const QString& path,
+                                            const QString& distro,
+                                            int timeoutMs) const
+{
+    return toLinuxPathPortable(path, distro, timeoutMs);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Exposes pathExistsPortable() for automated tests.
+ *
+ * \param path Input path.
+ * \param distro WSL distribution name.
+ * \param timeoutMs Timeout in milliseconds.
+ * \return True if the path exists.
+ **********************************************************************************************************************/
+bool MainWindow::testPathExistsPortable(const QString& path,
+                                        const QString& distro,
+                                        int timeoutMs) const
+{
+    return pathExistsPortable(path, distro, timeoutMs);
+}
+
 #endif
 

@@ -13,10 +13,12 @@
 #include "tst_wsl_helper.h"
 
 #include <QtTest/QtTest>
+#include <QDir>
 #include <QMap>
 #include <QVariant>
 
 #include "wslHelper.h"
+#include "mainwindow.h"
 
 /*!*******************************************************************************************************************
  * \brief Verifies that plain local 8-bit/UTF-8 style WSL output is decoded correctly.
@@ -112,4 +114,42 @@ void WslHelperTest::listWslDistrosFromSystem_returnsSomething_ifWslAvailable()
 #else
     QSKIP("WSL distro enumeration is Windows-specific");
 #endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that MainWindow::toLinuxPathPortable() handles already-linux, home and Windows paths.
+ **********************************************************************************************************************/
+void WslHelperTest::mainWindow_toLinuxPathPortable_handlesBasicCases_ifWslAvailable()
+{
+#ifdef Q_OS_WIN
+    if (!isWslAvailable())
+        QSKIP("WSL is not available on this system");
+
+    MainWindow w;
+
+    const QString alreadyLinux = "/tmp/test";
+    QCOMPARE(w.testToLinuxPathPortable(alreadyLinux, QString(), 5000), alreadyLinux);
+
+    const QString homePath = w.testToLinuxPathPortable("~", QString(), 5000);
+    QVERIFY2(!homePath.isEmpty(), "Failed to resolve '~' inside WSL");
+    QVERIFY2(homePath.startsWith("/"), qPrintable(homePath));
+
+    const QString winPath = QDir::toNativeSeparators(QDir::tempPath());
+    const QString linuxPath = w.testToLinuxPathPortable(winPath, QString(), 5000);
+    QVERIFY2(!linuxPath.isEmpty(), "Failed to convert Windows path to WSL path");
+    QVERIFY2(linuxPath.startsWith("/"), qPrintable(linuxPath));
+#else
+    QSKIP("Windows/WSL-specific test");
+#endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that MainWindow::pathExistsPortable() handles normal local paths.
+ **********************************************************************************************************************/
+void WslHelperTest::mainWindow_pathExistsPortable_checksLocalPath()
+{
+    MainWindow w;
+
+    QVERIFY(w.testPathExistsPortable(QDir::tempPath(), QString(), 1000));
+    QVERIFY(!w.testPathExistsPortable(QDir::tempPath() + "/definitely_not_existing_123456", QString(), 1000));
 }

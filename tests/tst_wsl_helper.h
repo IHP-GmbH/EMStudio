@@ -26,6 +26,8 @@ private slots:
     void wslExePath_matchesAvailability();
     void runWslCmdCapture_echo_works_ifWslAvailable();
     void listWslDistrosFromSystem_returnsSomething_ifWslAvailable();
+    void mainWindow_toLinuxPathPortable_handlesBasicCases_ifWslAvailable();
+    void mainWindow_pathExistsPortable_checksLocalPath();
 };
 
 #endif // TST_WSL_HELPER_H

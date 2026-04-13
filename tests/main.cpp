@@ -1,6 +1,7 @@
 #include <QApplication>
 #include <QtTest/QtTest>
 
+#include "tst_wsl_helper.h"
 #include "tst_find_dialog.h"
 #include "tst_about_dialog.h"
 #include "tst_palace_golden.h"
@@ -18,6 +19,10 @@ int main(int argc, char** argv)
 
     {
         HeadlessDispatchTest tc;
+        status |= QTest::qExec(&tc, argc, argv);
+    }
+    {
+        WslHelperTest tc;
         status |= QTest::qExec(&tc, argc, argv);
     }
     {

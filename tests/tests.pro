@@ -16,7 +16,8 @@ SOURCES += \
     tst_openems_golden.cpp \
     tst_palace_golden.cpp \
     tst_preferences_dialog.cpp \
-    tst_python_editor.cpp
+    tst_python_editor.cpp \
+    tst_wsl_helper.cpp
 
 HEADERS += \
     test_utils.h \
@@ -27,7 +28,8 @@ HEADERS += \
     tst_openems_golden.h \
     tst_palace_golden.h \
     tst_preferences_dialog.h \
-    tst_python_editor.h
+    tst_python_editor.h \
+    tst_wsl_helper.h
 
 FORMS += \
     $$PWD/../src/about.ui \

@@ -22,6 +22,10 @@ class PythonEditorTest : public QObject
 private slots:
     void updateVariableList_addsIdentifiersToCompleter();
     void findAndHighlight_plainTextFlow_works();
+    void find_regex_flow_works();
+    void find_wrapAround_works();
+    void highlight_regex_works();
+    void openFindDialog_createsDialog();
     void zoomAndFontSize_updateEditorFont_and_emitSignal();
     void setPlainTextUndoable_restoresPreviousTextWithUndo();
 };

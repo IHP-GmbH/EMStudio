@@ -569,4 +569,12 @@ void PythonEditor::testZoomOutText()
     zoomOutText();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Test helper that exposes openFindDialog() in test builds.
+ **********************************************************************************************************************/
+void PythonEditor::testOpenFindDialog()
+{
+    openFindDialog();
+}
+
 #endif

@@ -15,8 +15,8 @@
 #include <QtTest/QtTest>
 #include <QAbstractItemView>
 #include <QCompleter>
+#include <QDialog>
 #include <QSignalSpy>
-#include <QStringListModel>
 #include <QTextCursor>
 
 #include "pythoneditor.h"
@@ -47,8 +47,8 @@ static QStringList completionStrings(PythonEditor& e)
 /*!*******************************************************************************************************************
  * \brief Verifies that user identifiers are added to the completer model while Python keywords stay available.
  *
- * The test sets editor text containing variables and Python keywords, triggers variable extraction,
- * and verifies that custom identifiers are present in the completion model.
+ * The test sets editor text containing variables and Python keywords and verifies that
+ * custom identifiers are present in the completion model.
  **********************************************************************************************************************/
 void PythonEditorTest::updateVariableList_addsIdentifiersToCompleter()
 {
@@ -60,7 +60,7 @@ void PythonEditorTest::updateVariableList_addsIdentifiersToCompleter()
         "for i in range(3):\n"
         "    gamma = i\n");
 
-    e.testUpdateVariableList();
+    QCoreApplication::processEvents();
 
     const QStringList items = completionStrings(e);
 
@@ -109,6 +109,84 @@ void PythonEditorTest::findAndHighlight_plainTextFlow_works()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Verifies regex-based forward search.
+ *
+ * The test searches using a regular expression pattern and verifies that the
+ * first matching token is selected.
+ **********************************************************************************************************************/
+void PythonEditorTest::find_regex_flow_works()
+{
+    PythonEditor e;
+
+    e.setPlainText("abc1 abc2 abc3");
+
+    QTextCursor c = e.textCursor();
+    c.movePosition(QTextCursor::Start);
+    e.setTextCursor(c);
+
+    e.findNext("abc\\d", false, false, true);
+
+    QCOMPARE(e.textCursor().selectedText(), QString("abc1"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies wrap-around behavior for forward search.
+ *
+ * The test places the cursor at the end of the document and searches forward
+ * for a token that exists only earlier in the text. The search shall wrap and find it.
+ **********************************************************************************************************************/
+void PythonEditorTest::find_wrapAround_works()
+{
+    PythonEditor e;
+
+    e.setPlainText("first second third");
+
+    QTextCursor c = e.textCursor();
+    c.movePosition(QTextCursor::End);
+    e.setTextCursor(c);
+
+    e.findNext("first", false, false, false);
+
+    QCOMPARE(e.textCursor().selectedText(), QString("first"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies regex-based highlight of all matches.
+ *
+ * The test applies highlighting with a regular expression and checks that
+ * extra selections are produced for matches.
+ **********************************************************************************************************************/
+void PythonEditorTest::highlight_regex_works()
+{
+    PythonEditor e;
+
+    e.setPlainText("a1 a2 a3");
+
+    e.highlightAll("a\\d", false, false, true);
+
+    QVERIFY2(e.extraSelections().size() > 1, "Regex highlight shall produce match selections");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that the find dialog is created and shown on demand.
+ *
+ * The test invokes openFindDialog() and verifies that a dialog child exists.
+ **********************************************************************************************************************/
+void PythonEditorTest::openFindDialog_createsDialog()
+{
+    PythonEditor e;
+
+#ifdef EMSTUDIO_TESTING
+    e.testOpenFindDialog();
+#else
+    e.openFindDialog();
+#endif
+
+    const auto dialogs = e.findChildren<QDialog*>();
+    QVERIFY2(!dialogs.isEmpty(), "Find dialog was not created");
+}
+
+/*!*******************************************************************************************************************
  * \brief Verifies zoom helpers and direct font-size setter.
  *
  * The test checks that zooming changes the point size and emits sigFontSizeChanged.
@@ -121,13 +199,19 @@ void PythonEditorTest::zoomAndFontSize_updateEditorFont_and_emitSignal()
 
     QSignalSpy spy(&e, SIGNAL(sigFontSizeChanged(qreal)));
 
+#ifdef EMSTUDIO_TESTING
     e.testZoomInText();
+#else
+    QSKIP("zoom test wrappers are available only in EMSTUDIO_TESTING builds");
+#endif
     QVERIFY2(e.font().pointSizeF() > initial, "zoomInText() shall increase font size");
     QVERIFY2(spy.count() == 1, "zoomInText() shall emit sigFontSizeChanged");
 
     const qreal afterZoomIn = e.font().pointSizeF();
 
+#ifdef EMSTUDIO_TESTING
     e.testZoomOutText();
+#endif
     QVERIFY2(e.font().pointSizeF() < afterZoomIn, "zoomOutText() shall decrease font size");
     QVERIFY2(spy.count() == 2, "zoomOutText() shall emit sigFontSizeChanged");
 

@@ -49,5 +49,16 @@ int main(int argc, char** argv)
         status |= QTest::qExec(&tc, argc, argv);
     }
 
+
+    if (status == 0) {
+        qDebug() << "\n===================================";
+        qDebug() << "ALL TESTS PASSED";
+        qDebug() << "===================================\n";
+    } else {
+        qDebug() << "\n===================================";
+        qDebug() << "TESTS FAILED  (status =" << status << ")";
+        qDebug() << "===================================\n";
+    }
+
     return status;
 }

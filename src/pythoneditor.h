@@ -63,6 +63,7 @@ public:
     void                                testUpdateVariableList();
     void                                testZoomInText();
     void                                testZoomOutText();
+    void                                testOpenFindDialog();
 #endif
 
 signals:

@@ -1,10 +1,12 @@
 #include <QApplication>
 #include <QtTest/QtTest>
 
+#include "tst_find_dialog.h"
 #include "tst_about_dialog.h"
 #include "tst_palace_golden.h"
 #include "tst_openems_golden.h"
 #include "tst_preferences_dialog.h"
+#include "tst_keywords_editor_dialog.h"
 
 int main(int argc, char** argv)
 {
@@ -26,6 +28,14 @@ int main(int argc, char** argv)
     }
     {
         PreferencesDialogTest tc;
+        status |= QTest::qExec(&tc, argc, argv);
+    }
+    {
+        FindDialogTest tc;
+        status |= QTest::qExec(&tc, argc, argv);
+    }
+    {
+        KeywordsEditorDialogTest tc;
         status |= QTest::qExec(&tc, argc, argv);
     }
 

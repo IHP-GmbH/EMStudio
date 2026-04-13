@@ -10,6 +10,8 @@ SOURCES += \
     main.cpp \
     test_utils.cpp \
     tst_about_dialog.cpp \
+    tst_find_dialog.cpp \
+    tst_keywords_editor_dialog.cpp \
     tst_openems_golden.cpp \
     tst_palace_golden.cpp \
     tst_preferences_dialog.cpp \
@@ -17,6 +19,8 @@ SOURCES += \
 HEADERS += \
     test_utils.h \
     tst_about_dialog.h \
+    tst_find_dialog.h \
+    tst_keywords_editor_dialog.h \
     tst_openems_golden.h \
     tst_palace_golden.h \
     tst_preferences_dialog.h

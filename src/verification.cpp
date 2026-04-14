@@ -591,5 +591,102 @@ void MainWindow::testSetRunPythonScriptLinePath(const QString& path)
     m_ui->txtRunPythonScript->setText(path);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Builds Palace run context in test mode and exposes selected fields.
+ *
+ * \param[out] outError Human-readable error text on failure.
+ * \return True on success, false otherwise.
+ **********************************************************************************************************************/
+bool MainWindow::testBuildPalaceRunContext(QString* outError,
+                                           QString* outSimKeyLower,
+                                           QString* outModelWin,
+                                           QString* outLauncherWin,
+                                           int* outRunMode,
+                                           QString* outBaseName,
+                                           QString* outRunDirGuessWin,
+                                           QString* outPalaceRoot,
+                                           QString* outDistro,
+                                           QString* outPythonCmd,
+                                           QString* outPalaceExeLinux,
+                                           QString* outModelDirLinux,
+                                           QString* outModelLinux)
+{
+    if (outError)
+        *outError = QString();
+
+    PalaceRunContext ctx;
+    QString err;
+    const bool ok = buildPalaceRunContext(ctx, err);
+
+    if (!ok) {
+        if (outError)
+            *outError = err;
+        return false;
+    }
+
+    if (outSimKeyLower)    *outSimKeyLower    = ctx.simKeyLower;
+    if (outModelWin)       *outModelWin       = ctx.modelWin;
+    if (outLauncherWin)    *outLauncherWin    = ctx.launcherWin;
+    if (outRunMode)        *outRunMode        = ctx.runMode;
+    if (outBaseName)       *outBaseName       = ctx.baseName;
+    if (outRunDirGuessWin) *outRunDirGuessWin = ctx.runDirGuessWin;
+    if (outPalaceRoot)     *outPalaceRoot     = ctx.palaceRoot;
+    if (outDistro)         *outDistro         = ctx.distro;
+    if (outPythonCmd)      *outPythonCmd      = ctx.pythonCmd;
+    if (outPalaceExeLinux) *outPalaceExeLinux = ctx.palaceExeLinux;
+    if (outModelDirLinux)  *outModelDirLinux  = ctx.modelDirLinux;
+    if (outModelLinux)     *outModelLinux     = ctx.modelLinux;
+
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets simulation log text directly for tests.
+ *
+ * \param text Full log text to place into editSimulationLog.
+ **********************************************************************************************************************/
+void MainWindow::testSetSimulationLogText(const QString& text)
+{
+    if (!m_ui || !m_ui->editSimulationLog)
+        return;
+
+    QSignalBlocker b(m_ui->editSimulationLog);
+    m_ui->editSimulationLog->setPlainText(text);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Exposes detectRunDirFromLog() for tests.
+ **********************************************************************************************************************/
+QString MainWindow::testDetectRunDirFromLog() const
+{
+    return detectRunDirFromLog();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Exposes guessDefaultPalaceRunDir() for tests.
+ **********************************************************************************************************************/
+QString MainWindow::testGuessDefaultPalaceRunDir(const QString& modelFile,
+                                                 const QString& baseName) const
+{
+    return guessDefaultPalaceRunDir(modelFile, baseName);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Exposes chooseSearchDir() for tests.
+ **********************************************************************************************************************/
+QString MainWindow::testChooseSearchDir(const QString& detectedRunDir,
+                                        const QString& defaultRunDir) const
+{
+    return chooseSearchDir(detectedRunDir, defaultRunDir);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Exposes findPalaceConfigJson() for tests.
+ **********************************************************************************************************************/
+QString MainWindow::testFindPalaceConfigJson(const QString& runDir) const
+{
+    return findPalaceConfigJson(runDir);
+}
+
 #endif
 

@@ -173,6 +173,29 @@ public:
     QString                         testCurrentSimToolKey() const;
     void                            testTriggerSave();
     void                            testSetRunPythonScriptLinePath(const QString& path);
+    bool                            testBuildPalaceRunContext(QString* outError,
+                                                              QString* outSimKeyLower = nullptr,
+                                                              QString* outModelWin = nullptr,
+                                                              QString* outLauncherWin = nullptr,
+                                                              int* outRunMode = nullptr,
+                                                              QString* outBaseName = nullptr,
+                                                              QString* outRunDirGuessWin = nullptr,
+                                                              QString* outPalaceRoot = nullptr,
+                                                              QString* outDistro = nullptr,
+                                                              QString* outPythonCmd = nullptr,
+                                                              QString* outPalaceExeLinux = nullptr,
+                                                              QString* outModelDirLinux = nullptr,
+                                                              QString* outModelLinux = nullptr);
+    void                            testSetSimulationLogText(const QString& text);
+    QString                         testDetectRunDirFromLog() const;
+    QString                         testGuessDefaultPalaceRunDir(const QString& modelFile,
+                                                                 const QString& baseName) const;
+    QString                         testChooseSearchDir(const QString& detectedRunDir,
+                                                        const QString& defaultRunDir) const;
+    QString                         testFindPalaceConfigJson(const QString& runDir) const;
+#ifdef Q_OS_WIN
+    QString                         testParsePhysicalCoresFromLscpuCsv(const QString& out) const;
+#endif
 #endif
 
 private slots:

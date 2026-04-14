@@ -31,6 +31,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+
 #ifdef Q_OS_WIN
 
 /*!*******************************************************************************************************************
@@ -1026,5 +1027,20 @@ QString MainWindow::wslToWinPath(const QString &p) const
     }
     return p;
 }
+#endif
+
+#ifdef EMSTUDIO_TESTING
+#ifdef Q_OS_WIN
+/*!*******************************************************************************************************************
+ * \brief Exposes parsePhysicalCoresFromLscpuCsv() for tests.
+ *
+ * \param out Raw CSV output produced by lscpu -p=CORE,SOCKET.
+ * \return Number of detected physical CPU cores as string, or empty string on failure.
+ **********************************************************************************************************************/
+QString MainWindow::testParsePhysicalCoresFromLscpuCsv(const QString& out) const
+{
+    return parsePhysicalCoresFromLscpuCsv(out);
+}
+#endif
 #endif
 

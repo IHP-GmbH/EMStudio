@@ -688,5 +688,17 @@ QString MainWindow::testFindPalaceConfigJson(const QString& runDir) const
     return findPalaceConfigJson(runDir);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns the main log text used by info()/error() for tests.
+ *
+ * \return Full text content of txtLog.
+ **********************************************************************************************************************/
+QString MainWindow::testMainLogText() const
+{
+    return (m_ui && m_ui->txtLog)
+    ? m_ui->txtLog->toPlainText()
+    : QString();
+}
+
 #endif
 

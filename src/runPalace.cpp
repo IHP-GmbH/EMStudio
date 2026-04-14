@@ -1042,5 +1042,94 @@ QString MainWindow::testParsePhysicalCoresFromLscpuCsv(const QString& out) const
     return parsePhysicalCoresFromLscpuCsv(out);
 }
 #endif
+
+void MainWindow::testLogPalaceStartupInfo(const QString& modelPath,
+                                          int runMode,
+                                          const QString& launcherPath,
+                                          const QString& pythonCmd,
+                                          const QString& distro,
+                                          const QString& runDirGuessWin)
+{
+    PalaceRunContext ctx;
+    ctx.modelWin = modelPath;
+    ctx.runMode = runMode;
+    ctx.launcherWin = launcherPath;
+    ctx.pythonCmd = pythonCmd;
+    ctx.distro = distro;
+    ctx.runDirGuessWin = runDirGuessWin;
+    logPalaceStartupInfo(ctx);
+}
+
+bool MainWindow::testPreparePalaceSolverLaunch(const QString& configPathWin,
+                                               const QString& palaceExeLinux,
+                                               QString& outWorkDirLinux,
+                                               QString& outCmd,
+                                               QString& outCores)
+{
+    PalaceRunContext ctx;
+    ctx.configPathWin = configPathWin;
+    ctx.palaceExeLinux = palaceExeLinux;
+    return preparePalaceSolverLaunch(ctx, outWorkDirLinux, outCmd, outCores);
+}
+
+void MainWindow::testFailPalaceSolver(const QString& message, bool showDialog)
+{
+    failPalaceSolver(message, showDialog);
+}
+
+void MainWindow::testSetPalacePhasePythonModel()
+{
+    m_palacePhase = PalacePhase::PythonModel;
+}
+
+void MainWindow::testSetPalacePhaseSolver()
+{
+    m_palacePhase = PalacePhase::PalaceSolver;
+}
+
+void MainWindow::testCallOnPalaceProcessFinished(int exitCode)
+{
+    onPalaceProcessFinished(exitCode);
+}
+
+void MainWindow::testAttachDummySimProcess()
+{
+    if (m_simProcess) {
+        delete m_simProcess;
+        m_simProcess = nullptr;
+    }
+    m_simProcess = new QProcess(this);
+}
+
+bool MainWindow::testHasSimProcess() const
+{
+    return m_simProcess != nullptr;
+}
+
+void MainWindow::testStartPalaceSolverStage(const QString& modelPath,
+                                            const QString& topCell,
+                                            const QString& detectedRunDirWin,
+                                            int runMode,
+                                            const QString& launcherPath)
+{
+    m_ui->txtRunPythonScript->setText(modelPath);
+    m_ui->cbxTopCell->setCurrentText(topCell);
+    m_preferences["PALACE_RUN_MODE"] = runMode;
+
+    PalaceRunContext ctx;
+    ctx.detectedRunDirWin = detectedRunDirWin;
+    ctx.runMode = runMode;
+    ctx.launcherWin = launcherPath;
+    ctx.searchDirWin = detectedRunDirWin;
+    ctx.configPathWin.clear();
+    ctx.palaceExeLinux = "/tmp/fake/palace";
+    ctx.distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
+
+    if (!m_simProcess)
+        m_simProcess = new QProcess(this);
+
+    startPalaceSolverStage(ctx);
+}
+
 #endif
 

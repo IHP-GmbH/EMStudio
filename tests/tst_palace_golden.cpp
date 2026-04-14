@@ -262,16 +262,16 @@ void PalaceGolden::buildPalaceRunContext_missingModel_fails()
 }
 
 /*!*******************************************************************************************************************
- * \brief Verifies that launcher mode requires PALACE_RUN_SCRIPT.
+ * \brief Verifies that launcher mode rejects a missing launcher path.
  **********************************************************************************************************************/
-void PalaceGolden::buildPalaceRunContext_scriptMode_missingLauncher_fails()
+void PalaceGolden::buildPalaceRunContext_scriptMode_missingLauncherFile_fails()
 {
     MainWindow w;
 
     QTemporaryDir dir;
-    QVERIFY2(dir.isValid(), "Failed to create temporary directory");
+    QVERIFY(dir.isValid());
 
-    const QString modelPath = dir.filePath("palace_model.py");
+    const QString modelPath = dir.filePath("model.py");
     {
         QFile f(modelPath);
         QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
@@ -279,31 +279,30 @@ void PalaceGolden::buildPalaceRunContext_scriptMode_missingLauncher_fails()
         out << "print('dummy')\n";
     }
 
-    const QString launcherPath = ensureTestPalaceLauncher();
-    QVERIFY2(!launcherPath.isEmpty(), "Palace launcher stub not found via QFINDTESTDATA");
+    const QString validLauncher = ensureTestPalaceLauncher();
+    QVERIFY2(!validLauncher.isEmpty(), "Palace launcher stub not found");
 
 #ifndef Q_OS_WIN
-    QFile::setPermissions(launcherPath,
-                          QFile::permissions(launcherPath) |
+    QFile::setPermissions(validLauncher,
+                          QFile::permissions(validLauncher) |
                               QFileDevice::ExeUser |
                               QFileDevice::ExeGroup |
                               QFileDevice::ExeOther);
 #endif
 
     w.testSetPreference("PALACE_RUN_MODE", 1);
-    w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
-    w.testSetPreference("PALACE_INSTALL_PATH", QString());
+    w.testSetPreference("PALACE_RUN_SCRIPT", validLauncher);
     w.refreshSimToolOptionsForTests();
 
     QString terr;
     QVERIFY2(w.testSetSimToolKey("palace", &terr), qPrintable(terr));
 
     w.testSetRunPythonScriptPath(modelPath);
-    w.testSetPreference("PALACE_RUN_SCRIPT", QString());
+    w.testSetPreference("PALACE_RUN_SCRIPT", dir.filePath("missing_launcher.sh"));
 
     QString err;
-    QVERIFY2(!w.testBuildPalaceRunContext(&err), "Context build shall fail without PALACE_RUN_SCRIPT");
-    QVERIFY2(err.contains("PALACE_RUN_SCRIPT"), qPrintable(err));
+    QVERIFY2(!w.testBuildPalaceRunContext(&err), "Missing launcher shall fail");
+    QVERIFY2(err.contains("executable"), qPrintable(err));
 }
 
 /*!*******************************************************************************************************************
@@ -535,3 +534,192 @@ void PalaceGolden::parsePhysicalCoresFromLscpuCsv_countsUniqueSocketCorePairs()
     QCOMPARE(w.testParsePhysicalCoresFromLscpuCsv("# only comments\n"), QString());
 }
 #endif
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that buildPalaceRunContext() uses PALACE_PYTHON when configured.
+ **********************************************************************************************************************/
+void PalaceGolden::buildPalaceRunContext_usesConfiguredPython()
+{
+    MainWindow w;
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString modelPath = dir.filePath("my_model.py");
+    {
+        QFile f(modelPath);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&f);
+        out << "print('dummy')\n";
+    }
+
+    const QString launcherPath = ensureTestPalaceLauncher();
+    QVERIFY2(!launcherPath.isEmpty(), "Palace launcher stub not found");
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(launcherPath,
+                          QFile::permissions(launcherPath) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.testSetPreference("PALACE_RUN_MODE", 1);
+    w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
+    w.testSetPreference("PALACE_PYTHON", "python_custom");
+    w.refreshSimToolOptionsForTests();
+
+    QString terr;
+    QVERIFY2(w.testSetSimToolKey("palace", &terr), qPrintable(terr));
+    w.testSetRunPythonScriptPath(modelPath);
+
+    QString err;
+    QString pythonCmd;
+    QVERIFY2(w.testBuildPalaceRunContext(&err,
+                                         nullptr, nullptr, nullptr, nullptr,
+                                         nullptr, nullptr, nullptr, nullptr,
+                                         &pythonCmd),
+             qPrintable(err));
+    QCOMPARE(pythonCmd, QString("python_custom"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that logPalaceStartupInfo() writes expected startup lines.
+ **********************************************************************************************************************/
+void PalaceGolden::logPalaceStartupInfo_writesExpectedText()
+{
+    MainWindow w;
+
+    w.testSetSimulationLogText(QString());
+    w.testLogPalaceStartupInfo("C:/tmp/model.py",
+                               1,
+                               "C:/tmp/launcher.cmd",
+                               "python3",
+                               "Ubuntu",
+                               "C:/tmp/palace_model/t1_data");
+
+    const QString log = w.testSimulationLogText();
+    QVERIFY(log.contains("Starting Palace Python preprocessing"));
+    QVERIFY(log.contains("[Using Python: python3]"));
+    QVERIFY(log.contains("[Initial Palace run directory guess:"));
+    QVERIFY(log.contains("[Launcher script:"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that preparePalaceSolverLaunch() fails when config path is empty.
+ **********************************************************************************************************************/
+void PalaceGolden::preparePalaceSolverLaunch_emptyConfig_fails()
+{
+    MainWindow w;
+
+    QString workDirLinux;
+    QString cmd;
+    QString cores;
+
+    QVERIFY2(!w.testPreparePalaceSolverLaunch(QString(), "/tmp/palace", workDirLinux, cmd, cores),
+             "preparePalaceSolverLaunch shall fail for empty configPathWin");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that failPalaceSolver() clears process pointer and resets phase.
+ **********************************************************************************************************************/
+void PalaceGolden::failPalaceSolver_resetsPhase_and_process()
+{
+    MainWindow w;
+
+    w.testAttachDummySimProcess();
+    QVERIFY(w.testHasSimProcess());
+
+    w.testSetPalacePhaseSolver();
+    w.testFailPalaceSolver("dummy error", false);
+
+    QVERIFY2(!w.testHasSimProcess(), "Simulation process shall be cleared");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that PythonModel phase logs non-zero exit code and resets process state.
+ **********************************************************************************************************************/
+void PalaceGolden::onPalaceProcessFinished_pythonPhase_nonZeroExit_logsFailure()
+{
+    MainWindow w;
+
+    w.testAttachDummySimProcess();
+    w.testSetPalacePhasePythonModel();
+    w.testCallOnPalaceProcessFinished(7);
+
+    const QString log = w.testSimulationLogText();
+    QVERIFY(log.contains("finished with exit code 7"));
+    QVERIFY2(!w.testHasSimProcess(), "Simulation process shall be cleared after failure");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that PalaceSolver phase logs finish banner and resets process state.
+ **********************************************************************************************************************/
+void PalaceGolden::onPalaceProcessFinished_solverPhase_logsFinish()
+{
+    MainWindow w;
+
+    w.testSetPreference("PALACE_RUN_MODE", 1);
+    w.testAttachDummySimProcess();
+    w.testSetPalacePhaseSolver();
+    w.testCallOnPalaceProcessFinished(0);
+
+    const QString log = w.testSimulationLogText();
+    QVERIFY(log.contains("Palace launcher finished with exit code 0"));
+    QVERIFY2(!w.testHasSimProcess(), "Simulation process shall be cleared after solver finish");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that startPalaceSolverStage() fails when no search directory can be determined.
+ **********************************************************************************************************************/
+void PalaceGolden::startPalaceSolverStage_missingSearchDir_fails()
+{
+    MainWindow w;
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString modelPath = dir.filePath("abc.py");
+    {
+        QFile f(modelPath);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&f);
+        out << "print('dummy')\n";
+    }
+
+    w.testAttachDummySimProcess();
+    w.testStartPalaceSolverStage(modelPath, "abc", QString(), 0);
+
+    const QString log = w.testMainLogText();
+    QVERIFY2(log.contains("Cannot determine Palace run directory"),
+             qPrintable(log));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that startPalaceSolverStage() fails when no config file exists in detected run directory.
+ **********************************************************************************************************************/
+void PalaceGolden::startPalaceSolverStage_missingConfig_fails()
+{
+    MainWindow w;
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString modelPath = dir.filePath("abc.py");
+    {
+        QFile f(modelPath);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream out(&f);
+        out << "print('dummy')\n";
+    }
+
+    const QString runDir = dir.filePath("detected_run");
+    QVERIFY(QDir().mkpath(runDir));
+
+    w.testAttachDummySimProcess();
+    w.testStartPalaceSolverStage(modelPath, "abc", runDir, 0);
+
+    const QString log = w.testMainLogText();
+    QVERIFY2(log.contains("No Palace config (*.json) found"),
+             qPrintable(log));
+}

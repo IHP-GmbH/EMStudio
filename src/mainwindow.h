@@ -193,6 +193,31 @@ public:
     QString                         testChooseSearchDir(const QString& detectedRunDir,
                                                         const QString& defaultRunDir) const;
     QString                         testFindPalaceConfigJson(const QString& runDir) const;
+
+    void                            testLogPalaceStartupInfo(const QString& modelPath,
+                                                             int runMode,
+                                                             const QString& launcherPath,
+                                                             const QString& pythonCmd,
+                                                             const QString& distro,
+                                                             const QString& runDirGuessWin);
+    bool                            testPreparePalaceSolverLaunch(const QString& configPathWin,
+                                                                  const QString& palaceExeLinux,
+                                                                  QString& outWorkDirLinux,
+                                                                  QString& outCmd,
+                                                                  QString& outCores);
+    void                            testFailPalaceSolver(const QString& message, bool showDialog);
+    void                            testSetPalacePhasePythonModel();
+    void                            testSetPalacePhaseSolver();
+    void                            testCallOnPalaceProcessFinished(int exitCode);
+    void                            testAttachDummySimProcess();
+    bool                            testHasSimProcess() const;
+    void                            testStartPalaceSolverStage(const QString& modelPath,
+                                    const QString& topCell,
+                                    const QString& detectedRunDirWin,
+                                    int runMode,
+                                    const QString& launcherPath = QString());
+    QString                         testMainLogText() const;
+
 #ifdef Q_OS_WIN
     QString                         testParsePhysicalCoresFromLscpuCsv(const QString& out) const;
 #endif

@@ -13,7 +13,7 @@ private slots:
 
     void buildPalaceRunContext_wrongTool_fails();
     void buildPalaceRunContext_missingModel_fails();
-    void buildPalaceRunContext_scriptMode_missingLauncher_fails();
+    void buildPalaceRunContext_scriptMode_missingLauncherFile_fails();
     void buildPalaceRunContext_nativeMode_missingInstallPath_fails();
     void buildPalaceRunContext_scriptMode_succeeds();
 
@@ -21,6 +21,15 @@ private slots:
     void guessDefaultPalaceRunDir_returnsExistingPathOnly();
     void chooseSearchDir_prefersDetectedDir();
     void findPalaceConfigJson_prefersConfigJson_and_handlesEmptyDir();
+
+    void buildPalaceRunContext_usesConfiguredPython();
+    void logPalaceStartupInfo_writesExpectedText();
+    void preparePalaceSolverLaunch_emptyConfig_fails();
+    void failPalaceSolver_resetsPhase_and_process();
+    void onPalaceProcessFinished_pythonPhase_nonZeroExit_logsFailure();
+    void onPalaceProcessFinished_solverPhase_logsFinish();
+    void startPalaceSolverStage_missingSearchDir_fails();
+    void startPalaceSolverStage_missingConfig_fails();
 
 #ifdef Q_OS_WIN
     void parsePhysicalCoresFromLscpuCsv_countsUniqueSocketCorePairs();

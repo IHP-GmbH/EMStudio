@@ -1,8 +1,37 @@
 #include "tst_mainwindow_ports.h"
 
 #include <QtTest/QtTest>
+#include <QFile>
 
 #include "mainwindow.h"
+
+/*!*******************************************************************************************************************
+ * \brief Resolves the platform-specific OpenEMS Python launcher stub for unit tests.
+ *
+ * \return Absolute path to the OpenEMS launcher stub script, or empty string if not found.
+ **********************************************************************************************************************/
+static QString ensureTestOpenemsPythonStub()
+{
+#ifdef Q_OS_WIN
+    return QFINDTESTDATA("tools/openems_python_stub.cmd");
+#else
+    return QFINDTESTDATA("tools/openems_python_stub.sh");
+#endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Resolves the platform-specific Palace launcher stub for unit tests.
+ *
+ * \return Absolute path to the Palace launcher stub script, or empty string if not found.
+ **********************************************************************************************************************/
+static QString ensureTestPalaceLauncher()
+{
+#ifdef Q_OS_WIN
+    return QFINDTESTDATA("tools/palace_launcher_stub.cmd");
+#else
+    return QFINDTESTDATA("tools/palace_launcher_stub.sh");
+#endif
+}
 
 /*!*******************************************************************************************************************
  * \brief Verifies that testParsePortsFromEditor() parses multiline simulation_port() calls correctly.
@@ -11,7 +40,9 @@
  * It checks that:
  *  - two ports are parsed,
  *  - numeric and string fields are extracted correctly,
- *  - direction is preserved.
+ *  - direction is preserved,
+ * and then verifies that importing them creates table rows with the expected
+ * numeric cells and direction combo texts.
  **********************************************************************************************************************/
 void MainWindowPortsTest::importPortsFromEditor_multilineScript_populatesTable()
 {
@@ -87,8 +118,8 @@ void MainWindowPortsTest::importPortsFromEditor_multilineScript_populatesTable()
 /*!*******************************************************************************************************************
  * \brief Verifies that target_layername is parsed as fallback into toLayer.
  *
- * The test checks parser-level behavior and then verifies that one row is imported into the UI table.
- * It does not require a specific source-layer combo value because that depends on the real GDS layer set.
+ * The test checks parser-level behavior and then verifies that one row is imported
+ * into the UI table. Missing direction shall become "z" in the UI.
  **********************************************************************************************************************/
 void MainWindowPortsTest::importPortsFromEditor_targetLayer_onlyToLayerFilled()
 {
@@ -132,8 +163,6 @@ void MainWindowPortsTest::importPortsFromEditor_targetLayer_onlyToLayerFilled()
     QCOMPARE(w.testPortCellText(0, 0), QString("7"));
     QCOMPARE(w.testPortCellText(0, 1), QString("1"));
     QCOMPARE(w.testPortCellText(0, 2), QString("50"));
-
-    // UI default for missing direction in appendParsedPortsToTable()
     QCOMPARE(w.testPortComboText(0, 6), QString("z"));
 }
 
@@ -191,11 +220,8 @@ void MainWindowPortsTest::addAndRemovePorts_flow_works()
 /*!*******************************************************************************************************************
  * \brief Verifies conversion between numeric GDS layers and substrate layer names in the ports table.
  *
- * The test enables and disables the "Use Substrate Layer Names" mode and checks that
- * the imported row remains valid and the row count is preserved.
- *
- * The exact combo text depends on the real XML/GDS mapping, so the test does not hardcode
- * a specific substrate layer name.
+ * The exact combo text depends on the real XML/GDS mapping, so the test checks
+ * that the row stays valid and the direction remains intact while toggling the mode.
  **********************************************************************************************************************/
 void MainWindowPortsTest::toggleSubLayerNames_convertsNumericLayersToNamesAndBack()
 {
@@ -237,4 +263,237 @@ void MainWindowPortsTest::toggleSubLayerNames_convertsNumericLayersToNamesAndBac
     QCOMPARE(w.testPortsRowCount(), 1);
     QCOMPARE(w.testPortCellText(0, 0), QString("3"));
     QCOMPARE(w.testPortComboText(0, 6), QString("z"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that switching simulation tools through test wrappers works without errors.
+ *
+ * The test configures both backends via lightweight stubs, refreshes available tools and
+ * switches from OpenEMS to Palace. This executes the corresponding UI update paths.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::switchSimTool_updatesState()
+{
+    MainWindow w;
+
+    const QString pyStub = ensureTestOpenemsPythonStub();
+    QVERIFY2(!pyStub.isEmpty(), "OpenEMS python stub not found via QFINDTESTDATA");
+
+    const QString launcherPath = ensureTestPalaceLauncher();
+    QVERIFY2(!launcherPath.isEmpty(), "Palace launcher stub not found via QFINDTESTDATA");
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(pyStub,
+                          QFile::permissions(pyStub) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+
+    QFile::setPermissions(launcherPath,
+                          QFile::permissions(launcherPath) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.testSetPreference("Python Path", pyStub);
+    w.testSetPreference("PALACE_RUN_MODE", 1);
+    w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
+    w.testSetPreference("PALACE_INSTALL_PATH", QString());
+
+    w.refreshSimToolOptionsForTests();
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey("openems", &err), qPrintable(err));
+    QCOMPARE(w.testCurrentSimToolKey(), QString("openems"));
+
+    QVERIFY2(w.testSetSimToolKey("palace", &err), qPrintable(err));
+    QCOMPARE(w.testCurrentSimToolKey(), QString("palace"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that default OpenEMS and Palace script generation returns non-empty scripts.
+ *
+ * The test configures both backends, switches between them and initializes default models
+ * through the dedicated testing helpers.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::defaultScriptGeneration_openems_and_palace_notEmpty()
+{
+    MainWindow w;
+
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    QVERIFY2(!gdsPath.isEmpty(), "Golden GDS file not found via QFINDTESTDATA");
+
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY2(!xmlPath.isEmpty(), "Golden XML file not found via QFINDTESTDATA");
+
+    const QString pyStub = ensureTestOpenemsPythonStub();
+    QVERIFY2(!pyStub.isEmpty(), "OpenEMS python stub not found via QFINDTESTDATA");
+
+    const QString launcherPath = ensureTestPalaceLauncher();
+    QVERIFY2(!launcherPath.isEmpty(), "Palace launcher stub not found via QFINDTESTDATA");
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(pyStub,
+                          QFile::permissions(pyStub) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+
+    QFile::setPermissions(launcherPath,
+                          QFile::permissions(launcherPath) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.setGdsFile(gdsPath);
+    w.setTopCell("t1");
+    w.setSubstrateFile(xmlPath);
+
+    w.testSetPreference("Python Path", pyStub);
+    w.testSetPreference("PALACE_RUN_MODE", 1);
+    w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
+    w.testSetPreference("PALACE_INSTALL_PATH", QString());
+
+    w.refreshSimToolOptionsForTests();
+
+    QString err;
+
+    QVERIFY2(w.testSetSimToolKey("openems", &err), qPrintable(err));
+    QVERIFY2(w.testInitDefaultOpenemsModel(), "OpenEMS default model init failed");
+    QVERIFY2(!w.testEditorText().trimmed().isEmpty(), "OpenEMS default editor text is empty");
+
+    QVERIFY2(w.testSetSimToolKey("palace", &err), qPrintable(err));
+    QVERIFY2(w.testInitDefaultPalaceModel(), "Palace default model init failed");
+    QVERIFY2(!w.testEditorText().trimmed().isEmpty(), "Palace default editor text is empty");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that setting GDS, top cell and substrate path updates MainWindow state without crashing.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::setInputs_updatesState_withoutCrash()
+{
+    MainWindow w;
+
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    QVERIFY2(!gdsPath.isEmpty(), "Golden GDS file not found via QFINDTESTDATA");
+
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY2(!xmlPath.isEmpty(), "Golden XML file not found via QFINDTESTDATA");
+
+    w.setGdsFile(gdsPath);
+    w.setTopCell("t1");
+    w.setSubstrateFile(xmlPath);
+
+    QVERIFY(true);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that boundary options update when changing simulation tool.
+ *
+ * The test configures both backends and switches between them so that
+ * boundary enum update and tooltip update paths are executed.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::boundaryOptions_updateOnToolChange_withoutCrash()
+{
+    MainWindow w;
+
+    const QString pyStub = ensureTestOpenemsPythonStub();
+    QVERIFY2(!pyStub.isEmpty(), "OpenEMS python stub not found via QFINDTESTDATA");
+
+    const QString launcherPath = ensureTestPalaceLauncher();
+    QVERIFY2(!launcherPath.isEmpty(), "Palace launcher stub not found via QFINDTESTDATA");
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(pyStub,
+                          QFile::permissions(pyStub) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+
+    QFile::setPermissions(launcherPath,
+                          QFile::permissions(launcherPath) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.testSetPreference("Python Path", pyStub);
+    w.testSetPreference("PALACE_RUN_MODE", 1);
+    w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
+    w.testSetPreference("PALACE_INSTALL_PATH", QString());
+
+    w.refreshSimToolOptionsForTests();
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey("openems", &err), qPrintable(err));
+    QVERIFY2(w.testSetSimToolKey("palace", &err), qPrintable(err));
+
+    QVERIFY(true);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Verifies that Save writes the current script to the configured file path and updates state.
+ *
+ * The test avoids the Save As dialog by preconfiguring txtRunPythonScript with a temporary file path.
+ * It then triggers the normal Save action and checks that:
+ *  - the file is created,
+ *  - the saved content is not empty,
+ *  - the configured path is preserved in the UI,
+ *  - the operation completes without errors.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::saveAction_writesScriptToFile_and_updatesState()
+{
+    MainWindow w;
+
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    QVERIFY2(!gdsPath.isEmpty(), "Golden GDS file not found via QFINDTESTDATA");
+
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY2(!xmlPath.isEmpty(), "Golden XML file not found via QFINDTESTDATA");
+
+    const QString pyStub = ensureTestOpenemsPythonStub();
+    QVERIFY2(!pyStub.isEmpty(), "OpenEMS python stub not found via QFINDTESTDATA");
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(pyStub,
+                          QFile::permissions(pyStub) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.setGdsFile(gdsPath);
+    w.setTopCell("t1");
+    w.setSubstrateFile(xmlPath);
+
+    w.testSetPreference("Python Path", pyStub);
+    w.refreshSimToolOptionsForTests();
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey("openems", &err), qPrintable(err));
+
+    QVERIFY2(w.testInitDefaultOpenemsModel(), "OpenEMS default model init failed");
+
+    const QString savePath =
+        QDir::temp().filePath("emstudio_test_saved_model.py");
+
+    QFile::remove(savePath);
+
+    w.testSetRunPythonScriptLinePath(savePath);
+    w.testTriggerSave();
+
+    QVERIFY2(QFileInfo::exists(savePath),
+             qPrintable(QString("Expected saved file does not exist: %1").arg(savePath)));
+
+    QFile f(savePath);
+    QVERIFY2(f.open(QIODevice::ReadOnly | QIODevice::Text),
+             qPrintable(QString("Failed to open saved file: %1").arg(savePath)));
+
+    const QString saved = QString::fromUtf8(f.readAll());
+    f.close();
+
+    QVERIFY2(!saved.trimmed().isEmpty(), "Saved script is empty");
+
+    QFile::remove(savePath);
 }

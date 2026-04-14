@@ -559,5 +559,37 @@ void MainWindow::testSetCurrentPortRow(int row)
     m_ui->tblPorts->setCurrentCell(row, 0);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns the currently selected simulation tool key for tests.
+ *
+ * \return Stable tool key such as "openems" or "palace".
+ **********************************************************************************************************************/
+QString MainWindow::testCurrentSimToolKey() const
+{
+    return currentSimToolKey();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Triggers the normal Save action in test mode.
+ **********************************************************************************************************************/
+void MainWindow::testTriggerSave()
+{
+    on_actionSave_triggered();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the Run Python Script line edit path for tests without extra UI interaction.
+ *
+ * \param path Absolute file path to place into txtRunPythonScript.
+ **********************************************************************************************************************/
+void MainWindow::testSetRunPythonScriptLinePath(const QString& path)
+{
+    if (!m_ui || !m_ui->txtRunPythonScript)
+        return;
+
+    QSignalBlocker b(m_ui->txtRunPythonScript);
+    m_ui->txtRunPythonScript->setText(path);
+}
+
 #endif
 

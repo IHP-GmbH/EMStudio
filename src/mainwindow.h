@@ -170,6 +170,9 @@ public:
     void                            testClickRemoveCurrentPort();
     void                            testRemoveAllPorts();
     void                            testSetCurrentPortRow(int row);
+    QString                         testCurrentSimToolKey() const;
+    void                            testTriggerSave();
+    void                            testSetRunPythonScriptLinePath(const QString& path);
 #endif
 
 private slots:

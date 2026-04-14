@@ -163,6 +163,13 @@ public:
     bool                            testPathExistsPortable(const QString& path,
                                                            const QString& distro,
                                                            int timeoutMs) const;
+    void                            testImportPortsFromEditor();
+    QString                         testPortCellText(int row, int col) const;
+    QString                         testPortComboText(int row, int col) const;
+    void                            testClickAddPort();
+    void                            testClickRemoveCurrentPort();
+    void                            testRemoveAllPorts();
+    void                            testSetCurrentPortRow(int row);
 #endif
 
 private slots:

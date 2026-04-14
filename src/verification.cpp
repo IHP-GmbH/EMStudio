@@ -482,5 +482,82 @@ bool MainWindow::testPathExistsPortable(const QString& path,
     return pathExistsPortable(path, distro, timeoutMs);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Imports ports from the current editor text in test mode.
+ **********************************************************************************************************************/
+void MainWindow::testImportPortsFromEditor()
+{
+    importPortsFromEditor();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Returns plain table item text from the Ports table.
+ *
+ * \param row Row index.
+ * \param col Column index.
+ * \return Item text or empty string if the cell has no QTableWidgetItem.
+ **********************************************************************************************************************/
+QString MainWindow::testPortCellText(int row, int col) const
+{
+    if (!m_ui || !m_ui->tblPorts)
+        return QString();
+
+    QTableWidgetItem* item = m_ui->tblPorts->item(row, col);
+    return item ? item->text() : QString();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Returns current combo-box text from the Ports table.
+ *
+ * \param row Row index.
+ * \param col Column index.
+ * \return Current combo text or empty string if the cell does not contain a QComboBox.
+ **********************************************************************************************************************/
+QString MainWindow::testPortComboText(int row, int col) const
+{
+    if (!m_ui || !m_ui->tblPorts)
+        return QString();
+
+    QComboBox* box = qobject_cast<QComboBox*>(m_ui->tblPorts->cellWidget(row, col));
+    return box ? box->currentText() : QString();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Calls on_btnAddPort_clicked() in test mode.
+ **********************************************************************************************************************/
+void MainWindow::testClickAddPort()
+{
+    on_btnAddPort_clicked();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Calls on_btnReomovePort_clicked() in test mode.
+ **********************************************************************************************************************/
+void MainWindow::testClickRemoveCurrentPort()
+{
+    on_btnReomovePort_clicked();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Calls on_btnRemovePorts_clicked() in test mode.
+ **********************************************************************************************************************/
+void MainWindow::testRemoveAllPorts()
+{
+    on_btnRemovePorts_clicked();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the current selected row in the Ports table.
+ *
+ * \param row Row index to select.
+ **********************************************************************************************************************/
+void MainWindow::testSetCurrentPortRow(int row)
+{
+    if (!m_ui || !m_ui->tblPorts)
+        return;
+
+    m_ui->tblPorts->setCurrentCell(row, 0);
+}
+
 #endif
 

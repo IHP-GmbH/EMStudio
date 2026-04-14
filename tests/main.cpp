@@ -7,6 +7,7 @@
 #include "tst_palace_golden.h"
 #include "tst_python_editor.h"
 #include "tst_openems_golden.h"
+#include "tst_mainwindow_ports.h"
 #include "tst_headless_dispatch.h"
 #include "tst_preferences_dialog.h"
 #include "tst_keywords_editor_dialog.h"
@@ -23,6 +24,10 @@ int main(int argc, char** argv)
     }
     {
         WslHelperTest tc;
+        status |= QTest::qExec(&tc, argc, argv);
+    }
+    {
+        MainWindowPortsTest tc;
         status |= QTest::qExec(&tc, argc, argv);
     }
     {

@@ -2,6 +2,7 @@ QT += testlib core gui widgets
 TEMPLATE = app
 TARGET = emstudio_golden_tests
 CONFIG += console c++17
+CONFIG+=coverage
 
 TOP = $$clean_path($$PWD/..)
 include($$TOP/emstudio_sources.pri)

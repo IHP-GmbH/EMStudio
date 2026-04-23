@@ -36,3 +36,19 @@ ui_*.h
 docs/html/
 docs/latex/
 
+# --- Coverage reports ---
+coverage*
+!coverage.pri
+!emstudio_coverage.pri
+
+# --- Coverage data ---
+*.gcda
+*.gcno
+*.gcov
+
+# --- Test logs ---
+test_results.txt
+test_results_*.txt
+
+# --- Local shell history ---
+docker/workspace/.bash_history

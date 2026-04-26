@@ -1,2 +1,6 @@
 [
+    {
+        "key": "f8",
+        "command": "workbench.action.tasks.showTasks"
+    }
 ]

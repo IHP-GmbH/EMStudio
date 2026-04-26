@@ -19,6 +19,19 @@ set(CMAKE_AUTORCC ON)
 
 add_definitions(-DQT_DISABLE_DEPRECATED_BEFORE=0x060000)
 
+# Coverage support (matching QMake coverage.pri)
+# Enable by default - can be disabled with -DEMSTUDIO_ENABLE_COVERAGE=OFF
+option(EMSTUDIO_ENABLE_COVERAGE "Enable code coverage instrumentation (GCC/MinGW)" ON)
+
+if(EMSTUDIO_ENABLE_COVERAGE)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        add_compile_options(-O0 -g --coverage -fprofile-abs-path)
+        add_link_options(--coverage)
+        add_compile_definitions(COVERAGE_BUILD)
+        message(STATUS "Coverage instrumentation enabled")
+    endif()
+endif()
+
 # Explicitly set Qt5_DIR to help CMake find Qt5 configuration files
 if(NOT Qt5_DIR)
     set(Qt5_DIR "C:/Qt/5.15.2/mingw81_64/lib/cmake/Qt5")

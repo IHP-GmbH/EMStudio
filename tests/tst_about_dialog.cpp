@@ -32,6 +32,30 @@ static QLabel* findLabel(QWidget* parent, const QString& name)
 }
 
 /*!*******************************************************************************************************************
+ * \brief Verifies whether a QLabel contains a valid pixmap without deprecated Qt API warnings.
+ *
+ * This helper avoids direct QLabel::pixmap() pointer overload usage in Qt5.15+,
+ * while remaining compatible with older Qt versions.
+ *
+ * \param label QLabel to inspect.
+ *
+ * \return true if the label contains a valid non-empty pixmap, otherwise false.
+ **********************************************************************************************************************/
+static bool pixmapIsValid(const QLabel* label)
+{
+    if (!label)
+        return false;
+
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+    const QPixmap pix = label->pixmap(Qt::ReturnByValue);
+    return !pix.isNull();
+#else
+    const QPixmap* pix = label->pixmap();
+    return pix && !pix->isNull();
+#endif
+}
+
+/*!*******************************************************************************************************************
  * \brief Verifies that AboutDialog initializes version, Qt version, build text and logo.
  *
  * The test checks that:
@@ -81,6 +105,6 @@ void AboutDialogTest::initUi_setsExpectedLabels()
     QVERIFY2(!buildParts.at(1).trimmed().isEmpty(),
              qPrintable(QString("lblBuild date part is empty: %1").arg(lblBuild->text())));
 
-    QVERIFY2(!lblLogo->pixmap().isNull(),
-             "lblLogo pixmap shall be valid");
+    QVERIFY2(pixmapIsValid(lblLogo),
+             "Logo label has no valid pixmap");
 }

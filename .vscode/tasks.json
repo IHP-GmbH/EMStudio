@@ -126,6 +126,57 @@
                 "panel": "shared"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Run: Tests with Coverage (Windows)",
+            "type": "shell",
+            "command": "cmd",
+            "args": [
+                "/c",
+                "cd /d ${workspaceFolder} && scripts\\run_tests_local.bat"
+            ],
+            "dependsOn": "Build: EMStudio + Tests (incremental)",
+            "group": "test",
+            "options": {
+                "env": {
+                    "PATH": "C:/Qt/5.15.2/mingw81_64/bin;C:/Qt/Tools/mingw810_64/bin;${env:PATH}"
+                }
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": [],
+            "windows": {
+                "options": {
+                    "shell": {
+                        "executable": "cmd.exe"
+                    }
+                }
+            }
+        },
+        {
+            "label": "Run: Tests with Coverage (Linux/macOS)",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "${workspaceFolder}/scripts/run_tests_local.sh"
+            ],
+            "dependsOn": "Build: EMStudio + Tests (incremental)",
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": [],
+            "linux": {
+                "command": "bash"
+            },
+            "osx": {
+                "command": "bash"
+            }
         }
     ]
 }

@@ -1,0 +1,18 @@
+{
+    "cmake.configureOnOpen": true,
+    "cmake.buildDirectory": "${workspaceFolder}/build",
+
+    "clangd.arguments": [
+        "--compile-commands-dir=${workspaceFolder}/build",
+        "--background-index",
+        "--clang-tidy",
+        "--completion-style=detailed",
+        "--header-insertion=never"
+    ],
+
+    "C_Cpp.intelliSenseEngine": "disabled",
+
+    "files.associations": {
+        "*.h": "cpp"
+    }
+}

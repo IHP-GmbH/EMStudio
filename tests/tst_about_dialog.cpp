@@ -81,6 +81,6 @@ void AboutDialogTest::initUi_setsExpectedLabels()
     QVERIFY2(!buildParts.at(1).trimmed().isEmpty(),
              qPrintable(QString("lblBuild date part is empty: %1").arg(lblBuild->text())));
 
-    QVERIFY2(lblLogo->pixmap() && !lblLogo->pixmap()->isNull(),
+    QVERIFY2(!lblLogo->pixmap().isNull(),
              "lblLogo pixmap shall be valid");
 }

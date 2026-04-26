@@ -1,0 +1,131 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Clean: EMStudio build directory",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "if (Test-Path build) { Remove-Item -Recurse -Force build }"
+            ],
+            "group": "build",
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "CMake: configure EMStudio",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S",
+                ".",
+                "-B",
+                "build",
+                "-G",
+                "MinGW Makefiles",
+                "-DCMAKE_PREFIX_PATH=C:/Qt/5.15.2/mingw81_64",
+                "-DQt5_DIR=C:/Qt/5.15.2/mingw81_64/lib/cmake/Qt5",
+                "-DCMAKE_CXX_COMPILER=C:/Qt/Tools/mingw810_64/bin/g++.exe"
+            ],
+            "group": "build",
+            "problemMatcher": [],
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Build: EMStudio (incremental)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "build",
+                "--parallel",
+                "4"
+            ],
+            "dependsOn": "CMake: configure EMStudio",
+            "group": "build",
+            "problemMatcher": "$gcc",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Build: EMStudio + Tests (incremental)",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "build",
+                "--parallel",
+                "4"
+            ],
+            "dependsOn": "CMake: configure EMStudio",
+            "group": "build",
+            "problemMatcher": "$gcc",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Clean + Configure + Build EMStudio",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Clean: EMStudio build directory",
+                "CMake: configure EMStudio",
+                "Build: EMStudio (incremental)"
+            ],
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Run: EMStudio",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/EMStudio.exe",
+            "dependsOn": "Build: EMStudio (incremental)",
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run: Tests",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/tests/emstudio_golden_tests.exe",
+            "dependsOn": "Build: EMStudio + Tests (incremental)",
+            "group": "build",
+            "options": {
+                "env": {
+                    "PATH": "C:/Qt/5.15.2/mingw81_64/bin;C:/Qt/Tools/mingw810_64/bin;${env:PATH}"
+                }
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

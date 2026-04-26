@@ -1,0 +1,83 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug: EMStudio (incremental)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/EMStudio.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "C:/Qt/Tools/mingw810_64/bin/gdb.exe",
+            "preLaunchTask": "Build: EMStudio (incremental)"
+        },
+        {
+            "name": "Debug: EMStudio (clean rebuild)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/EMStudio.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "C:/Qt/Tools/mingw810_64/bin/gdb.exe",
+            "preLaunchTask": "Clean + Configure + Build EMStudio"
+        },
+        {
+            "name": "Run: EMStudio",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/EMStudio.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build",
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "C:/Qt/Tools/mingw810_64/bin/gdb.exe",
+            "preLaunchTask": "Build: EMStudio (incremental)",
+            "stopOnEntry": false
+        },
+        {
+            "name": "Debug: Tests",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/tests/emstudio_golden_tests.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/tests",
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "C:/Qt/Tools/mingw810_64/bin/gdb.exe",
+            "preLaunchTask": "Build: EMStudio + Tests (incremental)",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "C:/Qt/5.15.2/mingw81_64/bin;C:/Qt/Tools/mingw810_64/bin;${env:PATH}"
+                }
+            ]
+        },
+        {
+            "name": "Run: Tests (console)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/tests/emstudio_golden_tests.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/build/tests",
+            "externalConsole": true,
+            "MIMode": "gdb",
+            "miDebuggerPath": "C:/Qt/Tools/mingw810_64/bin/gdb.exe",
+            "preLaunchTask": "Build: EMStudio + Tests (incremental)",
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "C:/Qt/5.15.2/mingw81_64/bin;C:/Qt/Tools/mingw810_64/bin;${env:PATH}"
+                }
+            ]
+        }
+    ]
+}

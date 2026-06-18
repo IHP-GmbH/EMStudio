@@ -2,5 +2,10 @@
     {
         "key": "f8",
         "command": "workbench.action.tasks.showTasks"
+    },
+    {
+        "key": "f9",
+        "command": "workbench.action.tasks.runTask",
+        "args": "F9: Build + Run All"
     }
 ]

@@ -69,13 +69,13 @@ PythonEditor::PythonEditor(QWidget *parent)
     auto *scNext = new QShortcut(QKeySequence(Qt::Key_F3), this);
     connect(scNext, &QShortcut::activated, this, [this]{
         if (!m_find) openFindDialog();
-        emit findNext(QString(), false, false, false);
+        if (m_find) emit findNext(QString(), false, false, false);
     });
 
     auto *scPrev = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3), this);
     connect(scPrev, &QShortcut::activated, this, [this]{
         if (!m_find) openFindDialog();
-        emit findPrev(QString(), false, false, false);
+        if (m_find) emit findPrev(QString(), false, false, false);
     });
 }
 
@@ -224,16 +224,19 @@ void PythonEditor::openFindDialog()
     if (!m_find) {
         m_find = new FindDialog(this);
         m_find->setWindowFlag(Qt::Tool, true);
-        m_find->setAttribute(Qt::WA_DeleteOnClose, false);
+        m_find->setAttribute(Qt::WA_DeleteOnClose, true);
 
         connect(m_find, &FindDialog::sigFindNext,  this, &PythonEditor::findNext);
         connect(m_find, &FindDialog::sigFindPrev,  this, &PythonEditor::findPrev);
         connect(m_find, &FindDialog::sigHighlightAll, this, &PythonEditor::highlightAll);
         connect(m_find, &FindDialog::sigClearHighlights, this, &PythonEditor::clearHighlights);
+        connect(m_find, &QObject::destroyed, this, [this]{ m_find = nullptr; });
     }
-    m_find->show();
-    m_find->raise();
-    m_find->activateWindow();
+    if (m_find) {
+        m_find->show();
+        m_find->raise();
+        m_find->activateWindow();
+    }
 }
 
 /*!*******************************************************************************************************************
@@ -578,3 +581,15 @@ void PythonEditor::testOpenFindDialog()
 }
 
 #endif
+
+/*!*******************************************************************************************************************
+ * \brief Destructor for PythonEditor.
+ *
+ * Cleans up resources including the syntax highlighter. The FindDialog will be automatically
+ * deleted if it's still open (due to WA_DeleteOnClose and parent ownership).
+ **********************************************************************************************************************/
+PythonEditor::~PythonEditor()
+{
+    // m_find, m_model, m_completer, and m_highlighter are managed by Qt parent-child ownership
+    // but we explicitly set WA_DeleteOnClose on m_find for proper cleanup
+}

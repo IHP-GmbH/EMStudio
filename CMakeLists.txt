@@ -224,6 +224,10 @@ target_link_libraries(EMStudio PRIVATE
 # Post-build copy (как в qmake)
 # -----------------------------------------------------------------------------
 
+# Determine Qt plugins directory from Qt5_DIR
+get_filename_component(Qt5_BIN_DIR "${Qt5_DIR}/../../bin" ABSOLUTE)
+get_filename_component(Qt5_PLUGINS_DIR "${Qt5_DIR}/../../plugins" ABSOLUTE)
+
 add_custom_command(TARGET EMStudio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E echo "Copy scripts/ and keywords/"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -232,9 +236,9 @@ add_custom_command(TARGET EMStudio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/keywords"
         "$<TARGET_FILE_DIR:EMStudio>/keywords"
-    COMMAND ${CMAKE_COMMAND} -E echo "Copy Qt plugins"
+    COMMAND ${CMAKE_COMMAND} -E echo "Copy Qt plugins from ${Qt5_PLUGINS_DIR}"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_PREFIX_PATH}/plugins"
+        "${Qt5_PLUGINS_DIR}"
         "$<TARGET_FILE_DIR:EMStudio>/plugins"
     COMMAND ${CMAKE_COMMAND} -E copy
         "${CMAKE_SOURCE_DIR}/qt.conf"

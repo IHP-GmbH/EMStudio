@@ -97,10 +97,43 @@
             }
         },
         {
+            "label": "Build: Tests",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "build",
+                "--parallel",
+                "4",
+                "--target",
+                "emstudio_golden_tests"
+            ],
+            "dependsOn": "CMake: configure EMStudio",
+            "group": "build",
+            "problemMatcher": "$gcc",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
             "label": "Run: EMStudio",
             "type": "shell",
             "command": "${workspaceFolder}/build/EMStudio.exe",
             "dependsOn": "Build: EMStudio (incremental)",
+            "group": "build",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Run: EMStudio (no build)",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/EMStudio.exe",
             "group": "build",
             "presentation": {
                 "echo": true,
@@ -126,6 +159,42 @@
                 "panel": "shared"
             },
             "problemMatcher": []
+        },
+        {
+            "label": "Run: Tests (no build)",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/tests/emstudio_golden_tests.exe",
+            "group": "build",
+            "options": {
+                "env": {
+                    "PATH": "C:/Qt/5.15.2/mingw81_64/bin;C:/Qt/Tools/mingw810_64/bin;${env:PATH}"
+                }
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "F9: Build + Run All",
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "Build: EMStudio (incremental)",
+                "Run: EMStudio (no build)",
+                "Build: Tests",
+                "Run: Tests (no build)"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "panel": "shared"
+            }
         },
         {
             "label": "Run: Tests with Coverage (Windows)",

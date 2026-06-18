@@ -52,6 +52,7 @@ class PythonEditor : public QTextEdit
 
 public:
     explicit                            PythonEditor(QWidget *parent = nullptr);
+    ~PythonEditor() override;
     void                                setCompleter(QCompleter *completer);
     QCompleter                          *completer() const;
     void                                setEditorFontSize(qreal pt);

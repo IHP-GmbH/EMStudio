@@ -77,6 +77,7 @@ void Preferences::on_btnCancel_clicked()
  *  - EMStudio: paths to model templates shipped with (or used by) the application.
  *  - OpenEMS: Python executable and OpenEMS install root.
  *  - Palace: WSL Python, run mode (executable vs. script) and corresponding path.
+ *  - Elmer: path to ElmerSolver executable.
  *
  * For MODEL_TEMPLATES_DIR the function attempts the following initialization order:
  *  1) Use saved value from \c m_preferences if it points to a folder containing required templates.
@@ -251,8 +252,24 @@ void Preferences::setupPreferencesPanel()
     m_palaceRunScriptProp->setValue(m_preferences.value(QStringLiteral("PALACE_RUN_SCRIPT"), QString()));
     palaceGroup->addSubProperty(m_palaceRunScriptProp);
 
+    // -------------------------------------------------------------------------------------------------------------
+    // Elmer
+    // -------------------------------------------------------------------------------------------------------------
+    QtVariantProperty *elmerGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("Elmer"));
+
+    QtVariantProperty *elmerSolverPathProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("ELMER_SOLVER_PATH"));
+    elmerSolverPathProp->setWhatsThis("file");
+    elmerSolverPathProp->setToolTip(tr("Path to the ElmerSolver executable.\n"
+                                       "Example:\n"
+                                       "  - C:\\\\ElmerFEM-gui-nompi-Windows-AMD64\\\\bin\\\\ElmerSolver.exe"));
+    elmerSolverPathProp->setValue(m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH"), QString()));
+    elmerGroup->addSubProperty(elmerSolverPathProp);
+
     m_propertyBrowser->addProperty(openemsGroup);
     m_propertyBrowser->addProperty(palaceGroup);
+    m_propertyBrowser->addProperty(elmerGroup);
 
     connect(m_variantManager, &QtVariantPropertyManager::valueChanged,
             this, &Preferences::onVariantValueChanged);

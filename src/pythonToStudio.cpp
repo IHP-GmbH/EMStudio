@@ -330,7 +330,8 @@ void MainWindow::applyBoundariesToUiAndSettings(const QStringList &items, const 
     auto normalizeForTool = [&](QString v) -> QString {
         v = v.trimmed().toUpper();
 
-        const bool isPalace = (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0);
+        const bool isPalace = (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0)
+                           || (simTool.compare(QLatin1String("Elmer"), Qt::CaseInsensitive) == 0);
         const bool isOpenEMS = (simTool.compare(QLatin1String("OpenEMS"), Qt::CaseInsensitive) == 0);
 
         if (isPalace) {

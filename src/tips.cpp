@@ -38,8 +38,12 @@
  **********************************************************************************************************************/
 QString MainWindow::resolveKeywordsPath(const QString& simKeyLower) const
 {
+    QString key = simKeyLower;
+    if (key == QLatin1String("elmer"))
+        key = QStringLiteral("palace");
+
     const QString base = QCoreApplication::applicationDirPath();
-    return QDir(base).filePath(QStringLiteral("keywords/%1.csv").arg(simKeyLower));
+    return QDir(base).filePath(QStringLiteral("keywords/%1.csv").arg(key));
 }
 
 /*!*******************************************************************************************************************
@@ -60,6 +64,8 @@ void MainWindow::on_actionKeywords_triggered()
     const QString path = resolveKeywordsPath(simKey);
     const QString title = (simKey == "openems")
                               ? tr("Keywords Editor (OpenEMS)")
+                              : (simKey == "elmer")
+                              ? tr("Keywords Editor (Elmer)")
                               : tr("Keywords Editor (Palace)");
 
     KeywordsEditorDialog dlg(path, title, this);

@@ -337,8 +337,9 @@ void MainWindow::setupWindowMenuDocks()
 /*!*******************************************************************************************************************
  * \brief Rebuilds the "Simulation Tool" combo box (cbxSimTool) based on configured install paths.
  *
- * Reads PALACE_INSTALL_PATH from \c m_preferences, validates them with
- * pathLooksValid(), and repopulates \c cbxSimTool with the available tools ("OpenEMS", "Palace").
+ * Reads configured tool paths from \c m_preferences, validates them with
+ * pathIsExecutablePortable(), and repopulates \c cbxSimTool with the available tools
+ * ("OpenEMS", "Palace", "Elmer").
  * If none are valid, a placeholder item is shown and the combo is disabled. Emits an info() message
  * summarizing what is enabled.
  **********************************************************************************************************************/
@@ -349,6 +350,7 @@ void MainWindow::refreshSimToolOptions()
     const QString openemsPath      = m_preferences.value("Python Path").toString().trimmed();
     const QString palacePath       = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
     const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
+    const QString elmerSolverPath  = m_preferences.value("ELMER_SOLVER_PATH").toString().trimmed();
 
     const QString distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
 
@@ -377,6 +379,9 @@ void MainWindow::refreshSimToolOptions()
 
     const bool hasPalace = hasPalaceInstall || hasPalaceScript;
 
+    const bool hasElmer = !elmerSolverPath.isEmpty()
+        && pathIsExecutablePortable(elmerSolverPath, distro, 800);
+
     m_ui->cbxSimTool->clear();
 
     int items = 0;
@@ -388,11 +393,15 @@ void MainWindow::refreshSimToolOptions()
         m_ui->cbxSimTool->addItem("Palace", "palace");
         ++items;
     }
+    if (hasElmer) {
+        m_ui->cbxSimTool->addItem("Elmer", "elmer");
+        ++items;
+    }
 
     if (items == 0) {
         m_ui->cbxSimTool->addItem("No simulation tool configured");
         m_ui->cbxSimTool->setEnabled(false);
-        info("No valid simulation tools found. Set OpenEMS Python path and/or PALACE_INSTALL_PATH / PALACE_RUN_SCRIPT in Preferences.");
+        info("No valid simulation tools found. Set OpenEMS Python path, PALACE_INSTALL_PATH / PALACE_RUN_SCRIPT, and/or ELMER_SOLVER_PATH in Preferences.");
     } else {
         m_ui->cbxSimTool->setEnabled(true);
         m_ui->cbxSimTool->setCurrentIndex(0);
@@ -400,6 +409,7 @@ void MainWindow::refreshSimToolOptions()
         QStringList enabled;
         if (hasOpenEMS) enabled << "OpenEMS";
         if (hasPalace)  enabled << "Palace";
+        if (hasElmer)   enabled << "Elmer";
         info(QString("Enabled simulation tools: %1").arg(enabled.join(", ")));
 
         int restoreIdx = -1;
@@ -803,7 +813,8 @@ void MainWindow::setupSettingsPanel()
     if (simTool.compare(QLatin1String("OpenEMS"), Qt::CaseInsensitive) == 0) {
         boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
         << QLatin1String("MUR") << QLatin1String("PML_8");
-    } else if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0) {
+    } else if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0
+               || simTool.compare(QLatin1String("Elmer"), Qt::CaseInsensitive) == 0) {
         boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
         << QLatin1String("ABC") << QLatin1String("PML");
     } else {
@@ -827,7 +838,8 @@ void MainWindow::setupSettingsPanel()
             if (opt == QLatin1String("PMC"))   return QLatin1String("PMC: perfect magnetic conductor (symmetry)");
             if (opt == QLatin1String("MUR"))   return QLatin1String("MUR: simple absorbing boundary condition");
             if (opt == QLatin1String("PML_8")) return QLatin1String("PML_8: absorbing boundary condition (8 layers)");
-        } else if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0) {
+        } else if (simTool.compare(QLatin1String("Palace"), Qt::CaseInsensitive) == 0
+                   || simTool.compare(QLatin1String("Elmer"), Qt::CaseInsensitive) == 0) {
             if (opt == QLatin1String("PEC")) return QLatin1String("PEC: perfect electric conductor (default)");
             if (opt == QLatin1String("PMC")) return QLatin1String("PMC: perfect magnetic conductor (symmetry)");
             if (opt == QLatin1String("ABC")) return QLatin1String("ABC: absorbing boundary condition");
@@ -1741,7 +1753,7 @@ void MainWindow::updateBoundaryOptionsForCurrentTool()
     if (key == QLatin1String("openems")) {
         boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
         << QLatin1String("MUR") << QLatin1String("PML_8");
-    } else if (key == QLatin1String("palace")) {
+    } else if (key == QLatin1String("palace") || key == QLatin1String("elmer")) {
         boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
         << QLatin1String("ABC") << QLatin1String("PML");
     } else {
@@ -1821,7 +1833,7 @@ void MainWindow::updateBoundaryTooltipsForCurrentTool()
             if (opt == "PMC")   return "PMC: perfect magnetic conductor (symmetry)";
             if (opt == "MUR")   return "MUR: simple absorbing boundary condition";
             if (opt == "PML_8") return "PML_8: absorbing boundary condition (8 layers)";
-        } else if (key == "palace") {
+        } else if (key == "palace" || key == "elmer") {
             if (opt == "PEC") return "PEC: perfect electric conductor (default)";
             if (opt == "PMC") return "PMC: perfect magnetic conductor (symmetry)";
             if (opt == "ABC") return "ABC: absorbing boundary condition";
@@ -1908,13 +1920,15 @@ void MainWindow::on_btnRun_clicked()
         runOpenEMS();
     } else if (key == QLatin1String("palace")) {
         runPalace();
+    } else if (key == QLatin1String("elmer")) {
+        error(tr("Elmer solver launch is not implemented yet. Configure ELMER_SOLVER_PATH in Preferences."));
     } else {
         error(QString("Unsupported simulation tool: %1").arg(key));
     }
 }
 
 /*!*******************************************************************************************************************
- * \brief Returns the stable key of the currently selected sim tool ("openems"/"palace"), or empty if none.
+ * \brief Returns the stable key of the currently selected sim tool ("openems"/"palace"/"elmer"), or empty if none.
  **********************************************************************************************************************/
 QString MainWindow::currentSimToolKey() const
 {
@@ -2331,7 +2345,7 @@ void MainWindow::on_btnGenDefaultPython_clicked()
     QString defaultScript;
     if (simKey == QLatin1String("openems")) {
         defaultScript = createDefaultOpenemsScript();
-    } else if (simKey == QLatin1String("palace")) {
+    } else if (simKey == QLatin1String("palace") || simKey == QLatin1String("elmer")) {
         defaultScript = createDefaultPalaceScript();
     } else {
         // Fallback: you can choose one, or warn.
@@ -2539,11 +2553,11 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
 }
 
 /*!*******************************************************************************************************************
- * \brief Opens a Palace/OpenEMS Python model via a file dialog.
+ * \brief Opens a Python model via a file dialog.
  *
  * Displays a file selection dialog, remembers the last used directory in
  * \c m_preferences under "PALACE_MODEL_DIR", and if the user selects a file,
- * forwards the file path to loadPythonModel() for actual parsing and loading.
+ * forwards the file path to loadPythonModel() for parsing, tool detection, and loading.
  **********************************************************************************************************************/
 void MainWindow::on_actionOpen_Python_Model_triggered()
 {
@@ -2552,7 +2566,7 @@ void MainWindow::on_actionOpen_Python_Model_triggered()
 
     const QString fileName = QFileDialog::getOpenFileName(
         this,
-        tr("Open Palace Python model"),
+        tr("Load Python Model"),
         startDir,
         tr("Python files (*.py);;All files (*.*)"));
 
@@ -2611,7 +2625,7 @@ void MainWindow::loadPythonModel(const QString &fileName)
 
     PythonParser::Result res = PythonParser::parseSettings(fileName);
     if (!res.ok) {
-        error(tr("Failed to parse Palace model file:\n%1").arg(res.error));
+        error(tr("Failed to parse Python model file:\n%1").arg(res.error));
         return;
     }
 
@@ -2903,7 +2917,7 @@ QString MainWindow::requiredFolderForSim(const QString &simKeyLower) const
 {
     if (simKeyLower == QLatin1String("openems"))
         return QStringLiteral("modules");
-    if (simKeyLower == QLatin1String("palace"))
+    if (simKeyLower == QLatin1String("palace") || simKeyLower == QLatin1String("elmer"))
         return QStringLiteral("gds2palace");
     return QString();
 }
@@ -2945,6 +2959,7 @@ MainWindow::askMissingFolderDecision(const QString &simKeyLower,
     const QString simName =
         (simKeyLower == QLatin1String("openems")) ? QStringLiteral("OpenEMS") :
             (simKeyLower == QLatin1String("palace"))  ? QStringLiteral("Palace")  :
+            (simKeyLower == QLatin1String("elmer"))   ? QStringLiteral("Elmer")   :
             simKeyLower;
 
     QMessageBox msg(const_cast<MainWindow*>(this));

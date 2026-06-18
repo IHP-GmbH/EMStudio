@@ -5,7 +5,6 @@
     },
     {
         "key": "f9",
-        "command": "workbench.action.tasks.runTask",
-        "args": "F9: Build + Run All"
+        "command": "workbench.action.tasks.runTask"
     }
 ]

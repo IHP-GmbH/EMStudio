@@ -240,7 +240,7 @@ void MainWindow::applySimSettingsToScript(QString &script, const QString &simKey
 {
     if (simKeyLower == QLatin1String("openems")) {
         applyOpenEmsSettings(script);
-    } else if (simKeyLower == QLatin1String("palace")) {
+    } else if (simKeyLower == QLatin1String("palace") || simKeyLower == QLatin1String("elmer")) {
         applyPalaceSettings(script);
     }
 }
@@ -470,7 +470,7 @@ void MainWindow::applyBoundaries(QString &script, bool alsoTopLevelAssignment)
 QString MainWindow::makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const
 {
 #ifdef Q_OS_WIN
-    if (simKeyLower == QLatin1String("palace")) {
+    if (simKeyLower == QLatin1String("palace") || simKeyLower == QLatin1String("elmer")) {
         if (isWslAvailable())
             return toWslPath(nativePath);
     }

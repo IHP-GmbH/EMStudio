@@ -78,6 +78,7 @@ void Preferences::on_btnCancel_clicked()
  *  - OpenEMS: Python executable and OpenEMS install root.
  *  - Palace: WSL Python, run mode (executable vs. script) and corresponding path.
  *  - Elmer: path to ElmerSolver executable.
+ *  - KLayout: executable path and optional launch options.
  *
  * For MODEL_TEMPLATES_DIR the function attempts the following initialization order:
  *  1) Use saved value from \c m_preferences if it points to a folder containing required templates.
@@ -248,7 +249,10 @@ void Preferences::setupPreferencesPanel()
     m_palaceRunScriptProp->setWhatsThis("file");
     m_palaceRunScriptProp->setToolTip(tr("Custom Palace launcher script.\n\n"
                                          "Used when PALACE_RUN_MODE is set to 'Script'.\n"
-                                         "The script must be directly executable from the host environment."));
+                                         "On Windows with WSL: use a bash script (e.g. run_palace from gds2palace),\n"
+                                         "not a .cmd file. Windows .cmd launchers are supported but Palace itself\n"
+                                         "normally runs inside WSL.\n"
+                                         "Do not point to EMStudio/tests/tools/palace_launcher_stub.* (test only)."));
     m_palaceRunScriptProp->setValue(m_preferences.value(QStringLiteral("PALACE_RUN_SCRIPT"), QString()));
     palaceGroup->addSubProperty(m_palaceRunScriptProp);
 
@@ -261,15 +265,54 @@ void Preferences::setupPreferencesPanel()
     QtVariantProperty *elmerSolverPathProp =
         m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("ELMER_SOLVER_PATH"));
     elmerSolverPathProp->setWhatsThis("file");
-    elmerSolverPathProp->setToolTip(tr("Path to the ElmerSolver executable.\n"
+    elmerSolverPathProp->setToolTip(tr("Path to the ElmerSolver executable (Windows native).\n"
+                                       "ElmerGrid must be in the same bin folder.\n"
+                                       "Elmer workflows run natively on Windows without WSL.\n"
                                        "Example:\n"
                                        "  - C:\\\\ElmerFEM-gui-nompi-Windows-AMD64\\\\bin\\\\ElmerSolver.exe"));
     elmerSolverPathProp->setValue(m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH"), QString()));
     elmerGroup->addSubProperty(elmerSolverPathProp);
 
+    QtVariantProperty *elmerPythonPathProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("ELMER_PYTHON"));
+    elmerPythonPathProp->setWhatsThis("file");
+    elmerPythonPathProp->setToolTip(tr("Path to the Windows Python executable for Elmer/gds2palace preprocessing.\n"
+                                       "Leave empty to use python from PATH.\n"
+                                       "Example:\n"
+                                       "  - C:\\\\Python312\\\\python.exe"));
+    elmerPythonPathProp->setValue(m_preferences.value(QStringLiteral("ELMER_PYTHON"), QString()));
+    elmerGroup->addSubProperty(elmerPythonPathProp);
+
+    // -------------------------------------------------------------------------------------------------------------
+    // KLayout
+    // -------------------------------------------------------------------------------------------------------------
+    QtVariantProperty *klayoutGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("KLayout"));
+
+    QtVariantProperty *klayoutExePathProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("KLAYOUT_EXE"));
+    klayoutExePathProp->setWhatsThis("file");
+    klayoutExePathProp->setToolTip(tr("Path to the KLayout executable (quotes are optional).\n"
+                                      "Examples:\n"
+                                      "  - C:\\\\Users\\\\anton\\\\Documents\\\\KLayout\\\\bin-release\\\\klayout.exe\n"
+                                      "  - \"C:\\\\Program Files\\\\KLayout\\\\klayout_app.exe\""));
+    klayoutExePathProp->setValue(m_preferences.value(QStringLiteral("KLAYOUT_EXE"), QString()));
+    klayoutGroup->addSubProperty(klayoutExePathProp);
+
+    QtVariantProperty *klayoutOptionsProp =
+        m_variantManager->addProperty(QVariant::String, QLatin1String("KLAYOUT_OPTIONS"));
+    klayoutOptionsProp->setToolTip(tr("Optional KLayout command-line options.\n"
+                                      "Examples:\n"
+                                      "  - -e\n"
+                                      "  - -e -ne\n\n"
+                                      "EMStudio appends its own options for top-cell selection and the current GDS file."));
+    klayoutOptionsProp->setValue(m_preferences.value(QStringLiteral("KLAYOUT_OPTIONS"), QString()));
+    klayoutGroup->addSubProperty(klayoutOptionsProp);
+
     m_propertyBrowser->addProperty(openemsGroup);
     m_propertyBrowser->addProperty(palaceGroup);
     m_propertyBrowser->addProperty(elmerGroup);
+    m_propertyBrowser->addProperty(klayoutGroup);
 
     connect(m_variantManager, &QtVariantPropertyManager::valueChanged,
             this, &Preferences::onVariantValueChanged);

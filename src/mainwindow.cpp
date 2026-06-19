@@ -18,6 +18,7 @@
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
+#include <QCoreApplication>
 #include <QMenu>
 #include <QFile>
 #include <QDebug>
@@ -201,6 +202,9 @@ MainWindow::MainWindow(QWidget *parent)
     addDockWidget(Qt::BottomDockWidgetArea, m_ui->dockLog);
 
     m_ui->btnAddPort->setEnabled(false);
+
+    m_ui->btnShowInKlayout->setIcon(QIcon(QStringLiteral(":/klayout")));
+    m_ui->btnShowInKlayout->setToolTip(tr("Show layout in KLayout"));
 
     setupTabMapping();
     showTab(m_tabMap.value("Main", 0));
@@ -1028,56 +1032,30 @@ void MainWindow::on_actionSave_As_triggered()
 }*/
 void MainWindow::on_actionSave_triggered()
 {
-    bool pythonEditorActive = false;
-    if (QWidget *fw = QApplication::focusWidget()) {
-        pythonEditorActive =
-            (fw == m_ui->editRunPythonScript) ||
-            m_ui->editRunPythonScript->isAncestorOf(fw);
+    QString filePath = m_ui->txtRunPythonScript->text().trimmed();
+    if (filePath.isEmpty()) {
+        if (!ensurePythonScriptPathBySaveAs(false))
+            return;
+        filePath = m_ui->txtRunPythonScript->text().trimmed();
+        if (filePath.isEmpty())
+            return;
     }
 
-    if (pythonEditorActive) {
-        if (!applyPythonScriptFromEditor())
-            return;
-    } else {
-        QString script = m_ui->editRunPythonScript->toPlainText();
-        const QString simKey = currentSimToolKey().toLower();
+    QString script = m_ui->editRunPythonScript->toPlainText();
+    const QString simKey = currentSimToolKey().toLower();
 
-        if (script.trimmed().isEmpty()) {
-            if (simKey == QLatin1String("openems"))
-                script = createDefaultOpenemsScript();
-            else
-                script = createDefaultPalaceScript();
-        }
-
-        applySimSettingsToScript(script, simKey);
-        applyGdsAndXmlPaths(script, simKey);
-        applyBoundaries(script, true);
-
+    if (script.trimmed().isEmpty()) {
+        if (simKey == QLatin1String("openems"))
+            script = createDefaultOpenemsScript();
+        else
+            script = createDefaultPalaceScript();
         setEditorScriptPreservingState(script);
-
-        QString filePath = m_ui->txtRunPythonScript->text().trimmed();
-        if (filePath.isEmpty()) {
-            if (!ensurePythonScriptPathBySaveAs(false))
-                return;
-            filePath = m_ui->txtRunPythonScript->text().trimmed();
-            if (filePath.isEmpty())
-                return;
-        }
-
-        QFile f(filePath);
-        if (!f.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            error(tr("Failed to save Python script:\n%1").arg(f.errorString()), false);
-            return;
-        }
-
-        QTextStream out(&f);
-        out << script;
-        f.close();
-
-        m_ui->editRunPythonScript->document()->setModified(false);
-        m_simSettings["RunPythonScript"] = filePath;
-        m_preferences["PALACE_MODEL_FILE"] = filePath;
     }
+
+    syncGuiSettingsToPythonEditor();
+
+    if (!applyPythonScriptFromEditor())
+        return;
 
     saveSettings();
     setStateSaved();
@@ -1376,6 +1354,105 @@ void MainWindow::on_btnGdsFile_clicked()
         m_ui->txtGdsFile->setText(filePath);
         updateGdsUserInfo();
         setStateChanged();
+    }
+}
+
+QString MainWindow::parseKlayoutExeOnly(const QString &raw) const
+{
+    QString path = raw.trimmed();
+    path.remove(QLatin1Char('"'));
+
+    const int exeIdx = path.indexOf(QStringLiteral(".exe"), 0, Qt::CaseInsensitive);
+    if (exeIdx >= 0)
+        path = path.left(exeIdx + 4);
+
+    return path.trimmed();
+}
+
+QStringList MainWindow::parseKlayoutUserArgs(const QString &raw) const
+{
+    const QString trimmed = raw.trimmed();
+    if (trimmed.isEmpty())
+        return {};
+
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+    return QProcess::splitCommand(trimmed);
+#else
+    return trimmed.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+#endif
+}
+
+QStringList MainWindow::extractLegacyKlayoutArgsFromExeField(const QString &raw) const
+{
+    const QString trimmed = raw.trimmed();
+    const int exeIdx = trimmed.indexOf(QStringLiteral(".exe"), 0, Qt::CaseInsensitive);
+    if (exeIdx < 0)
+        return {};
+
+    QString tail = trimmed.mid(exeIdx + 4).trimmed();
+    tail.remove(QLatin1Char('"'));
+    return parseKlayoutUserArgs(tail);
+}
+
+QStringList MainWindow::buildKlayoutLaunchArgs(const QString &gdsPath, const QString &topCell) const
+{
+    const QString rawExe = m_preferences.value(QStringLiteral("KLAYOUT_EXE")).toString();
+
+    QStringList args = parseKlayoutUserArgs(
+        m_preferences.value(QStringLiteral("KLAYOUT_OPTIONS")).toString());
+    if (args.isEmpty())
+        args = extractLegacyKlayoutArgsFromExeField(rawExe);
+
+    auto hasFlag = [&args](const QString &flag) {
+        return args.contains(flag, Qt::CaseInsensitive);
+    };
+
+    if (!hasFlag(QStringLiteral("-e")) && !hasFlag(QStringLiteral("-ne")))
+        args << QStringLiteral("-e");
+
+    if (!topCell.isEmpty()) {
+        const QString macroPath = QDir::toNativeSeparators(resolveKlayoutShowGdsScript());
+        if (QFileInfo::exists(macroPath)) {
+            args << QStringLiteral("-rm") << macroPath;
+            args << QStringLiteral("-rd") << QStringLiteral("topcell=%1").arg(topCell);
+        }
+    }
+
+    args << QDir::toNativeSeparators(gdsPath);
+    return args;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Opens the current GDS layout in KLayout using KLAYOUT_EXE from Preferences.
+ **********************************************************************************************************************/
+void MainWindow::on_btnShowInKlayout_clicked()
+{
+    const QString rawExe = m_preferences.value(QStringLiteral("KLAYOUT_EXE")).toString();
+    const QString klayoutExe = parseKlayoutExeOnly(rawExe);
+    if (klayoutExe.isEmpty() || !QFileInfo::exists(klayoutExe)) {
+        error(tr("KLayout executable is not configured or not found:\n%1").arg(klayoutExe.isEmpty() ? rawExe : klayoutExe));
+        return;
+    }
+
+    const QString gdsPath = m_ui->txtGdsFile->text().trimmed();
+    if (gdsPath.isEmpty() || !QFileInfo::exists(gdsPath)) {
+        error(tr("GDS file is not set or does not exist."));
+        return;
+    }
+
+    const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
+    const QString workDir = QFileInfo(gdsPath).absolutePath();
+    const QStringList args = buildKlayoutLaunchArgs(gdsPath, topCell);
+
+    QString launchMsg = tr("Launching KLayout: %1 %2")
+                            .arg(klayoutExe, args.join(QLatin1Char(' ')));
+    if (!topCell.isEmpty())
+        launchMsg += tr(" (top cell: %1)").arg(topCell);
+    info(launchMsg, false);
+
+    if (!QProcess::startDetached(klayoutExe, args, workDir)) {
+        error(tr("Failed to start KLayout:\n%1 %2")
+                  .arg(klayoutExe, args.join(QLatin1Char(' '))));
     }
 }
 
@@ -1876,7 +1953,7 @@ void MainWindow::updateBoundaryTooltipsForCurrentTool()
 }
 
 /*!*******************************************************************************************************************
- * \brief Starts the simulation by dispatching to the selected backend (OpenEMS or Palace).
+ * \brief Starts the simulation by dispatching to the selected backend (OpenEMS, Palace, or Elmer).
  **********************************************************************************************************************/
 void MainWindow::on_btnRun_clicked()
 {
@@ -1884,29 +1961,14 @@ void MainWindow::on_btnRun_clicked()
 
     const QString scriptText = m_ui->editRunPythonScript->toPlainText();
 
-    QString modelType = QStringLiteral("unknown");
-    if (!scriptText.trimmed().isEmpty()) {
-        auto detectModelType = [](const QString& text) -> QString {
-            if (text.contains(QStringLiteral("from openEMS import openEMS")))
-                return QStringLiteral("openems");
+    QString modelType = detectPythonModelSimKey(scriptText);
+    if (modelType == QLatin1String("unknown"))
+        modelType = QStringLiteral("palace");
 
-            QRegularExpression re(R"(\w+\s*\[\s*['"][^'"]+['"]\s*\]\s*=)");
-            if (re.match(text).hasMatch())
-                return QStringLiteral("palace");
-
-            return QStringLiteral("unknown");
-        };
-
-        modelType = detectModelType(scriptText);
-    }
-
-    QString key;
-    if (modelType == QLatin1String("openems") ||
-        modelType == QLatin1String("palace"))
-    {
-        key = modelType;
-    } else {
-        key = comboKey;
+    QString key = comboKey;
+    if (key.isEmpty()) {
+        if (modelType == QLatin1String("openems") || modelType == QLatin1String("palace"))
+            key = modelType;
     }
 
     if (key.isEmpty()) {
@@ -1918,10 +1980,8 @@ void MainWindow::on_btnRun_clicked()
 
     if (key == QLatin1String("openems")) {
         runOpenEMS();
-    } else if (key == QLatin1String("palace")) {
+    } else if (key == QLatin1String("palace") || key == QLatin1String("elmer")) {
         runPalace();
-    } else if (key == QLatin1String("elmer")) {
-        error(tr("Elmer solver launch is not implemented yet. Configure ELMER_SOLVER_PATH in Preferences."));
     } else {
         error(QString("Unsupported simulation tool: %1").arg(key));
     }
@@ -1937,6 +1997,84 @@ QString MainWindow::currentSimToolKey() const
         return {};
 
     return m_ui->cbxSimTool->itemData(idx).toString().trimmed().toLower();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Detects the simulation backend implied by a Python model script.
+ **********************************************************************************************************************/
+QString MainWindow::detectPythonModelSimKey(const QString &text,
+                                            const PythonParser::Result *parsed) const
+{
+    if (text.contains(QStringLiteral("from openEMS import openEMS")))
+        return QStringLiteral("openems");
+
+    auto isTruthy = [](const QVariant &v) -> bool {
+        if (!v.isValid())
+            return false;
+        if (v.type() == QVariant::Bool)
+            return v.toBool();
+        const QString s = v.toString().trimmed();
+        return s.compare(QLatin1String("True"), Qt::CaseInsensitive) == 0
+            || s == QLatin1String("1");
+    };
+
+    if (parsed) {
+        for (auto it = parsed->settings.constBegin(); it != parsed->settings.constEnd(); ++it) {
+            if (it.key().compare(QLatin1String("elmer"), Qt::CaseInsensitive) != 0)
+                continue;
+            if (it.value().type() == QVariant::Bool && !it.value().toBool())
+                return QStringLiteral("palace");
+            if (isTruthy(it.value()))
+                return QStringLiteral("elmer");
+        }
+    }
+
+    if (QRegularExpression(R"(\[\s*['"]elmer['"]\s*\]\s*=\s*False)", QRegularExpression::CaseInsensitiveOption)
+            .match(text)
+            .hasMatch())
+        return QStringLiteral("palace");
+
+    if (QRegularExpression(R"(\[\s*['"]elmer['"]\s*\]\s*=\s*True)", QRegularExpression::CaseInsensitiveOption)
+            .match(text)
+            .hasMatch())
+        return QStringLiteral("elmer");
+
+    if (text.contains(QStringLiteral("create_elmer")) ||
+        text.contains(QStringLiteral("create_elmer_run_script")) ||
+        text.contains(QStringLiteral("./run_elmer")))
+        return QStringLiteral("elmer");
+
+    QRegularExpression re(R"(\w+\s*\[\s*['"][^'"]+['"]\s*\]\s*=)");
+    if (re.match(text).hasMatch())
+        return QStringLiteral("palace");
+
+    return QStringLiteral("unknown");
+}
+
+/*!*******************************************************************************************************************
+ * \brief Selects a simulation tool in the combo box and persists the choice.
+ **********************************************************************************************************************/
+void MainWindow::selectSimToolByKey(const QString &simKey)
+{
+    const QString key = simKey.trimmed().toLower();
+    if (key.isEmpty())
+        return;
+
+    const int idxSim = m_ui->cbxSimTool->findData(key);
+    if (idxSim < 0 || !m_ui->cbxSimTool->isEnabled())
+        return;
+
+    {
+        QSignalBlocker blocker(m_ui->cbxSimTool);
+        m_ui->cbxSimTool->setCurrentIndex(idxSim);
+    }
+
+    m_preferences[QStringLiteral("SIMULATION_TOOL_KEY")]   = key;
+    m_preferences[QStringLiteral("SIMULATION_TOOL_INDEX")] = idxSim;
+
+    refreshKeywordTipsForCurrentTool();
+    updateBoundaryOptionsForCurrentTool();
+    updateBoundaryTooltipsForCurrentTool();
 }
 
 /*!*******************************************************************************************************************
@@ -2432,6 +2570,15 @@ QString MainWindow::resolveModelTemplatePath(const QString &templateFile) const
 }
 
 /*!*******************************************************************************************************************
+ * \brief Resolves the absolute path to the KLayout helper Ruby macro.
+ **********************************************************************************************************************/
+QString MainWindow::resolveKlayoutShowGdsScript() const
+{
+    const QString appLoc = QCoreApplication::applicationDirPath();
+    return QDir(appLoc).filePath(QStringLiteral("scripts/klayout_show_gds.rb"));
+}
+
+/*!*******************************************************************************************************************
  * \brief Creates the default Palace/Gmsh Python simulation script.
  *
  * Loads the Palace Python model template from the application scripts directory,
@@ -2610,19 +2757,6 @@ void MainWindow::loadPythonModel(const QString &fileName)
     const QString text = QString::fromUtf8(file.readAll());
     file.close();
 
-    auto detectModelType = [](const QString& text) {
-        if (text.contains("from openEMS import openEMS"))
-            return QStringLiteral("openems");
-
-        QRegularExpression re(R"(\w+\s*\[\s*['"][^'"]+['"]\s*\]\s*=)");
-        if (re.match(text).hasMatch())
-            return QStringLiteral("palace");
-
-        return QStringLiteral("unknown");
-    };
-
-    const QString modelType = detectModelType(text);
-
     PythonParser::Result res = PythonParser::parseSettings(fileName);
     if (!res.ok) {
         error(tr("Failed to parse Python model file:\n%1").arg(res.error));
@@ -2631,17 +2765,11 @@ void MainWindow::loadPythonModel(const QString &fileName)
 
     m_curPythonData = res;
 
-    QString simKey;
-    if (modelType == QLatin1String("openems"))
-        simKey = QStringLiteral("openems");
-    else if (modelType == QLatin1String("palace"))
-        simKey = QStringLiteral("palace");
-    else
+    QString simKey = detectPythonModelSimKey(text, &res);
+    if (simKey == QLatin1String("unknown"))
         simKey = QStringLiteral("palace");
 
-    const int idxSim = m_ui->cbxSimTool->findData(simKey);
-    if (idxSim >= 0 && m_ui->cbxSimTool->isEnabled())
-        m_ui->cbxSimTool->setCurrentIndex(idxSim);
+    selectSimToolByKey(simKey);
 
     const auto tips = mergeTipsPreferModel(res.settingTips, m_keywordTips);
     rebuildSimulationSettingsFromPalace(res.settings, tips, res.topLevel);

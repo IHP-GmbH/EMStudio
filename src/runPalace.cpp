@@ -20,6 +20,7 @@
 
 #include <QDir>
 #include <QDebug>
+#include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
@@ -95,6 +96,12 @@ void MainWindow::runPalace(bool interactive)
     }
 
     if (interactive) {
+        if (currentSimToolKey() == QLatin1String("elmer"))
+            m_simSettings[QStringLiteral("elmer")] = true;
+        if (currentSimToolKey() == QLatin1String("elmer"))
+            m_simSettings[QStringLiteral("iterative")] = true;
+
+        syncGuiSettingsToPythonEditor();
         on_actionSave_triggered();
     } else {
         if (!applyPythonScriptFromEditor()) {
@@ -135,10 +142,16 @@ void MainWindow::runPalace(bool interactive)
     startPalacePythonStage(ctx);
 
     if (!m_simProcess->waitForStarted(3000)) {
+        if (ctx.simKeyLower == QLatin1String("elmer"))
+            error("Failed to start gds2palace Python preprocessing (Windows native).", false);
 #ifdef Q_OS_WIN
-        error("Failed to start Palace Python preprocessing under WSL.", false);
+        else if (!ctx.useWsl)
+            error("Failed to start Palace Python preprocessing.", false);
+        else
+            error("Failed to start Palace Python preprocessing under WSL.", false);
 #else
-        error("Failed to start Palace Python preprocessing.", false);
+        else
+            error("Failed to start Palace Python preprocessing.", false);
 #endif
         m_simProcess->deleteLater();
         m_simProcess = nullptr;
@@ -166,8 +179,8 @@ void MainWindow::runPalace(bool interactive)
 bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
 {
     ctx.simKeyLower = currentSimToolKey().toLower();
-    if (ctx.simKeyLower != QLatin1String("palace")) {
-        outError = QStringLiteral("Current simulation tool is not Palace.");
+    if (ctx.simKeyLower != QLatin1String("palace") && ctx.simKeyLower != QLatin1String("elmer")) {
+        outError = QStringLiteral("Current simulation tool is not Palace or Elmer.");
         return false;
     }
 
@@ -180,7 +193,7 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     ctx.runMode = m_preferences.value("PALACE_RUN_MODE", 0).toInt();
 
     bool isScriptMode = false;
-    if (ctx.runMode == 1) {
+    if (ctx.runMode == 1 && ctx.simKeyLower != QLatin1String("elmer")) {
         ctx.launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
         if (ctx.launcherWin.isEmpty()) {
             outError = QStringLiteral("PALACE_RUN_SCRIPT is not configured.");
@@ -211,35 +224,66 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
                              .filePath(QStringLiteral("palace_model/%1_data").arg(ctx.baseName));
 
     ctx.palaceRoot = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
-    if (ctx.palaceRoot.isEmpty() && isScriptMode == false) {
+    if (ctx.palaceRoot.isEmpty() && !isScriptMode && ctx.simKeyLower != QLatin1String("elmer")) {
         outError = QStringLiteral("PALACE_INSTALL_PATH is not configured in Preferences.");
         return false;
     }
 
 #ifdef Q_OS_WIN
-    if (!ensureWslAvailable(outError))
-        return false;
+    ctx.useWsl = (ctx.simKeyLower != QLatin1String("elmer"));
 
-    ctx.distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
+    if (ctx.useWsl) {
+        if (!ensureWslAvailable(outError))
+            return false;
 
-    QString palaceRootLinux = ctx.palaceRoot;
-    if (!palaceRootLinux.startsWith('/') &&
-        !palaceRootLinux.startsWith('~')) {
-        palaceRootLinux = toWslPath(palaceRootLinux);
+        ctx.distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
+
+        QString palaceRootLinux = ctx.palaceRoot;
+        if (!palaceRootLinux.startsWith('/') &&
+            !palaceRootLinux.startsWith('~')) {
+            palaceRootLinux = toWslPath(palaceRootLinux);
+        }
+
+        ctx.palaceExeLinux = QDir(palaceRootLinux).filePath("bin/palace");
+        ctx.modelDirLinux  = toWslPath(QFileInfo(ctx.modelWin).absolutePath());
+        ctx.modelLinux     = toWslPath(ctx.modelWin);
+
+        ctx.pythonCmd = m_preferences.value("PALACE_PYTHON").toString().trimmed();
+        if (ctx.pythonCmd.isEmpty())
+            ctx.pythonCmd = QStringLiteral("python3");
+    } else {
+        const QString solverPath =
+            m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH")).toString().trimmed();
+        if (solverPath.isEmpty() || !QFileInfo::exists(solverPath)) {
+            outError = QStringLiteral("ELMER_SOLVER_PATH is not configured or does not exist.");
+            return false;
+        }
+
+        ctx.modelDirLinux = QFileInfo(ctx.modelWin).absolutePath();
+        ctx.modelLinux    = ctx.modelWin;
+
+        if (!resolveElmerPythonLaunch(ctx.pythonCmd, ctx.pythonArgs)) {
+            outError = QStringLiteral("No Windows Python found for Elmer preprocessing. "
+                                      "Set ELMER_PYTHON in Preferences.");
+            return false;
+        }
     }
-
-    ctx.palaceExeLinux = QDir(palaceRootLinux).filePath("bin/palace");
-    ctx.modelDirLinux  = toWslPath(QFileInfo(ctx.modelWin).absolutePath());
-    ctx.modelLinux     = toWslPath(ctx.modelWin);
 #else
     ctx.palaceExeLinux = QDir(ctx.palaceRoot).filePath("bin/palace");
     ctx.modelDirLinux  = QFileInfo(ctx.modelWin).absolutePath();
     ctx.modelLinux     = ctx.modelWin;
-#endif
 
-    ctx.pythonCmd = m_preferences.value("PALACE_PYTHON").toString().trimmed();
-    if (ctx.pythonCmd.isEmpty())
-        ctx.pythonCmd = QStringLiteral("python3");
+    if (ctx.simKeyLower == QLatin1String("elmer")) {
+        if (!resolveElmerPythonLaunch(ctx.pythonCmd, ctx.pythonArgs)) {
+            outError = QStringLiteral("No Python found for Elmer preprocessing. Set ELMER_PYTHON in Preferences.");
+            return false;
+        }
+    } else {
+        ctx.pythonCmd = m_preferences.value("PALACE_PYTHON").toString().trimmed();
+        if (ctx.pythonCmd.isEmpty())
+            ctx.pythonCmd = QStringLiteral("python3");
+    }
+#endif
 
     return true;
 }
@@ -256,7 +300,10 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
 void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
 {
 #ifdef Q_OS_WIN
-    if (ctx.runMode == 1) {
+    if (!ctx.useWsl) {
+        m_ui->editSimulationLog->insertPlainText(
+            QStringLiteral("Starting gds2palace Python preprocessing (Windows native)...\n"));
+    } else if (ctx.runMode == 1) {
         m_ui->editSimulationLog->insertPlainText(
             QString("Starting Palace Python preprocessing in WSL (%1) [launcher mode]...\n").arg(ctx.distro));
     } else {
@@ -264,7 +311,10 @@ void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
             QString("Starting Palace Python preprocessing in WSL (%1)...\n").arg(ctx.distro));
     }
 #else
-    if (ctx.runMode == 1)
+    if (ctx.simKeyLower == QLatin1String("elmer"))
+        m_ui->editSimulationLog->insertPlainText(
+            QStringLiteral("Starting gds2palace Python preprocessing (native)...\n"));
+    else if (ctx.runMode == 1)
         m_ui->editSimulationLog->insertPlainText("Starting Palace Python preprocessing (launcher mode)...\n");
     else
         m_ui->editSimulationLog->insertPlainText("Starting Palace Python preprocessing (native)...\n");
@@ -273,7 +323,19 @@ void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
     m_ui->editSimulationLog->insertPlainText(QString("[Using Python: %1]\n").arg(ctx.pythonCmd));
     m_ui->editSimulationLog->insertPlainText(QString("[Initial Palace run directory guess: %1]\n").arg(ctx.runDirGuessWin));
 
-    if (ctx.runMode == 1) {
+    if (ctx.simKeyLower == QLatin1String("elmer")) {
+        const QString solverPath =
+            m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH")).toString().trimmed();
+        if (!solverPath.isEmpty()) {
+            m_ui->editSimulationLog->insertPlainText(
+                QString("[Elmer tools from: %1]\n").arg(QDir::toNativeSeparators(solverPath)));
+        } else {
+            m_ui->editSimulationLog->insertPlainText(
+                "[Warning] ELMER_SOLVER_PATH is not set.\n");
+        }
+    }
+
+    if (ctx.runMode == 1 && ctx.useWsl) {
         m_ui->editSimulationLog->insertPlainText(
             QString("[Launcher script: %1]\n").arg(QDir::toNativeSeparators(ctx.launcherWin)));
     }
@@ -292,6 +354,19 @@ void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
 void MainWindow::startPalacePythonStage(const PalaceRunContext &ctx)
 {
 #ifdef Q_OS_WIN
+    if (!ctx.useWsl) {
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        applyElmerHomeToProcessEnv(env);
+
+        m_simProcess->setProcessEnvironment(env);
+        m_simProcess->setWorkingDirectory(ctx.modelDirLinux);
+
+        QStringList args = ctx.pythonArgs;
+        args << ctx.modelLinux;
+        m_simProcess->start(ctx.pythonCmd, args);
+        return;
+    }
+
     const QString wslExe = wslExePath();
     if (wslExe.isEmpty()) {
         error("WSL is not available (wsl.exe not found).", false);
@@ -301,12 +376,23 @@ void MainWindow::startPalacePythonStage(const PalaceRunContext &ctx)
     QStringList args;
     args << "-d" << ctx.distro
          << "--" << "bash" << "-lc"
-         << QString("cd \"%1\" && %2 \"%3\"").arg(ctx.modelDirLinux, ctx.pythonCmd, ctx.modelLinux);
+         << QString("cd %1 && %2 %3")
+                .arg(shellQuoteSingle(ctx.modelDirLinux),
+                     ctx.pythonCmd,
+                     shellQuoteSingle(ctx.modelLinux));
 
     m_simProcess->start(wslExe, args);
 #else
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    if (ctx.simKeyLower == QLatin1String("elmer"))
+        applyElmerHomeToProcessEnv(env);
+
+    m_simProcess->setProcessEnvironment(env);
     m_simProcess->setWorkingDirectory(ctx.modelDirLinux);
-    m_simProcess->start(ctx.pythonCmd, QStringList() << ctx.modelLinux);
+
+    QStringList args = ctx.pythonArgs;
+    args << ctx.modelLinux;
+    m_simProcess->start(ctx.pythonCmd, args);
 #endif
 }
 
@@ -407,7 +493,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
         }
 
         appendToSimulationLog(
-            "\n[Palace Python preprocessing finished successfully, searching for config...]\n");
+            "\n[gds2palace Python preprocessing finished successfully, searching for solver...]\n");
 
         PalaceRunContext ctx;
         QString err;
@@ -428,14 +514,40 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
 
         ctx.detectedRunDirWin = detectedRunDir;
 
-        startPalaceSolverStage(ctx);
+        const QString runDir = resolveGds2PalaceRunDir(ctx);
+        const Gds2PalaceSolverKind solverKind =
+            detectGds2PalaceSolverKind(runDir, ctx.simKeyLower);
+
+        appendToSimulationLog(
+            QString("[Using simulation tool: %1]\n")
+                .arg(ctx.simKeyLower == QLatin1String("elmer") ? QStringLiteral("Elmer")
+                    : ctx.simKeyLower == QLatin1String("palace") ? QStringLiteral("Palace")
+                                                                : solverKind == Gds2PalaceSolverKind::Elmer ? QStringLiteral("Elmer")
+                                                                : solverKind == Gds2PalaceSolverKind::Palace ? QStringLiteral("Palace")
+                                                                                                            : QStringLiteral("unknown"))
+                .toUtf8());
+
+        if (solverKind == Gds2PalaceSolverKind::Elmer) {
+            startElmerSolverStage(ctx);
+        } else if (solverKind == Gds2PalaceSolverKind::Palace) {
+            startPalaceSolverStage(ctx);
+        } else {
+            failPalaceSolver(
+                QStringLiteral("Cannot determine solver in run directory: %1").arg(runDir),
+                true);
+        }
         return;
     }
 
     if (m_palacePhase == PalacePhase::PalaceSolver) {
-        const QString msg = (runMode == 1)
-        ? QString("\n[Palace launcher finished with exit code %1]\n").arg(exitCode)
-        : QString("\n[Palace solver finished with exit code %1]\n").arg(exitCode);
+        const QString simKey = currentSimToolKey();
+        QString msg;
+        if (simKey == QLatin1String("elmer"))
+            msg = QString("\n[Elmer solver finished with exit code %1]\n").arg(exitCode);
+        else if (runMode == 1)
+            msg = QString("\n[Palace launcher finished with exit code %1]\n").arg(exitCode);
+        else
+            msg = QString("\n[Palace solver finished with exit code %1]\n").arg(exitCode);
 
         appendToSimulationLog(msg.toUtf8());
 
@@ -724,13 +836,157 @@ void MainWindow::failPalaceSolver(const QString &message, bool showDialog)
  *
  * \param[in,out] ctx Palace execution context, updated with resolved paths.
  **********************************************************************************************************************/
+QString MainWindow::resolveGds2PalaceRunDir(const PalaceRunContext &ctx) const
+{
+    const QString modelFile = m_simSettings.value("RunPythonScript").toString().trimmed();
+    QString defRunDir;
+    if (!modelFile.isEmpty()) {
+        defRunDir = guessDefaultPalaceRunDir(modelFile,
+                                             QFileInfo(modelFile).completeBaseName());
+    }
+    if (defRunDir.isEmpty() && !ctx.runDirGuessWin.isEmpty())
+        defRunDir = ctx.runDirGuessWin;
+
+    return chooseSearchDir(ctx.detectedRunDirWin, defRunDir);
+}
+
+QString MainWindow::buildElmerEnvShellPrefix() const
+{
+    const QString solverPath =
+        m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH")).toString().trimmed();
+    if (solverPath.isEmpty())
+        return QString();
+
+    const QFileInfo solverFi(solverPath);
+    if (!solverFi.exists())
+        return QString();
+
+    const QString binDir = solverFi.absolutePath();
+    const QString homeDir = QFileInfo(binDir).absolutePath();
+
+#ifdef Q_OS_WIN
+    const QString binPath = toWslPath(binDir);
+    const QString homePath = toWslPath(homeDir);
+#else
+    const QString binPath = binDir;
+    const QString homePath = homeDir;
+#endif
+
+    return QStringLiteral("export ELMER_HOME=%1 && export PATH=%2:$PATH && ")
+        .arg(shellQuoteSingle(homePath), shellQuoteSingle(binPath));
+}
+
+void MainWindow::applyElmerHomeToProcessEnv(QProcessEnvironment &env) const
+{
+    const QString solverPath =
+        m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH")).toString().trimmed();
+    if (solverPath.isEmpty())
+        return;
+
+    const QString binDir = QFileInfo(solverPath).absolutePath();
+    const QString homeDir = QFileInfo(binDir).absolutePath();
+
+    env.insert(QStringLiteral("ELMER_HOME"), homeDir);
+
+    const QString pathKey = QStringLiteral("PATH");
+    env.insert(pathKey, binDir + QDir::listSeparator() + env.value(pathKey));
+}
+
+bool MainWindow::resolveElmerPythonLaunch(QString &outExe, QStringList &outArgs) const
+{
+    outArgs.clear();
+
+    const QString configured = m_preferences.value(QStringLiteral("ELMER_PYTHON")).toString().trimmed();
+    if (!configured.isEmpty()) {
+        if (!QFileInfo::exists(configured))
+            return false;
+        outExe = configured;
+        return true;
+    }
+
+    QString py = QStandardPaths::findExecutable(QStringLiteral("python"));
+    if (!py.isEmpty()) {
+        outExe = py;
+        return true;
+    }
+
+    py = QStandardPaths::findExecutable(QStringLiteral("py"));
+    if (!py.isEmpty()) {
+        outExe = py;
+        outArgs << QStringLiteral("-3");
+        return true;
+    }
+
+    return false;
+}
+
+void MainWindow::patchElmerSifFilesNoMumps(const QString &runDir) const
+{
+    QDir dir(runDir);
+    const QFileInfoList files =
+        dir.entryInfoList(QStringList() << QStringLiteral("*.sif"), QDir::Files);
+
+    static const QRegularExpression reMumps(
+        R"(Linear\s+System\s+Direct\s+Method\s*=\s*zmumps)",
+        QRegularExpression::CaseInsensitiveOption);
+
+    for (const QFileInfo &fi : files) {
+        QFile f(fi.absoluteFilePath());
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+
+        QString content = QString::fromUtf8(f.readAll());
+        f.close();
+
+        if (!reMumps.match(content).hasMatch())
+            continue;
+
+        content.replace(reMumps, QStringLiteral("Linear System Direct Method = umfpack"));
+
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate))
+            continue;
+
+        f.write(content.toUtf8());
+    }
+}
+
+MainWindow::Gds2PalaceSolverKind MainWindow::detectGds2PalaceSolverKind(
+    const QString &runDir,
+    const QString &simKeyLower) const
+{
+    if (runDir.isEmpty())
+        return Gds2PalaceSolverKind::Unknown;
+
+    if (simKeyLower == QLatin1String("elmer"))
+        return Gds2PalaceSolverKind::Elmer;
+    if (simKeyLower == QLatin1String("palace"))
+        return Gds2PalaceSolverKind::Palace;
+
+    const QDir dir(runDir);
+    const bool hasElmerMarkers =
+        QFileInfo::exists(dir.filePath(QStringLiteral("case.sif"))) ||
+        QFileInfo::exists(dir.filePath(QStringLiteral("ELMERSOLVER_STARTINFO"))) ||
+        QFileInfo::exists(dir.filePath(QStringLiteral("physics.sif")));
+    const bool hasRunElmer = QFileInfo::exists(dir.filePath(QStringLiteral("run_elmer")));
+
+    if (hasElmerMarkers || hasRunElmer)
+        return Gds2PalaceSolverKind::Elmer;
+
+    if (QFileInfo::exists(dir.filePath(QStringLiteral("config.json"))))
+        return Gds2PalaceSolverKind::Palace;
+
+    return Gds2PalaceSolverKind::Unknown;
+}
+
 void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
 {
-    const QString defRunDir = guessDefaultPalaceRunDir(
-        m_ui->txtRunPythonScript->text(),
-        m_ui->cbxTopCell->currentText());
+    if (ctx.simKeyLower == QLatin1String("elmer") ||
+        currentSimToolKey() == QLatin1String("elmer")) {
+        startElmerSolverStage(ctx);
+        return;
+    }
 
-    ctx.searchDirWin = chooseSearchDir(ctx.detectedRunDirWin, defRunDir);
+    ctx.searchDirWin = resolveGds2PalaceRunDir(ctx);
     if (ctx.searchDirWin.isEmpty()) {
         failPalaceSolver("Cannot determine Palace run directory to search for config.", true);
         return;
@@ -776,6 +1032,78 @@ void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
 }
 
 /*!*******************************************************************************************************************
+ * \brief Starts the Elmer solver stage after gds2palace preprocessing.
+ *
+ * Runs \c run_elmer from the simulation data directory (same as gds2palace workflow),
+ * or invokes \c ELMER_SOLVER_PATH directly on Windows when configured.
+ **********************************************************************************************************************/
+void MainWindow::startElmerSolverStage(PalaceRunContext &ctx)
+{
+    ctx.searchDirWin = resolveGds2PalaceRunDir(ctx);
+    if (ctx.searchDirWin.isEmpty()) {
+        failPalaceSolver(QStringLiteral("Cannot determine Elmer run directory."), true);
+        return;
+    }
+
+    appendToSimulationLog(
+        QString("[Using Elmer run directory: %1]\n")
+            .arg(QDir::toNativeSeparators(ctx.searchDirWin))
+            .toUtf8());
+
+    const QString runScriptWin = QDir(ctx.searchDirWin).filePath(QStringLiteral("run_elmer"));
+    const QString elmerExeWin =
+        m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH")).toString().trimmed();
+
+#ifdef Q_OS_WIN
+    if (elmerExeWin.isEmpty() || !QFileInfo::exists(elmerExeWin)) {
+        failPalaceSolver(QStringLiteral("ELMER_SOLVER_PATH is not configured or does not exist."), true);
+        return;
+    }
+
+    patchElmerSifFilesNoMumps(ctx.searchDirWin);
+    appendToSimulationLog(
+        "\n[Patched Elmer .sif files: zmumps -> umfpack (Windows Elmer without MUMPS)]\n");
+
+    appendToSimulationLog("\n[Starting ElmerSolver (native)...]\n");
+    m_palacePhase = PalacePhase::PalaceSolver;
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    applyElmerHomeToProcessEnv(env);
+    m_simProcess->setProcessEnvironment(env);
+    m_simProcess->setWorkingDirectory(ctx.searchDirWin);
+    m_simProcess->start(QDir::toNativeSeparators(elmerExeWin), QStringList());
+
+    if (!m_simProcess->waitForStarted(3000)) {
+        error(QStringLiteral("Failed to start ElmerSolver."), false);
+        failPalaceSolver(QString(), false);
+    }
+    return;
+#else
+    if (!QFileInfo::exists(runScriptWin)) {
+        failPalaceSolver(
+            QStringLiteral("No run_elmer script found in: %1").arg(ctx.searchDirWin),
+            true);
+        return;
+    }
+
+    appendToSimulationLog("\n[Starting Elmer via run_elmer...]\n");
+    m_palacePhase = PalacePhase::PalaceSolver;
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    applyElmerHomeToProcessEnv(env);
+    m_simProcess->setProcessEnvironment(env);
+    m_simProcess->setWorkingDirectory(ctx.searchDirWin);
+    m_simProcess->start(QStringLiteral("bash"),
+                        QStringList() << QStringLiteral("-lc") << QStringLiteral("./run_elmer"));
+
+    if (!m_simProcess->waitForStarted(3000)) {
+        error(QStringLiteral("Failed to start Elmer solver."), false);
+        failPalaceSolver(QString(), false);
+    }
+#endif
+}
+
+/*!*******************************************************************************************************************
  * \brief Starts the Palace solver using an external launcher script.
  *
  * Executes the user-configured Palace launcher script instead of invoking the
@@ -806,9 +1134,29 @@ bool MainWindow::startPalaceLauncherStage(PalaceRunContext &ctx)
 
 #ifdef Q_OS_WIN
     const QString launcher = ctx.launcherWin.trimmed();
-    const bool launcherIsWsl = launcher.startsWith('/') || launcher.startsWith('~');
+    QString launcherNative = launcher;
+    if (launcherNative.startsWith(QLatin1Char('/')) || launcherNative.startsWith(QLatin1Char('~')))
+        launcherNative = wslToWinPath(launcherNative);
 
-    if (launcherIsWsl) {
+    const bool launcherIsBatch =
+        launcherNative.endsWith(QStringLiteral(".cmd"), Qt::CaseInsensitive) ||
+        launcherNative.endsWith(QStringLiteral(".bat"), Qt::CaseInsensitive);
+
+    if (launcherIsBatch) {
+        if (launcherNative.contains(QStringLiteral("palace_launcher_stub"), Qt::CaseInsensitive)) {
+            appendToSimulationLog(
+                "[Warning] PALACE_RUN_SCRIPT points to the EMStudio test stub. "
+                "Configure a real Palace launcher (bash script in WSL) or use "
+                "PALACE_RUN_MODE = Executable.\n");
+        }
+
+        m_simProcess->setWorkingDirectory(workDirWin);
+        m_simProcess->start(
+            QStringLiteral("cmd.exe"),
+            QStringList() << QStringLiteral("/c")
+                          << QDir::toNativeSeparators(launcherNative)
+                          << QDir::toNativeSeparators(ctx.configPathWin));
+    } else if (launcher.startsWith(QLatin1Char('/')) || launcher.startsWith(QLatin1Char('~'))) {
         const QString wslExe = wslExePath();
         if (wslExe.isEmpty()) {
             error("WSL is not available (wsl.exe not found).", false);

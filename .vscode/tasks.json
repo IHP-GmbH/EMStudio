@@ -24,7 +24,6 @@
             "label": "Run EMStudio",
             "type": "shell",
             "command": "${workspaceFolder}/build/EMStudio.exe",
-            "dependsOn": "Build EMStudio",
             "group": "build",
             "presentation": {
                 "echo": true,

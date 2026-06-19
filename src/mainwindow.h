@@ -30,6 +30,7 @@
 #include "pythonparser.h"
 
 class QProcess;
+class QProcessEnvironment;
 class QLineEdit;
 class QComboBox;
 class QtProperty;
@@ -65,6 +66,7 @@ class MainWindow : public QMainWindow
 
     enum class ModelType { Palace, OpenEMS, Unknown };
     enum class PalacePhase { None, PythonModel, PalaceSolver };
+    enum class Gds2PalaceSolverKind { Unknown, Palace, Elmer };
     enum class RequiredFolderDecision { ChooseAnotherDir, SaveAnyway, Cancel };
 
     /*!*******************************************************************************************************************
@@ -104,6 +106,9 @@ class MainWindow : public QMainWindow
         QString palaceRoot;
         QString distro;
         QString pythonCmd;
+        QStringList pythonArgs;
+
+        bool    useWsl = true;
 
         QString palaceExeLinux;
         QString modelDirLinux;
@@ -234,6 +239,7 @@ private slots:
     void                            on_actionSave_triggered();
     void                            on_actionSave_As_triggered();
     void                            on_btnGdsFile_clicked();
+    void                            on_btnShowInKlayout_clicked();
     void                            on_txtGdsFile_textEdited(const QString &arg1);
 
     void                            on_txtGdsFile_textChanged(const QString &arg1);
@@ -305,6 +311,9 @@ private:
     bool                            keyIsExcludedForEm(const QString &key);
     void                            applyOpenEmsSettings(QString &script);
     void                            applyPalaceSettings(QString &script);
+    void                            applyElmerWorkflowToScript(QString &script);
+    void                            applyPalaceWorkflowToScript(QString &script);
+    void                            syncGuiSettingsToPythonEditor();
     void                            applyBoundaries(QString &script, bool alsoTopLevelAssignment);
     void                            applyGdsAndXmlPaths(QString &script, const QString &simKeyLower);
     QString                         makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const;
@@ -319,6 +328,9 @@ private:
                                                             const QVariant &val,
                                                             const QString &simKeyLower);
 
+    QString                         detectPythonModelSimKey(const QString &text,
+                                                            const PythonParser::Result *parsed = nullptr) const;
+    void                            selectSimToolByKey(const QString &simKey);
     QString                         loadOrReusePythonScriptText(const QString &filePath);
     QString                         resolveKeywordsPath(const QString& simKeyLower) const;
 
@@ -375,6 +387,11 @@ private:
     QString                         toWslPath(const QString &winPath) const;
     QString                         fromWslPath(const QString &wslPath) const;
     QString                         resolveModelTemplatePath(const QString &templateFile) const;
+    QString                         resolveKlayoutShowGdsScript() const;
+    QString                         parseKlayoutExeOnly(const QString &raw) const;
+    QStringList                     parseKlayoutUserArgs(const QString &raw) const;
+    QStringList                     extractLegacyKlayoutArgsFromExeField(const QString &raw) const;
+    QStringList                     buildKlayoutLaunchArgs(const QString &gdsPath, const QString &topCell) const;
 
     QString                         createDefaultOpenemsScript();
     QString                         createDefaultPalaceScript();
@@ -387,6 +404,14 @@ private:
 
     void                            startPalacePythonStage(const PalaceRunContext &ctx);
     void                            startPalaceSolverStage(PalaceRunContext &ctx);
+    void                            startElmerSolverStage(PalaceRunContext &ctx);
+    Gds2PalaceSolverKind            detectGds2PalaceSolverKind(const QString &runDir,
+                                                               const QString &simKeyLower) const;
+    QString                         resolveGds2PalaceRunDir(const PalaceRunContext &ctx) const;
+    QString                         buildElmerEnvShellPrefix() const;
+    void                            applyElmerHomeToProcessEnv(QProcessEnvironment &env) const;
+    bool                            resolveElmerPythonLaunch(QString &outExe, QStringList &outArgs) const;
+    void                            patchElmerSifFilesNoMumps(const QString &runDir) const;
 
     void                            failPalaceSolver(const QString &message, bool showDialog);
 

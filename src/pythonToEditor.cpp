@@ -400,7 +400,9 @@ bool MainWindow::keyIsExcludedForEm(const QString &key)
  **********************************************************************************************************************/
 void MainWindow::applyPalaceSettings(QString &script)
 {
-    const QString simKeyLower = QStringLiteral("palace");
+    const QString simKeyLower = currentSimToolKey().toLower();
+    if (simKeyLower.isEmpty())
+        return;
 
     for (auto it = m_simSettings.constBegin(); it != m_simSettings.constEnd(); ++it) {
         const QString  &key = it.key();
@@ -410,6 +412,85 @@ void MainWindow::applyPalaceSettings(QString &script)
     }
 
     applyBoundaries(script, /*alsoTopLevelAssignment=*/false);
+
+    if (simKeyLower == QLatin1String("elmer"))
+        applyElmerWorkflowToScript(script);
+    else if (simKeyLower == QLatin1String("palace"))
+        applyPalaceWorkflowToScript(script);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Patches a gds2palace model script for Palace solver output (run_sim, settings['elmer']=False).
+ **********************************************************************************************************************/
+void MainWindow::applyPalaceWorkflowToScript(QString &script)
+{
+    QRegularExpression reElmerKey(R"(\w+\s*\[\s*['"]elmer['"]\s*\]\s*=)");
+    if (reElmerKey.match(script).hasMatch())
+        replaceAnyDictVar(script, QStringLiteral("elmer"), QStringLiteral("False"));
+
+    script.replace(
+        QRegularExpression(R"(utilities\.create_elmer_run_script\s*\(\s*sim_path\s*,\s*settings\s*\))"),
+        QStringLiteral("utilities.create_run_script(sim_path)"));
+
+    script.replace(
+        QRegularExpression(R"(run_command\s*=\s*\[\s*['"]\./run_elmer['"]\s*\])"),
+        QStringLiteral("run_command = ['./run_sim']"));
+
+    QRegularExpression reIterKey(R"(\w+\s*\[\s*['"]iterative['"]\s*\]\s*=)");
+    if (reIterKey.match(script).hasMatch())
+        replaceAnyDictVar(script, QStringLiteral("iterative"), QStringLiteral("False"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Writes current GUI simulation settings into the Python editor buffer.
+ **********************************************************************************************************************/
+void MainWindow::syncGuiSettingsToPythonEditor()
+{
+    QString script = m_ui->editRunPythonScript->toPlainText();
+    const QString simKey = currentSimToolKey().toLower();
+
+    if (script.trimmed().isEmpty() || simKey.isEmpty())
+        return;
+
+    applySimSettingsToScript(script, simKey);
+    applyGdsAndXmlPaths(script, simKey);
+    applyBoundaries(script, simKey == QLatin1String("openems"));
+    setEditorScriptPreservingState(script);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Patches a gds2palace model script for Elmer solver output (run_elmer, settings['elmer']).
+ **********************************************************************************************************************/
+void MainWindow::applyElmerWorkflowToScript(QString &script)
+{
+    QRegularExpression reElmerKey(R"(\w+\s*\[\s*['"]elmer['"]\s*\]\s*=)");
+    if (reElmerKey.match(script).hasMatch()) {
+        replaceAnyDictVar(script, QStringLiteral("elmer"), QStringLiteral("True"));
+    } else {
+        QRegularExpression reCreate(
+            R"(config_name,\s*data_dir\s*=\s*simulation_setup\.create_(?:palace|elmer)\s*\()");
+        const QRegularExpressionMatch m = reCreate.match(script);
+        if (m.hasMatch())
+            script.insert(m.capturedStart(), QStringLiteral("settings['elmer'] = True\n"));
+    }
+
+    QRegularExpression reIterKey(R"(\w+\s*\[\s*['"]iterative['"]\s*\]\s*=)");
+    if (reIterKey.match(script).hasMatch()) {
+        replaceAnyDictVar(script, QStringLiteral("iterative"), QStringLiteral("True"));
+    } else {
+        QRegularExpression reElmerLine(R"(settings\s*\[\s*['"]elmer['"]\s*\]\s*=\s*True)");
+        const QRegularExpressionMatch m = reElmerLine.match(script);
+        if (m.hasMatch())
+            script.insert(m.capturedEnd(), QStringLiteral("\nsettings['iterative'] = True"));
+    }
+
+    script.replace(
+        QRegularExpression(R"(utilities\.create_run_script\s*\(\s*sim_path\s*\))"),
+        QStringLiteral("utilities.create_elmer_run_script(sim_path, settings)"));
+
+    script.replace(
+        QRegularExpression(R"(run_command\s*=\s*\[\s*['"]\./run_sim['"]\s*\])"),
+        QStringLiteral("run_command = ['./run_elmer']"));
 }
 
 
@@ -470,7 +551,7 @@ void MainWindow::applyBoundaries(QString &script, bool alsoTopLevelAssignment)
 QString MainWindow::makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const
 {
 #ifdef Q_OS_WIN
-    if (simKeyLower == QLatin1String("palace") || simKeyLower == QLatin1String("elmer")) {
+    if (simKeyLower == QLatin1String("palace")) {
         if (isWslAvailable())
             return toWslPath(nativePath);
     }

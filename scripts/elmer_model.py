@@ -63,7 +63,6 @@ settings['refined_cellsize'] = 2  # @brief mesh cell size in conductor region, i
 settings['cells_per_wavelength'] = 10   # @brief  how many mesh cells per wavelength, must be 10 or more
 
 settings['meshsize_max'] = 70  # @brief maximum absolute mesh size, in addition to cells_per_wavelength
-settings['adaptive_mesh_iterations'] = 0  # @brief adaptive mesh iterations, default is 2
 
 settings['ELMER_MPI_THREADS'] = 4 # @brief number of threads used for parallel simulation in Elmer solver
 

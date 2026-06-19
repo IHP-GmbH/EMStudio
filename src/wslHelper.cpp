@@ -7,8 +7,6 @@
 #include "wslHelper.h"
 #include "mainwindow.h"
 
-#ifdef Q_OS_WIN
-
 /*!*******************************************************************************************************************
  * \brief Quotes a string for safe use as a single-quoted literal in bash.
  *
@@ -25,6 +23,8 @@ QString shellQuoteSingle(const QString &s)
     out.replace('\'', "'\\''");
     return "'" + out + "'";
 }
+
+#ifdef Q_OS_WIN
 
 /*!*******************************************************************************************************************
  * \brief Checks whether a file system path is readable inside a WSL distribution.

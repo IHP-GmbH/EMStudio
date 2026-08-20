@@ -23,8 +23,10 @@
 
 #include <QMap>
 #include <QSet>
+#include <QHash>
 #include <QPair>
 #include <QVariant>
+#include <QPointer>
 #include <QMainWindow>
 
 #include "pythonparser.h"
@@ -39,6 +41,7 @@ class QtVariantProperty;
 class QtTreePropertyBrowser;
 class QtVariantEditorFactory;
 class QtVariantPropertyManager;
+class Substrate;
 
 QT_BEGIN_NAMESPACE
 namespace Ui {
@@ -249,6 +252,10 @@ private slots:
     void                            on_btnRemovePorts_clicked();
 
     void                            on_btnSubstrate_clicked();
+    void                            on_btnEditStackup_clicked();
+    void                            on_cbShowStackupOverrides_toggled(bool checked);
+    void                            onStackupEditorSaved(const QString &path);
+    void                            onSubstrateLayerClicked(const QString &name, const QString &kind);
     void                            on_txtSubstrate_textEdited(const QString &arg1);
     void                            on_txtSubstrate_textChanged(const QString &arg1);
 
@@ -306,6 +313,7 @@ private:
 
     void                            loadPythonScriptToEditor(const QString &filePath);
     void                            setLineEditPalette(QLineEdit* lineEdit, const QString& path);
+    void                            updateEditStackupButtonState();
     void                            applySimSettingsToScript(QString &script, const QString &simKeyLower);
     bool                            variantToPythonLiteral(const QVariant &v, QString *outLiteral);
     bool                            keyIsExcludedForEm(const QString &key);
@@ -316,6 +324,12 @@ private:
     void                            syncGuiSettingsToPythonEditor();
     void                            applyBoundaries(QString &script, bool alsoTopLevelAssignment);
     void                            applyGdsAndXmlPaths(QString &script, const QString &simKeyLower);
+    void                            applyVariableOverridesToScript(QString &script);
+    void                            loadVariableOverridesFromScript(const QString &script);
+    void                            refreshStackupOverridesUi(const Substrate &substrate);
+    void                            applyStackupOverridesVisibility();
+    QHash<QString, QVariant>        currentStackupOverrides() const;
+    void                            storeStackupOverridesFromTable();
     QString                         makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const;
     void                            ensurePortsTableInitializedFromScript(const QString &script);
     QString                         buildPortCodeFromGuiTable() const;
@@ -481,6 +495,8 @@ private:
     QMap<QString, QVariant>         m_preferences;
     QMap<QString, QVariant>         m_simSettings;
     QMap<QString, QVariant>         m_sysSettings;
+    bool                            m_stackupHasOverridableVars = false;
+    QPointer<class StackupEditor>   m_stackupEditor;
 
     bool                            m_headless = false;
     bool                            m_blockPortChanges;

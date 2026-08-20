@@ -25,6 +25,7 @@
 #include <QGraphicsScene>
 #include <QWheelEvent>
 #include <QResizeEvent>
+#include <QMouseEvent>
 #include <QPainter>
 
 #include "substrate.h"
@@ -74,6 +75,14 @@ public:
     explicit SubstrateView(QWidget* parent = nullptr);
 
     void                        setSubstrate(const Substrate& substrate);
+    void                        setHighlightedLayer(const QString& name);
+    void                        clearHighlight();
+
+signals:
+    /*! Emitted when the user clicks a dielectric / conductor / via in the view. */
+    void                        layerClicked(const QString& name, const QString& kind);
+    /*! Emitted when Esc (or equivalent) clears the stack highlight. */
+    void                        highlightCleared();
 
 protected:
     void                        drawBackground(QPainter* painter, const QRectF& rect) override;
@@ -81,6 +90,13 @@ protected:
     void                        wheelEvent(QWheelEvent* event) override;
     void                        keyPressEvent(QKeyEvent* event) override;
     void                        resizeEvent(QResizeEvent* event) override;
+    void                        mousePressEvent(QMouseEvent* event) override;
+
+private:
+    void                        tagStackItem(QGraphicsItem* item, const QString& name, const QString& kind,
+                                             const QString& toolTip = QString());
+    void                        applyHighlight();
+    void                        setLayerHighlightVisual(const QString& name, bool on);
 
 private:
     static double               median(QVector<double> v);
@@ -104,6 +120,10 @@ private:
     QGraphicsScene*             m_scene;
     Substrate                   m_substrate;
     VisualThicknessPolicy       m_visPolicy;
+    QString                     m_highlightedName;
+
+    static constexpr int        kRoleName = 0;
+    static constexpr int        kRoleKind = 1;
 };
 
 #endif // QT_VERSION >= 5.0.0

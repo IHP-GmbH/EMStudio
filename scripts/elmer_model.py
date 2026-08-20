@@ -74,8 +74,11 @@ simulation_ports = simulation_setup.all_simulation_ports()
 
 # ======================== simulation ================================
 
+# Optional local override of stackup <Variable> values (schemaVersion 3.1+)
+variable_overrides = {}
+
 # get technology stackup data
-materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate (XML_filename)
+materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate(XML_filename, variable_overrides=variable_overrides)
 
 # get list of layers from technology
 layernumbers = metals_list.getlayernumbers()

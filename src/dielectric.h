@@ -3,19 +3,6 @@
  *  electromagnetic simulations with IHP PDKs.
  *
  *  Copyright (C) 2023–2025 IHP Authors
- *
- *  This program is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
 #ifndef DIELECTRIC_H
@@ -34,13 +21,33 @@ public:
     QString             material() const;
     void                setMaterial(const QString &material);
 
+    QString             thicknessRaw() const;
+    void                setThicknessRaw(const QString &raw);
+
     double              thickness() const;
     void                setThickness(double thickness);
+
+    QString             reference() const;
+    void                setReference(const QString &reference);
+
+    QString             referenceEdge() const;
+    void                setReferenceEdge(const QString &edge);
+
+    double              resolvedZmin() const;
+    void                setResolvedZmin(double z);
+
+    double              resolvedZmax() const;
+    void                setResolvedZmax(double z);
 
 private:
     QString             m_name;
     QString             m_material;
+    QString             m_thicknessRaw;
     double              m_thickness = 0.0;
+    QString             m_reference;
+    QString             m_referenceEdge;
+    double              m_resolvedZmin = 0.0;
+    double              m_resolvedZmax = 0.0;
 };
 
 #endif // DIELECTRIC_H

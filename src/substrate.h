@@ -3,19 +3,6 @@
  *  electromagnetic simulations with IHP PDKs.
  *
  *  Copyright (C) 2023–2025 IHP Authors
- *
- *  This program is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
 #ifndef SUBSTRATE_H
@@ -27,43 +14,101 @@
 
 #include <QString>
 #include <QList>
+#include <QHash>
+#include <QVariant>
+#include <QPair>
 
-/*!*******************************************************************************************************************
- * \class Substrate
- * \brief Represents a parsed substrate stack including materials, dielectrics, and metal/via layers.
- *
- * Provides access to the parsed substrate configuration by storing:
- * - A list of materials (with electrical properties and colors)
- * - A list of dielectric layers (with thickness and name)
- * - A list of metal or via layers (with Z-range, material and type)
- *
- * The data is typically loaded from an XML file using the `parseXmlFile()` method.
- *
- * \see Material, Dielectric, Layer
- **********************************************************************************************************************/
+struct StackupVariable {
+    QString name;
+    QString valueRaw;   // literal or "=expr"
+    QString type;       // optional: "string", empty => number
+    QString resolved;   // display string after resolve
+    bool isComputed() const { return valueRaw.trimmed().startsWith(QLatin1Char('=')); }
+};
+
+struct DerivedLayer {
+    QString name;
+    int layerNumber = 0;
+    QString operation;          // AND/OR/XOR/NOT/SIZE
+    QList<int> operands;
+    QString sizeValue;          // for SIZE
+};
+
+struct ThermalTablePoint {
+    QString temperatureRaw;
+    QString valueRaw;
+};
+
+struct ThermalTable {
+    QString name;
+    QList<ThermalTablePoint> points;
+};
+
 class Substrate
 {
 public:
     Substrate();
 
     bool                            parseXmlFile(const QString &filePath);
+    bool                            writeXmlFile(const QString &filePath) const;
+
+    /*! Apply model-level overrides then resolve expressions and Reference geometry. */
+    bool                            resolve(const QHash<QString, QVariant> &overrides = {},
+                                            QString *error = nullptr);
+
+    const QList<StackupVariable>    &variables() const;
+    QList<StackupVariable>          &variables();
 
     const QList<Material>           &materials() const;
+    QList<Material>                 &materials();
+
     const QList<Dielectric>         &dielectrics() const;
+    QList<Dielectric>               &dielectrics();
+
     const QList<Layer>              &layers() const;
+    QList<Layer>                    &layers();
+
+    const QList<DerivedLayer>       &derivedLayers() const;
+    QList<DerivedLayer>             &derivedLayers();
+
+    const QList<ThermalTable>       &thermalTables() const;
+    QList<ThermalTable>             &thermalTables();
 
     double                          substrateOffset() const;
+    void                            setSubstrateOffset(double offset);
+
     const QString                   &schemaVersion() const;
-    const QString                   &lengthUnit()    const;
+    void                            setSchemaVersion(const QString &v);
+
+    const QString                   &lengthUnit() const;
+    void                            setLengthUnit(const QString &u);
+
+    const QString                   &description() const;
+    void                            setDescription(const QString &d);
+
+    /*! Plain (non-computed) variables suitable for model overrides. */
+    QList<StackupVariable>          overridableVariables() const;
+
+    QString                         computeMinimumSchemaVersion() const;
 
 private:
+    bool                            resolveVariables(const QHash<QString, QVariant> &overrides,
+                                                     QHash<QString, QVariant> *outVars,
+                                                     QString *error);
+    bool                            resolveGeometry(const QHash<QString, QVariant> &vars,
+                                                    QString *error);
+
+    QList<StackupVariable>          m_variables;
     QList<Material>                 m_materials;
     QList<Dielectric>               m_dielectrics;
     QList<Layer>                    m_layers;
+    QList<DerivedLayer>             m_derivedLayers;
+    QList<ThermalTable>             m_thermalTables;
 
     double                          m_substrateOffset = 0.0;
     QString                         m_schemaVersion;
-    QString                         m_lengthUnit = "um";
+    QString                         m_lengthUnit = QStringLiteral("um");
+    QString                         m_description;
 };
 
 #endif // SUBSTRATE_H

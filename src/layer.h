@@ -3,19 +3,6 @@
  *  electromagnetic simulations with IHP PDKs.
  *
  *  Copyright (C) 2023–2025 IHP Authors
- *
- *  This program is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
 #ifndef LAYER_H
@@ -23,14 +10,6 @@
 
 #include <QString>
 
-/*!*******************************************************************************************************************
- * \class Layer
- * \brief Represents a single physical layer in the substrate stackup.
- *
- * The Layer class encapsulates metadata for a layer such as its name, type (e.g., "conductor", "via", or "dielectric"),
- * Z-position boundaries (minimum and maximum), associated material, and an optional numeric identifier.
- * It is used in modeling and visualizing semiconductor or EM substrate layer structures.
- **********************************************************************************************************************/
 class Layer
 {
 public:
@@ -41,6 +20,12 @@ public:
 
     QString             type() const;
     void                setType(const QString &type);
+
+    QString             zminRaw() const;
+    void                setZminRaw(const QString &raw);
+
+    QString             zmaxRaw() const;
+    void                setZmaxRaw(const QString &raw);
 
     double              zmin() const;
     void                setZmin(double zmin);
@@ -54,13 +39,23 @@ public:
     int                 layerNumber() const;
     void                setLayerNumber(int number);
 
+    QString             reference() const;
+    void                setReference(const QString &reference);
+
+    QString             referenceEdge() const;
+    void                setReferenceEdge(const QString &edge);
+
 private:
     QString             m_name;
     QString             m_type;
+    QString             m_zminRaw;
+    QString             m_zmaxRaw;
     double              m_zmin = 0.0;
     double              m_zmax = 0.0;
     QString             m_material;
     int                 m_layerNumber = 0;
+    QString             m_reference;
+    QString             m_referenceEdge;
 };
 
 #endif // LAYER_H

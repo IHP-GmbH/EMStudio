@@ -3,53 +3,33 @@
  *  electromagnetic simulations with IHP PDKs.
  *
  *  Copyright (C) 2023–2025 IHP Authors
- *
- *  This program is free software: you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation, either version 3 of the License, or
- *  (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
 #include "substrate.h"
+#include "stackupexpr.h"
+
 #include <QFile>
 #include <QXmlStreamReader>
+#include <QXmlStreamWriter>
 #include <QDebug>
+#include <QSet>
 
-/*!*******************************************************************************************************************
- * \brief Default constructor for the Substrate class.
- *
- * Initializes an empty Substrate object with no materials, dielectrics, or layers.
- **********************************************************************************************************************/
-Substrate::Substrate()
-{
-}
+#include <algorithm>
 
-/*!*******************************************************************************************************************
- * \brief Parses the substrate configuration from an XML file.
- *
- * This function reads the given XML file and extracts material, dielectric, and layer
- * information, which are stored internally. The function returns \c true if parsing
- * was successful, otherwise \c false.
- *
- * \param filePath Absolute path to the XML substrate file.
- * \return \c true on success, \c false on failure or parsing error.
- **********************************************************************************************************************/
+Substrate::Substrate() = default;
+
 bool Substrate::parseXmlFile(const QString &filePath)
 {
+    m_variables.clear();
     m_materials.clear();
     m_dielectrics.clear();
     m_layers.clear();
+    m_derivedLayers.clear();
+    m_thermalTables.clear();
     m_substrateOffset = 0.0;
     m_schemaVersion.clear();
-    m_lengthUnit = "um";
+    m_lengthUnit = QStringLiteral("um");
+    m_description.clear();
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -59,75 +39,116 @@ bool Substrate::parseXmlFile(const QString &filePath)
 
     QXmlStreamReader xml(&file);
 
-    auto toLower = [](const QString &s){ return s.toLower(); };
-    auto attrD   = [](const QXmlStreamAttributes &a, const char *name, double def = 0.0){
-        bool ok = false;
-        const double v = a.hasAttribute(name) ? a.value(name).toDouble(&ok) : def;
-        return ok ? v : def;
+    auto attrS = [](const QXmlStreamAttributes &a, const char *name, const QString &def = {}) {
+        return a.hasAttribute(QLatin1String(name)) ? a.value(QLatin1String(name)).toString() : def;
     };
-    auto attrI   = [](const QXmlStreamAttributes &a, const char *name, int def = 0){
+    auto attrI = [](const QXmlStreamAttributes &a, const char *name, int def = 0) {
         bool ok = false;
-        const int v = a.hasAttribute(name) ? a.value(name).toInt(&ok) : def;
+        const int v = a.hasAttribute(QLatin1String(name))
+                          ? a.value(QLatin1String(name)).toInt(&ok)
+                          : def;
         return ok ? v : def;
-    };
-    auto attrS   = [](const QXmlStreamAttributes &a, const char *name, const QString &def = {}){
-        return a.hasAttribute(name) ? a.value(name).toString() : def;
     };
 
+    ThermalTable *currentTable = nullptr;
+
     while (!xml.atEnd() && !xml.hasError()) {
-        xml.readNext();
+        const auto token = xml.readNext();
+
+        if (token == QXmlStreamReader::Comment) {
+            const QString c = xml.text().toString().trimmed();
+            if (c.startsWith(QStringLiteral("File description:"), Qt::CaseInsensitive)) {
+                m_description = c.mid(QStringLiteral("File description:").size()).trimmed();
+            } else if (m_description.isEmpty()
+                       && c.contains(QStringLiteral("File description"), Qt::CaseInsensitive)) {
+                m_description = c;
+            }
+            continue;
+        }
+
         if (!xml.isStartElement())
             continue;
 
-        const QStringRef name = xml.name();
+        const QString name = xml.name().toString();
         const auto attrs = xml.attributes();
 
         if (name == QLatin1String("Stackup")) {
             m_schemaVersion = attrS(attrs, "schemaVersion");
-            continue;
-        }
-
-        if (name == QLatin1String("ELayers")) {
-            m_lengthUnit = attrS(attrs, "LengthUnit", "um");
-            continue;
-        }
-
-        if (name == QLatin1String("Substrate")) {
-            m_substrateOffset = attrD(attrs, "Offset", 0.0);
-            continue;
-        }
-
-        if (name == QLatin1String("Material")) {
+        } else if (name == QLatin1String("ELayers")) {
+            m_lengthUnit = attrS(attrs, "LengthUnit", QStringLiteral("um"));
+        } else if (name == QLatin1String("Substrate")) {
+            bool ok = false;
+            m_substrateOffset = attrS(attrs, "Offset").toDouble(&ok);
+            if (!ok)
+                m_substrateOffset = 0.0;
+        } else if (name == QLatin1String("Variable")) {
+            StackupVariable v;
+            v.name = attrS(attrs, "Name");
+            v.valueRaw = attrS(attrs, "Value");
+            v.type = attrS(attrs, "Type");
+            if (!v.name.isEmpty())
+                m_variables << v;
+        } else if (name == QLatin1String("Material")) {
             Material mat;
             mat.setName(attrS(attrs, "Name"));
-            mat.setType(toLower(attrS(attrs, "Type"))); // normalize
-            mat.setPermittivity(attrD(attrs, "Permittivity"));
-            mat.setLossTangent(attrD(attrs, "DielectricLossTangent"));
-            mat.setConductivity(attrD(attrs, "Conductivity"));
-            mat.setColor(attrS(attrs, "Color"));
+            mat.setType(attrS(attrs, "Type").toLower());
+            if (attrs.hasAttribute(QStringLiteral("Permittivity")))
+                mat.setPermittivityRaw(attrS(attrs, "Permittivity"));
+            if (attrs.hasAttribute(QStringLiteral("DielectricLossTangent")))
+                mat.setLossTangentRaw(attrS(attrs, "DielectricLossTangent"));
+            if (attrs.hasAttribute(QStringLiteral("Conductivity")))
+                mat.setConductivityRaw(attrS(attrs, "Conductivity"));
+            if (attrs.hasAttribute(QStringLiteral("Color")))
+                mat.setColorHex(attrS(attrs, "Color"));
+            if (attrs.hasAttribute(QStringLiteral("ThermalConductivity")))
+                mat.setThermalConductivityRaw(attrS(attrs, "ThermalConductivity"));
+            if (attrs.hasAttribute(QStringLiteral("ThermalConductivityTable")))
+                mat.setThermalConductivityTable(attrS(attrs, "ThermalConductivityTable"));
+            if (attrs.hasAttribute(QStringLiteral("Rs")))
+                mat.setRsRaw(attrS(attrs, "Rs"));
             m_materials << mat;
-            continue;
-        }
-
-        if (name == QLatin1String("Dielectric")) {
+        } else if (name == QLatin1String("Dielectric")) {
             Dielectric d;
             d.setName(attrS(attrs, "Name"));
             d.setMaterial(attrS(attrs, "Material"));
-            d.setThickness(attrD(attrs, "Thickness"));
+            d.setThicknessRaw(attrS(attrs, "Thickness"));
+            d.setReference(attrS(attrs, "Reference"));
+            d.setReferenceEdge(attrS(attrs, "ReferenceEdge"));
             m_dielectrics << d;
-            continue;
-        }
-
-        if (name == QLatin1String("Layer")) {
+        } else if (name == QLatin1String("Layer") && xml.prefix().isEmpty()) {
+            // Distinguish from DerivedLayer Operand Layer attribute by element name only
             Layer lay;
             lay.setName(attrS(attrs, "Name"));
-            lay.setType(toLower(attrS(attrs, "Type")));
-            lay.setZmin(attrD(attrs, "Zmin"));
-            lay.setZmax(attrD(attrs, "Zmax"));
+            lay.setType(attrS(attrs, "Type").toLower());
+            lay.setZminRaw(attrS(attrs, "Zmin", QStringLiteral("0")));
+            lay.setZmaxRaw(attrS(attrs, "Zmax", QStringLiteral("0")));
             lay.setMaterial(attrS(attrs, "Material"));
             lay.setLayerNumber(attrI(attrs, "Layer"));
+            lay.setReference(attrS(attrs, "Reference"));
+            lay.setReferenceEdge(attrS(attrs, "ReferenceEdge"));
             m_layers << lay;
-            continue;
+        } else if (name == QLatin1String("DerivedLayer")) {
+            DerivedLayer dl;
+            dl.name = attrS(attrs, "Name");
+            dl.layerNumber = attrI(attrs, "Layer");
+            dl.operation = attrS(attrs, "Operation").toUpper();
+            dl.sizeValue = attrS(attrs, "Size");
+            m_derivedLayers << dl;
+        } else if (name == QLatin1String("Operand")) {
+            if (!m_derivedLayers.isEmpty())
+                m_derivedLayers.last().operands << attrI(attrs, "Layer");
+        } else if (name == QLatin1String("Table")) {
+            ThermalTable t;
+            t.name = attrS(attrs, "Name");
+            m_thermalTables << t;
+            currentTable = &m_thermalTables.last();
+        } else if (name == QLatin1String("Entry") || name == QLatin1String("Point")) {
+            if (currentTable) {
+                ThermalTablePoint p;
+                p.temperatureRaw = attrS(attrs, "Temperature", attrS(attrs, "T"));
+                p.valueRaw = attrS(attrs, "Value", attrS(attrs, "Conductivity"));
+                currentTable->points << p;
+            }
         }
     }
 
@@ -138,74 +159,483 @@ bool Substrate::parseXmlFile(const QString &filePath)
         return false;
     }
 
+    QString err;
+    if (!resolve({}, &err))
+        qWarning() << "Stackup resolve warning:" << err;
+
     return true;
 }
 
-/*!*******************************************************************************************************************
- * \brief Returns the list of materials parsed from the substrate XML.
- *
- * \return A const reference to the list of Material objects.
- **********************************************************************************************************************/
-const QList<Material> &Substrate::materials() const
+bool Substrate::writeXmlFile(const QString &filePath) const
 {
-    return m_materials;
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate)) {
+        qWarning() << "Failed to write substrate XML:" << filePath;
+        return false;
+    }
+
+    QXmlStreamWriter xml(&file);
+    xml.setAutoFormatting(true);
+    xml.setAutoFormattingIndent(2);
+    xml.writeStartDocument();
+
+    const QString schema = computeMinimumSchemaVersion();
+    xml.writeStartElement(QStringLiteral("Stackup"));
+    xml.writeAttribute(QStringLiteral("schemaVersion"), schema);
+
+    xml.writeComment(QStringLiteral(" Created/modified using the EMStudio Stackup Editor "));
+    if (!m_description.trimmed().isEmpty()) {
+        xml.writeComment(QStringLiteral(" File description: %1 ").arg(m_description.trimmed()));
+    }
+
+    if (!m_variables.isEmpty()) {
+        xml.writeStartElement(QStringLiteral("Variables"));
+        for (const StackupVariable &v : m_variables) {
+            xml.writeEmptyElement(QStringLiteral("Variable"));
+            xml.writeAttribute(QStringLiteral("Name"), v.name);
+            xml.writeAttribute(QStringLiteral("Value"), v.valueRaw);
+            if (!v.type.isEmpty())
+                xml.writeAttribute(QStringLiteral("Type"), v.type);
+        }
+        xml.writeEndElement();
+    }
+
+    xml.writeStartElement(QStringLiteral("Materials"));
+    for (const Material &mat : m_materials) {
+        xml.writeEmptyElement(QStringLiteral("Material"));
+        xml.writeAttribute(QStringLiteral("Name"), mat.name());
+        const QString type = mat.type().isEmpty()
+                                 ? QStringLiteral("Dielectric")
+                                 : (mat.type().left(1).toUpper() + mat.type().mid(1));
+        xml.writeAttribute(QStringLiteral("Type"), type);
+        if (!mat.permittivityRaw().isEmpty())
+            xml.writeAttribute(QStringLiteral("Permittivity"), mat.permittivityRaw());
+        if (!mat.lossTangentRaw().isEmpty())
+            xml.writeAttribute(QStringLiteral("DielectricLossTangent"), mat.lossTangentRaw());
+        if (!mat.conductivityRaw().isEmpty())
+            xml.writeAttribute(QStringLiteral("Conductivity"), mat.conductivityRaw());
+        if (!mat.rsRaw().isEmpty())
+            xml.writeAttribute(QStringLiteral("Rs"), mat.rsRaw());
+        if (!mat.thermalConductivityRaw().isEmpty())
+            xml.writeAttribute(QStringLiteral("ThermalConductivity"), mat.thermalConductivityRaw());
+        if (!mat.thermalConductivityTable().isEmpty())
+            xml.writeAttribute(QStringLiteral("ThermalConductivityTable"), mat.thermalConductivityTable());
+        if (!mat.colorHex().isEmpty())
+            xml.writeAttribute(QStringLiteral("Color"), mat.colorHex());
+    }
+    xml.writeEndElement();
+
+    xml.writeStartElement(QStringLiteral("ELayers"));
+    xml.writeAttribute(QStringLiteral("LengthUnit"), m_lengthUnit);
+
+    xml.writeStartElement(QStringLiteral("Dielectrics"));
+    for (const Dielectric &d : m_dielectrics) {
+        xml.writeEmptyElement(QStringLiteral("Dielectric"));
+        xml.writeAttribute(QStringLiteral("Name"), d.name());
+        if (!d.reference().isEmpty()) {
+            xml.writeAttribute(QStringLiteral("Reference"), d.reference());
+            if (!d.referenceEdge().isEmpty())
+                xml.writeAttribute(QStringLiteral("ReferenceEdge"), d.referenceEdge());
+        }
+        xml.writeAttribute(QStringLiteral("Material"), d.material());
+        xml.writeAttribute(QStringLiteral("Thickness"),
+                           d.thicknessRaw().isEmpty()
+                               ? QString::number(d.thickness(), 'f', 4)
+                               : d.thicknessRaw());
+    }
+    xml.writeEndElement();
+
+    xml.writeStartElement(QStringLiteral("Layers"));
+    if (m_substrateOffset != 0.0 && schema == QLatin1String("2.0")) {
+        xml.writeEmptyElement(QStringLiteral("Substrate"));
+        xml.writeAttribute(QStringLiteral("Offset"), QString::number(m_substrateOffset));
+    }
+    for (const Layer &lay : m_layers) {
+        xml.writeEmptyElement(QStringLiteral("Layer"));
+        xml.writeAttribute(QStringLiteral("Name"), lay.name());
+        xml.writeAttribute(QStringLiteral("Type"), lay.type());
+        if (!lay.reference().isEmpty()) {
+            xml.writeAttribute(QStringLiteral("Reference"), lay.reference());
+            if (!lay.referenceEdge().isEmpty())
+                xml.writeAttribute(QStringLiteral("ReferenceEdge"), lay.referenceEdge());
+        }
+        xml.writeAttribute(QStringLiteral("Material"), lay.material());
+        xml.writeAttribute(QStringLiteral("Layer"), QString::number(lay.layerNumber()));
+        xml.writeAttribute(QStringLiteral("Zmin"),
+                           lay.zminRaw().isEmpty() ? QString::number(lay.zmin(), 'f', 4)
+                                                   : lay.zminRaw());
+        xml.writeAttribute(QStringLiteral("Zmax"),
+                           lay.zmaxRaw().isEmpty() ? QString::number(lay.zmax(), 'f', 4)
+                                                   : lay.zmaxRaw());
+    }
+    xml.writeEndElement();
+
+    if (!m_derivedLayers.isEmpty()) {
+        xml.writeStartElement(QStringLiteral("DerivedLayers"));
+        for (const DerivedLayer &dl : m_derivedLayers) {
+            xml.writeStartElement(QStringLiteral("DerivedLayer"));
+            xml.writeAttribute(QStringLiteral("Name"), dl.name);
+            xml.writeAttribute(QStringLiteral("Layer"), QString::number(dl.layerNumber));
+            xml.writeAttribute(QStringLiteral("Operation"), dl.operation);
+            if (!dl.sizeValue.isEmpty())
+                xml.writeAttribute(QStringLiteral("Size"), dl.sizeValue);
+            for (int op : dl.operands) {
+                xml.writeEmptyElement(QStringLiteral("Operand"));
+                xml.writeAttribute(QStringLiteral("Layer"), QString::number(op));
+            }
+            xml.writeEndElement();
+        }
+        xml.writeEndElement();
+    }
+
+    xml.writeEndElement(); // ELayers
+
+    if (!m_thermalTables.isEmpty()) {
+        xml.writeStartElement(QStringLiteral("Tables"));
+        for (const ThermalTable &t : m_thermalTables) {
+            xml.writeStartElement(QStringLiteral("Table"));
+            xml.writeAttribute(QStringLiteral("Name"), t.name);
+            for (const ThermalTablePoint &p : t.points) {
+                xml.writeEmptyElement(QStringLiteral("Entry"));
+                xml.writeAttribute(QStringLiteral("Temperature"), p.temperatureRaw);
+                xml.writeAttribute(QStringLiteral("Value"), p.valueRaw);
+            }
+            xml.writeEndElement();
+        }
+        xml.writeEndElement();
+    }
+
+    xml.writeEndElement(); // Stackup
+    xml.writeEndDocument();
+    return true;
 }
 
-/*!*******************************************************************************************************************
- * \brief Returns the list of dielectrics parsed from the substrate XML.
- *
- * \return A const reference to the list of Dielectric objects.
- **********************************************************************************************************************/
-const QList<Dielectric> &Substrate::dielectrics() const
+bool Substrate::resolve(const QHash<QString, QVariant> &overrides, QString *error)
 {
-    return m_dielectrics;
+    QHash<QString, QVariant> vars;
+    if (!resolveVariables(overrides, &vars, error))
+        return false;
+    return resolveGeometry(vars, error);
 }
 
-/*!*******************************************************************************************************************
- * \brief Returns the list of layers parsed from the substrate XML.
- *
- * \return A const reference to the list of Layer objects.
- **********************************************************************************************************************/
-const QList<Layer> &Substrate::layers() const
+bool Substrate::resolveVariables(const QHash<QString, QVariant> &overrides,
+                                 QHash<QString, QVariant> *outVars,
+                                 QString *error)
 {
-    return m_layers;
+    QHash<QString, QVariant> vars;
+
+    // Seed with plain literals / overridden values first
+    for (StackupVariable &v : m_variables) {
+        if (overrides.contains(v.name)) {
+            vars.insert(v.name, overrides.value(v.name));
+            v.resolved = overrides.value(v.name).toString();
+            continue;
+        }
+        if (!v.isComputed()) {
+            if (v.type.compare(QLatin1String("string"), Qt::CaseInsensitive) == 0) {
+                vars.insert(v.name, v.valueRaw);
+                v.resolved = v.valueRaw;
+            } else {
+                bool ok = false;
+                const double d = v.valueRaw.toDouble(&ok);
+                if (ok) {
+                    vars.insert(v.name, d);
+                    v.resolved = QString::number(d);
+                } else {
+                    vars.insert(v.name, v.valueRaw);
+                    v.resolved = v.valueRaw;
+                }
+            }
+        }
+    }
+
+    // Resolve computed variables (multi-pass for dependency order)
+    for (int pass = 0; pass < m_variables.size() + 2; ++pass) {
+        bool progress = false;
+        bool pending = false;
+        for (StackupVariable &v : m_variables) {
+            if (overrides.contains(v.name))
+                continue;
+            if (!v.isComputed())
+                continue;
+            if (vars.contains(v.name) && pass > 0)
+                continue;
+
+            QString err;
+            const QVariant val = StackupExpr::eval(v.valueRaw, vars, &err);
+            if (!err.isEmpty() || !val.isValid()) {
+                pending = true;
+                continue;
+            }
+            vars.insert(v.name, val);
+            v.resolved = (val.type() == QVariant::String) ? val.toString()
+                                                          : QString::number(val.toDouble());
+            progress = true;
+        }
+        if (!pending)
+            break;
+        if (!progress) {
+            if (error)
+                *error = QStringLiteral("Failed to resolve stackup variables (cycle or unknown name)");
+            return false;
+        }
+    }
+
+    *outVars = vars;
+    return true;
 }
 
-/*!*******************************************************************************************************************
- * \brief Returns the substrate offset parsed from the XML file.
- *
- * The offset typically defines the vertical reference position of the substrate
- * in the stackup description.
- *
- * \return Substrate offset value, or \c 0.0 if not defined.
- **********************************************************************************************************************/
-double Substrate::substrateOffset() const
+bool Substrate::resolveGeometry(const QHash<QString, QVariant> &vars, QString *error)
 {
-    return m_substrateOffset;
+    auto evalT = [&](const QString &raw, double *out) -> bool {
+        QString err;
+        if (!StackupExpr::evalNumber(raw.isEmpty() ? QStringLiteral("0") : raw, vars, out, &err)) {
+            if (error)
+                *error = err;
+            return false;
+        }
+        return true;
+    };
+
+    // Resolve dielectric thicknesses
+    for (Dielectric &d : m_dielectrics) {
+        double t = 0.0;
+        if (!evalT(d.thicknessRaw().isEmpty() ? QString::number(d.thickness())
+                                              : d.thicknessRaw(),
+                   &t))
+            return false;
+        d.setThickness(t);
+    }
+
+    const bool hasDielectricRefs = std::any_of(
+        m_dielectrics.begin(), m_dielectrics.end(),
+        [](const Dielectric &d) { return !d.reference().isEmpty(); });
+
+    QHash<QString, QPair<double, double>> dielBounds; // name -> (zmin,zmax)
+
+    if (!hasDielectricRefs) {
+        // Legacy: reverse stack from bottom (after reversing file order which is top-first)
+        QList<Dielectric> bottomUp = m_dielectrics;
+        std::reverse(bottomUp.begin(), bottomUp.end());
+        double z = -m_substrateOffset;
+        for (Dielectric &d : bottomUp) {
+            d.setResolvedZmin(z);
+            d.setResolvedZmax(z + d.thickness());
+            dielBounds.insert(d.name(), qMakePair(d.resolvedZmin(), d.resolvedZmax()));
+            z += d.thickness();
+        }
+        // Write resolved values back into m_dielectrics by name
+        for (Dielectric &d : m_dielectrics) {
+            if (dielBounds.contains(d.name())) {
+                d.setResolvedZmin(dielBounds.value(d.name()).first);
+                d.setResolvedZmax(dielBounds.value(d.name()).second);
+            }
+        }
+    } else {
+        QSet<QString> placed;
+        for (int pass = 0; pass < m_dielectrics.size() + 2; ++pass) {
+            bool progress = false;
+            for (Dielectric &d : m_dielectrics) {
+                if (placed.contains(d.name()))
+                    continue;
+
+                if (d.reference().isEmpty()) {
+                    d.setResolvedZmin(0.0);
+                    d.setResolvedZmax(d.thickness());
+                    dielBounds.insert(d.name(), qMakePair(d.resolvedZmin(), d.resolvedZmax()));
+                    placed.insert(d.name());
+                    progress = true;
+                    continue;
+                }
+
+                if (!dielBounds.contains(d.reference()))
+                    continue;
+
+                const auto ref = dielBounds.value(d.reference());
+                const bool fromTop =
+                    d.referenceEdge().compare(QLatin1String("Top"), Qt::CaseInsensitive) == 0;
+                const double edge = fromTop ? ref.second : ref.first;
+                d.setResolvedZmin(edge);
+                d.setResolvedZmax(edge + d.thickness());
+                dielBounds.insert(d.name(), qMakePair(d.resolvedZmin(), d.resolvedZmax()));
+                placed.insert(d.name());
+                progress = true;
+            }
+            if (placed.size() == m_dielectrics.size())
+                break;
+            if (!progress) {
+                if (error)
+                    *error = QStringLiteral("Failed to resolve dielectric Reference chain");
+                return false;
+            }
+        }
+    }
+
+    // Also index layers already placed for layer-to-layer references
+    QHash<QString, QPair<double, double>> layerBounds;
+
+    const bool hasLayerRefs = std::any_of(
+        m_layers.begin(), m_layers.end(),
+        [](const Layer &l) { return !l.reference().isEmpty(); });
+
+    auto edgeOf = [&](const QString &refName, const QString &edge, bool *ok) -> double {
+        *ok = true;
+        if (dielBounds.contains(refName)) {
+            const auto b = dielBounds.value(refName);
+            return edge.compare(QLatin1String("Top"), Qt::CaseInsensitive) == 0 ? b.second
+                                                                               : b.first;
+        }
+        if (layerBounds.contains(refName)) {
+            const auto b = layerBounds.value(refName);
+            return edge.compare(QLatin1String("Top"), Qt::CaseInsensitive) == 0 ? b.second
+                                                                               : b.first;
+        }
+        *ok = false;
+        return 0.0;
+    };
+
+    if (!hasLayerRefs) {
+        for (Layer &lay : m_layers) {
+            double z0 = 0.0, z1 = 0.0;
+            if (!evalT(lay.zminRaw(), &z0) || !evalT(lay.zmaxRaw(), &z1))
+                return false;
+            lay.setZmin(z0);
+            lay.setZmax(z1);
+            layerBounds.insert(lay.name(), qMakePair(z0, z1));
+        }
+    } else {
+        QSet<QString> placed;
+        for (int pass = 0; pass < m_layers.size() + 2; ++pass) {
+            bool progress = false;
+            for (Layer &lay : m_layers) {
+                if (placed.contains(lay.name()))
+                    continue;
+
+                double off0 = 0.0, off1 = 0.0;
+                if (!evalT(lay.zminRaw(), &off0) || !evalT(lay.zmaxRaw(), &off1))
+                    return false;
+
+                if (lay.reference().isEmpty()) {
+                    lay.setZmin(off0);
+                    lay.setZmax(off1);
+                    layerBounds.insert(lay.name(), qMakePair(off0, off1));
+                    placed.insert(lay.name());
+                    progress = true;
+                    continue;
+                }
+
+                bool ok = false;
+                const double edge = edgeOf(lay.reference(),
+                                           lay.referenceEdge().isEmpty()
+                                               ? QStringLiteral("Top")
+                                               : lay.referenceEdge(),
+                                           &ok);
+                if (!ok)
+                    continue;
+
+                lay.setZmin(edge + off0);
+                lay.setZmax(edge + off1);
+                layerBounds.insert(lay.name(), qMakePair(lay.zmin(), lay.zmax()));
+                placed.insert(lay.name());
+                progress = true;
+            }
+            if (placed.size() == m_layers.size())
+                break;
+            if (!progress) {
+                if (error)
+                    *error = QStringLiteral("Failed to resolve layer Reference chain");
+                return false;
+            }
+        }
+    }
+
+    // Resolve material numeric fields that may be expressions
+    for (Material &mat : m_materials) {
+        double v = 0.0;
+        if (!mat.permittivityRaw().isEmpty() && evalT(mat.permittivityRaw(), &v))
+            mat.setPermittivity(v);
+        if (!mat.lossTangentRaw().isEmpty() && evalT(mat.lossTangentRaw(), &v))
+            mat.setLossTangent(v);
+        if (!mat.conductivityRaw().isEmpty() && evalT(mat.conductivityRaw(), &v))
+            mat.setConductivity(v);
+    }
+
+    return true;
 }
 
-/*!*******************************************************************************************************************
- * \brief Returns the schema version of the substrate XML file.
- *
- * This corresponds to the \c schemaVersion attribute in the <Stackup> tag.
- *
- * \return Schema version string, or an empty string if not present.
- **********************************************************************************************************************/
-const QString &Substrate::schemaVersion() const
+const QList<StackupVariable> &Substrate::variables() const { return m_variables; }
+QList<StackupVariable> &Substrate::variables() { return m_variables; }
+
+const QList<Material> &Substrate::materials() const { return m_materials; }
+QList<Material> &Substrate::materials() { return m_materials; }
+
+const QList<Dielectric> &Substrate::dielectrics() const { return m_dielectrics; }
+QList<Dielectric> &Substrate::dielectrics() { return m_dielectrics; }
+
+const QList<Layer> &Substrate::layers() const { return m_layers; }
+QList<Layer> &Substrate::layers() { return m_layers; }
+
+const QList<DerivedLayer> &Substrate::derivedLayers() const { return m_derivedLayers; }
+QList<DerivedLayer> &Substrate::derivedLayers() { return m_derivedLayers; }
+
+const QList<ThermalTable> &Substrate::thermalTables() const { return m_thermalTables; }
+QList<ThermalTable> &Substrate::thermalTables() { return m_thermalTables; }
+
+double Substrate::substrateOffset() const { return m_substrateOffset; }
+void Substrate::setSubstrateOffset(double offset) { m_substrateOffset = offset; }
+
+const QString &Substrate::schemaVersion() const { return m_schemaVersion; }
+void Substrate::setSchemaVersion(const QString &v) { m_schemaVersion = v; }
+
+const QString &Substrate::lengthUnit() const { return m_lengthUnit; }
+void Substrate::setLengthUnit(const QString &u) { m_lengthUnit = u; }
+
+const QString &Substrate::description() const { return m_description; }
+void Substrate::setDescription(const QString &d) { m_description = d; }
+
+QList<StackupVariable> Substrate::overridableVariables() const
 {
-    return m_schemaVersion;
+    QList<StackupVariable> out;
+    for (const StackupVariable &v : m_variables) {
+        if (!v.isComputed())
+            out << v;
+    }
+    return out;
 }
 
-/*!*******************************************************************************************************************
- * \brief Returns the length unit used in the substrate XML file.
- *
- * This corresponds to the \c LengthUnit attribute in the <ELayers> tag. Typical
- * values are "um" or "nm".
- *
- * \return Length unit string, default is "um" if not defined.
- **********************************************************************************************************************/
-const QString &Substrate::lengthUnit() const
+QString Substrate::computeMinimumSchemaVersion() const
 {
-    return m_lengthUnit;
-}
+    bool needs31 = !m_variables.isEmpty();
+    bool needs30 = !m_derivedLayers.isEmpty();
 
+    auto looksExpr = [](const QString &s) {
+        return s.trimmed().startsWith(QLatin1Char('='));
+    };
+
+    for (const Dielectric &d : m_dielectrics) {
+        if (!d.reference().isEmpty())
+            needs30 = true;
+        if (looksExpr(d.thicknessRaw()))
+            needs31 = true;
+    }
+    for (const Layer &l : m_layers) {
+        if (!l.reference().isEmpty())
+            needs30 = true;
+        if (looksExpr(l.zminRaw()) || looksExpr(l.zmaxRaw()))
+            needs31 = true;
+    }
+    for (const Material &m : m_materials) {
+        if (looksExpr(m.permittivityRaw()) || looksExpr(m.conductivityRaw())
+            || looksExpr(m.lossTangentRaw()) || looksExpr(m.thermalConductivityTable())
+            || looksExpr(m.thermalConductivityRaw()))
+            needs31 = true;
+    }
+
+    if (needs31)
+        return QStringLiteral("3.1");
+    if (needs30)
+        return QStringLiteral("3.0");
+    if (!m_schemaVersion.isEmpty())
+        return m_schemaVersion;
+    return QStringLiteral("2.0");
+}

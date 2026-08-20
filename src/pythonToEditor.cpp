@@ -195,6 +195,7 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
 
     applySimSettingsToScript(script, simKeyLower);
     applyGdsAndXmlPaths(script, simKeyLower);
+    applyVariableOverridesToScript(script);
 
     ensurePortsTableInitializedFromScript(script);
 
@@ -454,6 +455,7 @@ void MainWindow::syncGuiSettingsToPythonEditor()
 
     applySimSettingsToScript(script, simKey);
     applyGdsAndXmlPaths(script, simKey);
+    applyVariableOverridesToScript(script);
     applyBoundaries(script, simKey == QLatin1String("openems"));
     setEditorScriptPreservingState(script);
 }
@@ -607,6 +609,110 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
                               QRegularExpression::MultilineOption);
         script.replace(re, QStringLiteral("XML_filename = \"%1\"").arg(xmlPath));
     }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Writes variable_overrides dict and read_substrate(..., variable_overrides=...) into the model script.
+ **********************************************************************************************************************/
+void MainWindow::applyVariableOverridesToScript(QString &script)
+{
+    storeStackupOverridesFromTable();
+    const QHash<QString, QVariant> overrides = currentStackupOverrides();
+
+    // Build dict literal
+    QStringList entries;
+    for (auto it = overrides.constBegin(); it != overrides.constEnd(); ++it) {
+        const QString key = it.key();
+        const QString val = it.value().toString().trimmed();
+        bool okNum = false;
+        val.toDouble(&okNum);
+        if (okNum && !val.contains(QLatin1Char('\'')) && !val.contains(QLatin1Char('"')))
+            entries << QStringLiteral("'%1': %2").arg(key, val);
+        else
+            entries << QStringLiteral("'%1': '%2'")
+                           .arg(key, QString(val).replace(QLatin1Char('\''), QStringLiteral("\\'")));
+    }
+    const QString dictLit = entries.isEmpty() ? QStringLiteral("{}")
+                                              : QStringLiteral("{%1}").arg(entries.join(QStringLiteral(", ")));
+
+    // Replace or insert variable_overrides = {...}
+    QRegularExpression reDict(
+        R"((?m)^[ \t]*variable_overrides\s*=\s*\{.*\}$)");
+    const QString dictLine = QStringLiteral("variable_overrides = %1").arg(dictLit);
+    if (reDict.match(script).hasMatch()) {
+        script.replace(reDict, dictLine);
+    } else {
+        QRegularExpression reXml(R"((?m)^[ \t]*XML_filename\s*=.*$)");
+        const QRegularExpressionMatch m = reXml.match(script);
+        if (m.hasMatch()) {
+            const int insertPos = m.capturedEnd();
+            script.insert(insertPos, QStringLiteral("\n") + dictLine);
+        } else if (!entries.isEmpty()) {
+            script.prepend(dictLine + QStringLiteral("\n"));
+        }
+    }
+
+    // Patch read_substrate(...) call
+    QRegularExpression reRead(
+        R"(stackup_reader\.read_substrate\s*\(\s*([^)]*)\))");
+    QRegularExpressionMatchIterator it = reRead.globalMatch(script);
+    QString out = script;
+    int offset = 0;
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        QString args = m.captured(1).trimmed();
+        // strip existing variable_overrides=...
+        args.replace(QRegularExpression(R"(,?\s*variable_overrides\s*=\s*[^,\)]+)"), QString());
+        args = args.trimmed();
+        if (args.endsWith(QLatin1Char(',')))
+            args.chop(1);
+        args = args.trimmed();
+
+        QString replacement;
+        if (entries.isEmpty()) {
+            replacement = QStringLiteral("stackup_reader.read_substrate(%1)").arg(args);
+        } else {
+            if (args.isEmpty())
+                replacement = QStringLiteral(
+                    "stackup_reader.read_substrate(XML_filename, variable_overrides=variable_overrides)");
+            else
+                replacement = QStringLiteral(
+                                  "stackup_reader.read_substrate(%1, variable_overrides=variable_overrides)")
+                                  .arg(args);
+        }
+
+        const int start = m.capturedStart() + offset;
+        const int len = m.capturedLength();
+        out.replace(start, len, replacement);
+        offset += replacement.size() - len;
+    }
+    script = out;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Parses variable_overrides from a model script into m_simSettings.
+ **********************************************************************************************************************/
+void MainWindow::loadVariableOverridesFromScript(const QString &script)
+{
+    QVariantMap map;
+    QRegularExpression reDict(
+        R"(variable_overrides\s*=\s*\{([^}]*)\})");
+    const QRegularExpressionMatch m = reDict.match(script);
+    if (m.hasMatch()) {
+        const QString body = m.captured(1);
+        QRegularExpression reEntry(
+            R"(['\"]([^'\"]+)['\"]\s*:\s*([^,\}]+))");
+        QRegularExpressionMatchIterator it = reEntry.globalMatch(body);
+        while (it.hasNext()) {
+            const QRegularExpressionMatch e = it.next();
+            QString val = e.captured(2).trimmed();
+            if ((val.startsWith(QLatin1Char('\'')) && val.endsWith(QLatin1Char('\'')))
+                || (val.startsWith(QLatin1Char('"')) && val.endsWith(QLatin1Char('"'))))
+                val = val.mid(1, val.size() - 2);
+            map.insert(e.captured(1), val);
+        }
+    }
+    m_simSettings[QStringLiteral("StackupVariableOverrides")] = map;
 }
 
 /*!*******************************************************************************************************************

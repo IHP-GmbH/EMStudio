@@ -53,6 +53,7 @@
 #include "preferences.h"
 #include "ui_mainwindow.h"
 #include "substrateview.h"
+#include "stackupeditor.h"
 #include "pythonparser.h"
 #include "keywordseditor.h"
 
@@ -194,6 +195,11 @@ MainWindow::MainWindow(QWidget *parent)
                 if (!m_blockPortChanges) setStateChanged();
             });
 
+    if (m_ui->substrateView) {
+        connect(m_ui->substrateView, &SubstrateView::layerClicked,
+                this, &MainWindow::onSubstrateLayerClicked);
+    }
+
     connect(m_ui->editRunPythonScript, &QTextEdit::textChanged,
             this, [this]() {
                 setStateChanged();
@@ -230,7 +236,26 @@ MainWindow::MainWindow(QWidget *parent)
             m_ui->editRunPythonScript->setEditorFontSize(size);
     }
 
+    if (m_ui->splitterStackup) {
+        m_ui->splitterStackup->setStretchFactor(0, 1);
+        m_ui->splitterStackup->setStretchFactor(1, 3);
+        const QByteArray splitState =
+            m_sysSettings.value(QStringLiteral("STACKUP_SPLITTER_STATE")).toByteArray();
+        if (!splitState.isEmpty())
+            m_ui->splitterStackup->restoreState(splitState);
+    }
+
+    if (m_ui->cbShowStackupOverrides) {
+        const bool showOverrides =
+            m_sysSettings.value(QStringLiteral("SHOW_STACKUP_OVERRIDES"), true).toBool();
+        QSignalBlocker blocker(m_ui->cbShowStackupOverrides);
+        m_ui->cbShowStackupOverrides->setChecked(showOverrides);
+    }
+    applyStackupOverridesVisibility();
+
     updateSubLayerNamesCheckboxState();
+
+    updateEditStackupButtonState();
 
     QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     m_ui->editSimulationLog->setFont(mono);
@@ -706,6 +731,15 @@ void MainWindow::saveSettings()
     settings.setValue("MainWindow/geometry", saveGeometry());
     settings.setValue("MainWindow/state", saveState());
 
+    if (m_ui && m_ui->cbShowStackupOverrides) {
+        m_sysSettings[QStringLiteral("SHOW_STACKUP_OVERRIDES")] =
+            m_ui->cbShowStackupOverrides->isChecked();
+    }
+    if (m_ui && m_ui->splitterStackup) {
+        m_sysSettings[QStringLiteral("STACKUP_SPLITTER_STATE")] =
+            m_ui->splitterStackup->saveState();
+    }
+
     settings.beginGroup("SystemSettings");
     for (auto it = m_sysSettings.constBegin(); it != m_sysSettings.constEnd(); ++it) {
         settings.setValue(it.key(), it.value());
@@ -1140,6 +1174,7 @@ void MainWindow::updateSimulationSettings()
         m_subLayers = readSubstrateLayers(m_ui->txtSubstrate->text());
         drawSubstrate(m_ui->txtSubstrate->text());
     }
+    updateEditStackupButtonState();
 
     m_ui->tblPorts->setRowCount(0);
 
@@ -1270,6 +1305,14 @@ void MainWindow::setLineEditPalette(QLineEdit* lineEdit, const QString& path)
     }
 
     lineEdit->setPalette(palette);
+}
+
+void MainWindow::updateEditStackupButtonState()
+{
+    if (!m_ui || !m_ui->btnEditStackup)
+        return;
+    const QString path = m_ui->txtSubstrate->text().trimmed();
+    m_ui->btnEditStackup->setEnabled(!path.isEmpty() && QFileInfo::exists(path));
 }
 
 /*!*******************************************************************************************************************
@@ -1686,6 +1729,7 @@ void MainWindow::on_btnSubstrate_clicked()
 void MainWindow::on_txtSubstrate_textEdited(const QString &arg1)
 {
     setLineEditPalette(m_ui->txtSubstrate, arg1);
+    updateEditStackupButtonState();
     setStateChanged();
 }
 
@@ -1696,6 +1740,7 @@ void MainWindow::on_txtSubstrate_textEdited(const QString &arg1)
 void MainWindow::on_txtSubstrate_textChanged(const QString &arg1)
 {
     setLineEditPalette(m_ui->txtSubstrate, arg1);
+    updateEditStackupButtonState();
 
     const QFileInfo fi(arg1);
     if (fi.exists()) {
@@ -1779,6 +1824,16 @@ void MainWindow::drawSubstrate(const QString &filePath)
         return;
     }
 
+    QString err;
+    substrate.resolve(currentStackupOverrides(), &err);
+
+    if (m_ui->lblStackupDescription) {
+        m_ui->lblStackupDescription->setText(substrate.description());
+        m_ui->lblStackupDescription->setVisible(!substrate.description().isEmpty());
+    }
+
+    refreshStackupOverridesUi(substrate);
+
     if (m_ui->substrateView) {
         m_ui->substrateView->setSubstrate(substrate);
         m_ui->substrateView->update();
@@ -1787,6 +1842,153 @@ void MainWindow::drawSubstrate(const QString &filePath)
     }
 }
 
+void MainWindow::on_btnEditStackup_clicked()
+{
+    const QString path = m_ui->txtSubstrate->text().trimmed();
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        error(tr("Set a valid substrate XML file first."), true);
+        return;
+    }
+
+    if (m_stackupEditor) {
+        m_stackupEditor->raise();
+        m_stackupEditor->activateWindow();
+        return;
+    }
+
+    storeStackupOverridesFromTable();
+
+    Substrate substrate;
+    if (!substrate.parseXmlFile(path)) {
+        error(tr("Failed to parse substrate file:\n%1").arg(path), true);
+        return;
+    }
+
+    auto *editor = new StackupEditor(this);
+    editor->setAttribute(Qt::WA_DeleteOnClose);
+    editor->setFilePath(path);
+    editor->setSubstrate(substrate);
+    connect(editor, &StackupEditor::stackupSaved,
+            this, &MainWindow::onStackupEditorSaved);
+    connect(editor, &StackupEditor::clearStackHighlightRequested, this, [this]() {
+        if (m_ui->substrateView)
+            m_ui->substrateView->clearHighlight();
+    });
+    if (m_ui->substrateView) {
+        connect(m_ui->substrateView, &SubstrateView::highlightCleared,
+                editor, &StackupEditor::clearTableSelection);
+    }
+    m_stackupEditor = editor;
+    editor->show();
+    editor->raise();
+    editor->activateWindow();
+}
+
+void MainWindow::onStackupEditorSaved(const QString &path)
+{
+    if (path.isEmpty())
+        return;
+    m_ui->txtSubstrate->setText(path);
+    m_simSettings[QStringLiteral("SubstrateFile")] = path;
+    drawSubstrate(path);
+    m_subLayers = readSubstrateLayers(path);
+    setStateChanged();
+}
+
+void MainWindow::onSubstrateLayerClicked(const QString &name, const QString &kind)
+{
+    if (m_stackupEditor)
+        m_stackupEditor->selectStackItem(name, kind);
+}
+
+QHash<QString, QVariant> MainWindow::currentStackupOverrides() const
+{
+    QHash<QString, QVariant> out;
+    const QVariantMap map = m_simSettings.value(QStringLiteral("StackupVariableOverrides")).toMap();
+    for (auto it = map.constBegin(); it != map.constEnd(); ++it) {
+        if (!it.value().toString().trimmed().isEmpty())
+            out.insert(it.key(), it.value());
+    }
+    return out;
+}
+
+void MainWindow::storeStackupOverridesFromTable()
+{
+    if (!m_ui->tblStackupOverrides)
+        return;
+
+    QVariantMap map;
+    for (int r = 0; r < m_ui->tblStackupOverrides->rowCount(); ++r) {
+        const auto *nameItem = m_ui->tblStackupOverrides->item(r, 0);
+        const auto *ovrItem = m_ui->tblStackupOverrides->item(r, 2);
+        if (!nameItem)
+            continue;
+        const QString name = nameItem->text().trimmed();
+        const QString ovr = ovrItem ? ovrItem->text().trimmed() : QString();
+        if (!name.isEmpty() && !ovr.isEmpty())
+            map.insert(name, ovr);
+    }
+    m_simSettings[QStringLiteral("StackupVariableOverrides")] = map;
+}
+
+void MainWindow::refreshStackupOverridesUi(const Substrate &substrate)
+{
+    if (!m_ui->tblStackupOverrides)
+        return;
+
+    const QVariantMap saved =
+        m_simSettings.value(QStringLiteral("StackupVariableOverrides")).toMap();
+    const QList<StackupVariable> vars = substrate.overridableVariables();
+
+    QSignalBlocker blocker(m_ui->tblStackupOverrides);
+    m_ui->tblStackupOverrides->setRowCount(0);
+    m_ui->tblStackupOverrides->setColumnCount(3);
+    m_ui->tblStackupOverrides->setHorizontalHeaderLabels(
+        {tr("Name"), tr("XML Value"), tr("Override")});
+
+    for (const StackupVariable &v : vars) {
+        const int r = m_ui->tblStackupOverrides->rowCount();
+        m_ui->tblStackupOverrides->insertRow(r);
+        auto *nameItem = new QTableWidgetItem(v.name);
+        nameItem->setFlags(nameItem->flags() & ~Qt::ItemIsEditable);
+        auto *xmlItem = new QTableWidgetItem(v.valueRaw);
+        xmlItem->setFlags(xmlItem->flags() & ~Qt::ItemIsEditable);
+        auto *ovrItem = new QTableWidgetItem(saved.value(v.name).toString());
+        m_ui->tblStackupOverrides->setItem(r, 0, nameItem);
+        m_ui->tblStackupOverrides->setItem(r, 1, xmlItem);
+        m_ui->tblStackupOverrides->setItem(r, 2, ovrItem);
+    }
+
+    const bool hasVars = !vars.isEmpty();
+    m_stackupHasOverridableVars = hasVars;
+    if (m_ui->cbShowStackupOverrides)
+        m_ui->cbShowStackupOverrides->setVisible(hasVars);
+    if (m_ui->lblStackupOverrides)
+        m_ui->lblStackupOverrides->setVisible(hasVars);
+
+    applyStackupOverridesVisibility();
+}
+
+void MainWindow::applyStackupOverridesVisibility()
+{
+    if (!m_ui->wdgStackupOverrides)
+        return;
+
+    const bool wantShow = m_ui->cbShowStackupOverrides
+                              ? m_ui->cbShowStackupOverrides->isChecked()
+                              : true;
+
+    m_ui->wdgStackupOverrides->setVisible(m_stackupHasOverridableVars && wantShow);
+    if (m_ui->cbShowStackupOverrides)
+        m_ui->cbShowStackupOverrides->setEnabled(m_stackupHasOverridableVars);
+}
+
+void MainWindow::on_cbShowStackupOverrides_toggled(bool checked)
+{
+    m_sysSettings[QStringLiteral("SHOW_STACKUP_OVERRIDES")] = checked;
+    applyStackupOverridesVisibility();
+    saveSettings();
+}
 
 /*!*******************************************************************************************************************
  * \brief Opens the preferences dialog window for modifying global application settings.
@@ -2756,6 +2958,8 @@ void MainWindow::loadPythonModel(const QString &fileName)
 
     const QString text = QString::fromUtf8(file.readAll());
     file.close();
+
+    loadVariableOverridesFromScript(text);
 
     PythonParser::Result res = PythonParser::parseSettings(fileName);
     if (!res.ok) {

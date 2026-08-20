@@ -19,11 +19,17 @@
  ************************************************************************/
 
 #include <cmath>
+#include <algorithm>
 
 #include <QDebug>
 #include <QGestureEvent>
 #include <QPinchGesture>
 #include <QGraphicsRectItem>
+#include <QGraphicsPolygonItem>
+#include <QGraphicsSimpleTextItem>
+#include <QAbstractGraphicsShapeItem>
+#include <QHash>
+#include <QMouseEvent>
 
 #include "substrateview.h"
 
@@ -58,7 +64,88 @@ SubstrateView::SubstrateView(QWidget* parent)
 void SubstrateView::setSubstrate(const Substrate& substrate)
 {
     m_substrate = substrate;
+    m_highlightedName.clear();
     drawSubstrate();
+}
+
+void SubstrateView::tagStackItem(QGraphicsItem* item, const QString& name, const QString& kind,
+                                 const QString& toolTip)
+{
+    if (!item)
+        return;
+    item->setData(kRoleName, name);
+    item->setData(kRoleKind, kind);
+    item->setCursor(Qt::PointingHandCursor);
+    // Avoid Qt item-selection styling side effects on the whole scene.
+    item->setFlag(QGraphicsItem::ItemIsSelectable, false);
+    item->setAcceptedMouseButtons(Qt::LeftButton);
+    if (!toolTip.isEmpty())
+        item->setToolTip(toolTip);
+}
+
+void SubstrateView::setHighlightedLayer(const QString& name)
+{
+    if (m_highlightedName == name)
+        return;
+    const QString previous = m_highlightedName;
+    m_highlightedName = name;
+    // Only touch the previous + new layer — never re-set fonts/pens on the whole stack
+    // (that was re-rasterizing every label and making them look bold).
+    setLayerHighlightVisual(previous, false);
+    setLayerHighlightVisual(m_highlightedName, true);
+}
+
+void SubstrateView::clearHighlight()
+{
+    if (m_highlightedName.isEmpty())
+        return;
+    const QString previous = m_highlightedName;
+    m_highlightedName.clear();
+    setLayerHighlightVisual(previous, false);
+    emit highlightCleared();
+}
+
+void SubstrateView::setLayerHighlightVisual(const QString& name, bool on)
+{
+    if (!m_scene || name.isEmpty())
+        return;
+
+    const QPen normal(Qt::black);
+    const QPen hi(QColor(255, 180, 0), 2.5);
+
+    for (QGraphicsItem *item : m_scene->items()) {
+        if (item->data(kRoleName).toString() != name)
+            continue;
+        if (auto *shape = qgraphicsitem_cast<QAbstractGraphicsShapeItem *>(item))
+            shape->setPen(on ? hi : normal);
+    }
+}
+
+void SubstrateView::applyHighlight()
+{
+    // Kept for redraw-after-setSubstrate: re-apply current highlight without
+    // touching unrelated layers' fonts/pens.
+    if (!m_highlightedName.isEmpty())
+        setLayerHighlightVisual(m_highlightedName, true);
+}
+
+void SubstrateView::mousePressEvent(QMouseEvent* event)
+{
+    if (event->button() == Qt::LeftButton) {
+        setFocus(Qt::MouseFocusReason);
+        if (QGraphicsItem *hit = itemAt(event->pos())) {
+            for (QGraphicsItem *it = hit; it; it = it->parentItem()) {
+                const QString name = it->data(kRoleName).toString();
+                if (name.isEmpty())
+                    continue;
+                const QString kind = it->data(kRoleKind).toString();
+                setHighlightedLayer(name);
+                emit layerClicked(name, kind);
+                break;
+            }
+        }
+    }
+    QGraphicsView::mousePressEvent(event);
 }
 
 /*!*******************************************************************************************************************
@@ -98,6 +185,11 @@ void SubstrateView::resizeEvent(QResizeEvent* event)
  **********************************************************************************************************************/
 void SubstrateView::keyPressEvent(QKeyEvent* event)
 {
+    if (event->key() == Qt::Key_Escape) {
+        clearHighlight();
+        event->accept();
+        return;
+    }
     if (event->key() == Qt::Key_F) {
         resetZoom();
         event->accept();
@@ -315,11 +407,14 @@ void SubstrateView::drawSubstrate()
 
     QList<VisualLayer> allLayers;
 
-    double zPhys = -m_substrate.substrateOffset();
-    double zDraw = 0.0;
-
     auto dielectrics = m_substrate.dielectrics();
-    std::reverse(dielectrics.begin(), dielectrics.end());
+    const bool useResolved =
+        std::any_of(dielectrics.begin(), dielectrics.end(), [](const Dielectric &d) {
+            return d.resolvedZmax() != d.resolvedZmin() || d.thickness() > 0;
+        });
+
+    if (!useResolved)
+        std::reverse(dielectrics.begin(), dielectrics.end());
 
     const auto& layers    = m_substrate.layers();
     const auto& materials = m_substrate.materials();
@@ -328,10 +423,15 @@ void SubstrateView::drawSubstrate()
     struct Span { QString name; double zmin, zmax; };
     QVector<Span> dielSpans; dielSpans.reserve(dielectrics.size());
     {
-        double z = -m_substrate.substrateOffset();
-        for (const auto& d : dielectrics) {
-            dielSpans.push_back({ d.name(), z, z + d.thickness() });
-            z += d.thickness();
+        if (useResolved) {
+            for (const auto& d : dielectrics)
+                dielSpans.push_back({ d.name(), d.resolvedZmin(), d.resolvedZmax() });
+        } else {
+            double z = -m_substrate.substrateOffset();
+            for (const auto& d : dielectrics) {
+                dielSpans.push_back({ d.name(), z, z + d.thickness() });
+                z += d.thickness();
+            }
         }
     }
     for (const Layer& L : layers) {
@@ -350,7 +450,16 @@ void SubstrateView::drawSubstrate()
     const double busyBoostK   = 0.10;
     const int    busyBoostCap = 4;
 
-    for (const Dielectric& diel : dielectrics) {
+    // Draw dielectrics bottom-up for visual stacking
+    QList<Dielectric> drawOrder = dielectrics;
+    if (useResolved) {
+        std::sort(drawOrder.begin(), drawOrder.end(), [](const Dielectric &a, const Dielectric &b) {
+            return a.resolvedZmin() < b.resolvedZmin();
+        });
+    }
+
+    double zDraw = 0.0;
+    for (const Dielectric& diel : drawOrder) {
         const double t = diel.thickness();
         double vUm = mapThicknessUmToVisualUm(t, tMed);
         const int n = contentCount.value(diel.name(), 0);
@@ -360,14 +469,24 @@ void SubstrateView::drawSubstrate()
         VisualLayer vis;
         vis.name     = diel.name();
         vis.type     = "dielectric";
-        vis.realZMin = zPhys;
-        vis.realZMax = zPhys + t;
+        if (useResolved) {
+            vis.realZMin = diel.resolvedZmin();
+            vis.realZMax = diel.resolvedZmax();
+        } else {
+            // legacy spans already computed in dielSpans
+            for (const auto &sp : dielSpans) {
+                if (sp.name == diel.name()) {
+                    vis.realZMin = sp.zmin;
+                    vis.realZMax = sp.zmax;
+                    break;
+                }
+            }
+        }
         vis.zminPx   = zDraw * pixelScale;
         vis.zmaxPx   = (zDraw + vUm) * pixelScale;
         vis.color    = QColor(0, 0, 255, 77);
         allLayers.append(vis);
 
-        zPhys += t;
         zDraw += vUm;
     }
 
@@ -472,11 +591,20 @@ void SubstrateView::drawSubstrate()
     if (!std::isfinite(minCondH)) minCondH = 14.0;
     if (!std::isfinite(minViaH )) minViaH  = 14.0;
 
-    auto fitFontPtToBox = [](const QString& text, double targetW, double targetH){
+    auto makeLabelFont = [](double pt) {
+        QFont f;
+        f.setPointSizeF(pt);
+        f.setBold(false);
+        f.setWeight(QFont::Light);
+        f.setStyleStrategy(QFont::PreferAntialias);
+        return f;
+    };
+
+    auto fitFontPtToBox = [&](const QString& text, double targetW, double targetH){
         double lo = 6.0, hi = 22.0;
         for (int i=0;i<16;i++){
             double mid=(lo+hi)*0.5;
-            QFont f; f.setPointSizeF(mid);
+            QFont f = makeLabelFont(mid);
             QFontMetricsF fm(f);
             if (fm.height() <= targetH && fm.horizontalAdvance(text) <= targetW) lo = mid;
             else hi = mid;
@@ -494,9 +622,9 @@ void SubstrateView::drawSubstrate()
     const double condPt = fitFontPtToBox(longestCond.isEmpty() ? "M" : longestCond, condBoxW, condBoxH);
     const double viaPt  = fitFontPtToBox(longestVia .isEmpty() ? "M" : longestVia , viaBoxW,  viaBoxH );
 
-    QFont dielFont; dielFont.setPointSizeF(dielPt);
-    QFont condFont; condFont.setPointSizeF(condPt);
-    QFont viaFont;  viaFont.setPointSizeF(viaPt);
+    const QFont dielFont = makeLabelFont(dielPt);
+    const QFont condFont = makeLabelFont(condPt);
+    const QFont viaFont  = makeLabelFont(viaPt);
 
     QFontMetricsF dielFm(dielFont);
 
@@ -505,6 +633,17 @@ void SubstrateView::drawSubstrate()
     for (const auto& layer : allLayers) {
         const double zStart = layer.zminPx;
         const double zStop  = layer.zmaxPx;
+        const double thicknessUm = layer.realZMax - layer.realZMin;
+        const QString tip = tr("%1\n"
+                               "Type: %2\n"
+                               "Thickness: %3 µm\n"
+                               "Zmin: %4 µm\n"
+                               "Zmax: %5 µm")
+                                .arg(layer.name,
+                                     layer.type,
+                                     QString::number(thicknessUm, 'f', 4),
+                                     QString::number(layer.realZMin, 'f', 4),
+                                     QString::number(layer.realZMax, 'f', 4));
 
         double layerWidth = dielWidth;
         double xOffset    = 0.0;
@@ -513,41 +652,46 @@ void SubstrateView::drawSubstrate()
 
         QRectF frontRect(QPointF(xOffset, zStart), QPointF(xOffset + layerWidth, zStop));
         auto* frontFace = m_scene->addRect(frontRect, QPen(Qt::black), QBrush(layer.color));
-        frontFace->setToolTip(layer.name);
+        tagStackItem(frontFace, layer.name, layer.type, tip);
 
         QPolygonF bottomFace;
         bottomFace << QPointF(xOffset, zStop)
                    << QPointF(xOffset + depthOffset, zStop - depthOffset)
                    << QPointF(xOffset + layerWidth + depthOffset, zStop - depthOffset)
                    << QPointF(xOffset + layerWidth, zStop);
-        m_scene->addPolygon(bottomFace, QPen(Qt::black), QBrush(layer.color));
+        tagStackItem(m_scene->addPolygon(bottomFace, QPen(Qt::black), QBrush(layer.color)),
+                     layer.name, layer.type, tip);
 
         QPolygonF topFace;
         topFace << QPointF(xOffset, zStart)
                 << QPointF(xOffset + depthOffset, zStart - depthOffset)
                 << QPointF(xOffset + layerWidth + depthOffset, zStart - depthOffset)
                 << QPointF(xOffset + layerWidth, zStart);
-        m_scene->addPolygon(topFace, QPen(Qt::black), QBrush(layer.color));
+        tagStackItem(m_scene->addPolygon(topFace, QPen(Qt::black), QBrush(layer.color)),
+                     layer.name, layer.type, tip);
 
         QPolygonF sideFace;
         sideFace << QPointF(xOffset + layerWidth, zStop)
                  << QPointF(xOffset + layerWidth + depthOffset, zStop - depthOffset)
                  << QPointF(xOffset + layerWidth + depthOffset, zStart - depthOffset)
                  << QPointF(xOffset + layerWidth, zStart);
-        m_scene->addPolygon(sideFace, QPen(Qt::black), QBrush(layer.color));
+        tagStackItem(m_scene->addPolygon(sideFace, QPen(Qt::black), QBrush(layer.color)),
+                     layer.name, layer.type, tip);
 
         QPolygonF leftFace;
         leftFace << QPointF(xOffset, zStop)
                  << QPointF(xOffset, zStart)
                  << QPointF(xOffset + depthOffset, zStart - depthOffset)
                  << QPointF(xOffset + depthOffset, zStop - depthOffset);
-        m_scene->addPolygon(leftFace, QPen(Qt::black), QBrush(layer.color));
+        tagStackItem(m_scene->addPolygon(leftFace, QPen(Qt::black), QBrush(layer.color)),
+                     layer.name, layer.type, tip);
 
         if (layer.type=="conductor" || layer.type=="via") {
             QFont f = (layer.type=="conductor")?condFont:viaFont;
             QGraphicsSimpleTextItem* label = m_scene->addSimpleText(layer.name);
             label->setFont(f);
             label->setBrush(Qt::black);
+            tagStackItem(label, layer.name, layer.type, tip);
 
             QRectF target = frontRect.adjusted(inset, inset, -inset, -inset);
             QRectF tb = label->boundingRect();
@@ -567,6 +711,7 @@ void SubstrateView::drawSubstrate()
             QGraphicsSimpleTextItem* leftText = m_scene->addSimpleText(heightLabel);
             leftText->setFont(dielFont);
             leftText->setBrush(Qt::black);
+            tagStackItem(leftText, layer.name, layer.type, tip);
             QRectF lb = leftText->boundingRect();
 
             double xL = -(leftMargin + lb.width());
@@ -582,6 +727,7 @@ void SubstrateView::drawSubstrate()
             QGraphicsSimpleTextItem* rightText = m_scene->addSimpleText(nameLabel);
             rightText->setFont(dielFont);
             rightText->setBrush(Qt::black);
+            tagStackItem(rightText, layer.name, layer.type, tip);
             QRectF rb = rightText->boundingRect();
 
             QRectF rTarget = frontRect.adjusted(inset, inset, -inset, -inset);
@@ -594,6 +740,8 @@ void SubstrateView::drawSubstrate()
     }
 
     m_scene->setSceneRect(m_scene->itemsBoundingRect());
+    if (!m_highlightedName.isEmpty())
+        applyHighlight();
     resetZoom();
 }
 

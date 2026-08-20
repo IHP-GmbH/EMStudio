@@ -141,6 +141,8 @@ set(SOURCES
 
     src/substrate.cpp
     src/substrateview.cpp
+    src/stackupexpr.cpp
+    src/stackupeditor.cpp
     src/verification.cpp
     src/xmlreader.cpp
 )
@@ -178,6 +180,8 @@ set(HEADERS
     src/pythonsyntaxhighlighter.h
     src/substrate.h
     src/substrateview.h
+    src/stackupexpr.h
+    src/stackupeditor.h
 )
 
 set(FORMS

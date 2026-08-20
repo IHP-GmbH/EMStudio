@@ -43,6 +43,8 @@ SOURCES += \
     $$TOP/src/runPalace.cpp \
     $$TOP/src/substrate.cpp \
     $$TOP/src/substrateview.cpp \
+    $$TOP/src/stackupexpr.cpp \
+    $$TOP/src/stackupeditor.cpp \
     $$TOP/src/verification.cpp \
     $$TOP/src/xmlreader.cpp
 
@@ -75,4 +77,6 @@ HEADERS += \
     $$TOP/src/pythonparser.h \
     $$TOP/src/pythonsyntaxhighlighter.h \
     $$TOP/src/substrate.h \
-    $$TOP/src/substrateview.h
+    $$TOP/src/substrateview.h \
+    $$TOP/src/stackupexpr.h \
+    $$TOP/src/stackupeditor.h

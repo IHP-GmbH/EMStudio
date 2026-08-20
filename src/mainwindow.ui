@@ -94,10 +94,108 @@
               </property>
              </widget>
             </item>
+            <item>
+             <widget class="QPushButton" name="btnEditStackup">
+              <property name="enabled">
+               <bool>false</bool>
+              </property>
+              <property name="text">
+               <string>Edit Stackup</string>
+              </property>
+              <property name="toolTip">
+               <string>Open the built-in stackup XML editor (Variables, Materials, Dielectrics, Layers)</string>
+              </property>
+             </widget>
+            </item>
            </layout>
           </item>
           <item>
-           <widget class="SubstrateView" name="substrateView"/>
+           <widget class="QLabel" name="lblStackupDescription">
+            <property name="text">
+             <string/>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">font-style: italic; color: #555;</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QCheckBox" name="cbShowStackupOverrides">
+            <property name="text">
+             <string>Show Override stackup Variables</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+            <property name="toolTip">
+             <string>Show or hide the variable overrides panel to free space for the stackup view</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QSplitter" name="splitterStackup">
+            <property name="orientation">
+             <enum>Qt::Vertical</enum>
+            </property>
+            <property name="childrenCollapsible">
+             <bool>false</bool>
+            </property>
+            <widget class="QWidget" name="wdgStackupOverrides" native="true">
+             <layout class="QVBoxLayout" name="verticalLayoutStackupOverrides">
+              <property name="leftMargin">
+               <number>0</number>
+              </property>
+              <property name="topMargin">
+               <number>0</number>
+              </property>
+              <property name="rightMargin">
+               <number>0</number>
+              </property>
+              <property name="bottomMargin">
+               <number>0</number>
+              </property>
+              <item>
+               <widget class="QLabel" name="lblStackupOverrides">
+                <property name="text">
+                 <string>Override stackup Variables</string>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QTableWidget" name="tblStackupOverrides">
+                <property name="minimumSize">
+                 <size>
+                  <width>0</width>
+                  <height>80</height>
+                 </size>
+                </property>
+                <property name="toolTip">
+                 <string>Override plain Variables from the XML for this model (written as variable_overrides in the Python script)</string>
+                </property>
+                <column>
+                 <property name="text">
+                  <string>Name</string>
+                 </property>
+                </column>
+                <column>
+                 <property name="text">
+                  <string>XML Value</string>
+                 </property>
+                </column>
+                <column>
+                 <property name="text">
+                  <string>Override</string>
+                 </property>
+                </column>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+            <widget class="SubstrateView" name="substrateView"/>
+           </widget>
           </item>
          </layout>
         </item>

@@ -71,7 +71,10 @@ settings['cells_per_wavelength'] = 20   # @brief how many mesh cells per wavelen
 settings['energy_limit'] = -40          # @brief end criteria for residual energy (dB), default is -40
 
 # port configuration, port geometry is read from GDSII file on the specified layer
-materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate(XML_filename)
+variable_overrides = {}
+
+# get technology stackup data
+materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate(XML_filename, variable_overrides=variable_overrides)
 # get list of layers from technology
 layernumbers = metals_list.getlayernumbers()
 # we must also read the layers where we added ports, these are not included in technology layers

@@ -71,7 +71,10 @@ settings['adaptive_mesh_iterations'] = 0  # @brief adaptive mesh iterations, def
 # Ports from GDSII Data, polygon geometry from specified special layer
 # Excitations can be switched off by voltage=0, those S-parameter will be incomplete then
 
-materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate (XML_filename)
+variable_overrides = {}
+
+# get technology stackup data
+materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate(XML_filename, variable_overrides=variable_overrides)
 
 # get list of layers from technology
 layernumbers = metals_list.getlayernumbers()

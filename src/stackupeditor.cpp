@@ -42,6 +42,10 @@
 #include <QKeySequence>
 #include <QDir>
 #include <QKeyEvent>
+#include <QComboBox>
+#include <QFont>
+#include <QApplication>
+#include <QSet>
 
 namespace {
 
@@ -58,6 +62,15 @@ QTableWidget *makeTable(const QStringList &headers)
     t->setSelectionBehavior(QAbstractItemView::SelectRows);
     t->setSelectionMode(QAbstractItemView::SingleSelection);
     t->setAlternatingRowColors(true);
+    // Do NOT use AllEditTriggers: opening editors while setItem() fills rows
+    // can commit empty combo/line-edit values and wipe the model.
+    t->setEditTriggers(QAbstractItemView::DoubleClicked
+                       | QAbstractItemView::EditKeyPressed
+                       | QAbstractItemView::AnyKeyPressed);
+    const QFont f = QApplication::font();
+    t->setFont(f);
+    t->horizontalHeader()->setFont(f);
+    t->verticalHeader()->setFont(f);
     return t;
 }
 
@@ -218,6 +231,72 @@ bool StackupColorDelegate::editorEvent(QEvent *event, QAbstractItemModel *model,
 }
 
 // -------------------------------------------------------------------------------------------------
+// StackupComboDelegate
+// -------------------------------------------------------------------------------------------------
+
+StackupComboDelegate::StackupComboDelegate(ItemsFn itemsFn, QObject *parent,
+                                           bool editable, bool allowEmpty)
+    : QStyledItemDelegate(parent)
+    , m_itemsFn(std::move(itemsFn))
+    , m_editable(editable)
+    , m_allowEmpty(allowEmpty)
+{
+}
+
+QWidget *StackupComboDelegate::createEditor(QWidget *parent, const QStyleOptionViewItem &,
+                                            const QModelIndex &) const
+{
+    auto *cb = new QComboBox(parent);
+    cb->setEditable(m_editable);
+    cb->setInsertPolicy(QComboBox::NoInsert);
+    cb->setFont(QApplication::font());
+    if (m_allowEmpty)
+        cb->addItem(QString());
+    if (m_itemsFn) {
+        const QStringList items = m_itemsFn();
+        for (const QString &s : items) {
+            if (s.isEmpty())
+                continue;
+            if (cb->findText(s, Qt::MatchExactly) < 0)
+                cb->addItem(s);
+        }
+    }
+    return cb;
+}
+
+void StackupComboDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
+{
+    auto *cb = qobject_cast<QComboBox *>(editor);
+    if (!cb)
+        return;
+    const QString cur = index.data(Qt::EditRole).toString();
+    int i = cb->findText(cur, Qt::MatchExactly);
+    if (i < 0 && !cur.isEmpty()) {
+        cb->addItem(cur);
+        i = cb->findText(cur, Qt::MatchExactly);
+    }
+    if (i >= 0)
+        cb->setCurrentIndex(i);
+    else
+        cb->setEditText(cur);
+}
+
+void StackupComboDelegate::setModelData(QWidget *editor, QAbstractItemModel *model,
+                                        const QModelIndex &index) const
+{
+    auto *cb = qobject_cast<QComboBox *>(editor);
+    if (!cb)
+        return;
+    model->setData(index, cb->currentText().trimmed(), Qt::EditRole);
+}
+
+void StackupComboDelegate::updateEditorGeometry(QWidget *editor, const QStyleOptionViewItem &option,
+                                                const QModelIndex &) const
+{
+    editor->setGeometry(option.rect);
+}
+
+// -------------------------------------------------------------------------------------------------
 // StackupEditor
 // -------------------------------------------------------------------------------------------------
 
@@ -228,6 +307,7 @@ StackupEditor::StackupEditor(QWidget *parent)
     setWindowFlag(Qt::Window);
     setModal(false);
     resize(1100, 700);
+    applyUniformFonts();
 
     auto *root = new QVBoxLayout(this);
 
@@ -276,6 +356,7 @@ StackupEditor::StackupEditor(QWidget *parent)
     m_colorDelegate = new StackupColorDelegate(this);
     m_tblMats->setItemDelegateForColumn(kColorCol, m_colorDelegate);
     m_tblMats->setIconSize(QSize(14, 14));
+    installComboDelegates();
 
     m_tabs->addTab(m_tblVars, tr("Variables"));
     m_tabs->addTab(m_tblMats, tr("Materials"));
@@ -361,6 +442,8 @@ StackupEditor::StackupEditor(QWidget *parent)
             m_blockChangeSignals = false;
         }
     });
+
+    applyUniformFonts();
 }
 
 void StackupEditor::setFilePath(const QString &path)
@@ -408,6 +491,169 @@ void StackupEditor::setSubstrate(const Substrate &substrate)
 Substrate StackupEditor::substrate() const
 {
     return m_substrate;
+}
+
+void StackupEditor::applyUniformFonts()
+{
+    // Keep dialog chrome and tables on the same application font (helps 4K / HiDPI).
+    const QFont f = QApplication::font();
+    setFont(f);
+    if (m_edDescription)
+        m_edDescription->setFont(f);
+    if (m_lblSchema)
+        m_lblSchema->setFont(f);
+    if (m_tabs)
+        m_tabs->setFont(f);
+    const QList<QTableWidget *> tables = {
+        m_tblVars, m_tblMats, m_tblDiels, m_tblLayers, m_tblDerived, m_tblTables
+    };
+    for (QTableWidget *t : tables) {
+        if (!t)
+            continue;
+        t->setFont(f);
+        t->horizontalHeader()->setFont(f);
+        t->verticalHeader()->setFont(f);
+    }
+}
+
+QStringList StackupEditor::materialNames() const
+{
+    QStringList names;
+    if (m_tblMats) {
+        for (int r = 0; r < m_tblMats->rowCount(); ++r) {
+            const QString n = itemText(m_tblMats, r, 0);
+            if (!n.isEmpty())
+                names << n;
+        }
+    }
+    if (names.isEmpty()) {
+        for (const Material &m : m_substrate.materials()) {
+            if (!m.name().isEmpty())
+                names << m.name();
+        }
+    }
+    names.removeDuplicates();
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
+
+QStringList StackupEditor::dielectricNames() const
+{
+    QStringList names;
+    if (m_tblDiels) {
+        for (int r = 0; r < m_tblDiels->rowCount(); ++r) {
+            const QString n = itemText(m_tblDiels, r, 0);
+            if (!n.isEmpty())
+                names << n;
+        }
+    }
+    if (names.isEmpty()) {
+        for (const Dielectric &d : m_substrate.dielectrics()) {
+            if (!d.name().isEmpty())
+                names << d.name();
+        }
+    }
+    names.removeDuplicates();
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
+
+QStringList StackupEditor::layerNames() const
+{
+    QStringList names;
+    if (m_tblLayers) {
+        for (int r = 0; r < m_tblLayers->rowCount(); ++r) {
+            const QString n = itemText(m_tblLayers, r, 0);
+            if (!n.isEmpty())
+                names << n;
+        }
+    }
+    if (names.isEmpty()) {
+        for (const Layer &l : m_substrate.layers()) {
+            if (!l.name().isEmpty())
+                names << l.name();
+        }
+    }
+    names.removeDuplicates();
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
+
+QStringList StackupEditor::referenceCandidates() const
+{
+    QStringList names = dielectricNames();
+    names += layerNames();
+    names.removeDuplicates();
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
+
+void StackupEditor::installComboDelegates()
+{
+    auto fixed = [this](const QStringList &items, bool editable = false, bool allowEmpty = true) {
+        return new StackupComboDelegate([items]() { return items; }, this, editable, allowEmpty);
+    };
+
+    // Variables.Type
+    m_tblVars->setItemDelegateForColumn(
+        2, fixed({QStringLiteral("number"), QStringLiteral("string")}, false, true));
+
+    // Materials.Type — EM material class (NOT layer geometry role).
+    // In Volker/IHP XML, via metals are still Material Type="Conductor";
+    // the via/conductor distinction lives on Layers.Type.
+    auto *matTypeDelegate = fixed(
+        {QStringLiteral("conductor"), QStringLiteral("dielectric"),
+         QStringLiteral("semiconductor"), QStringLiteral("Conductor"),
+         QStringLiteral("Dielectric"), QStringLiteral("Semiconductor")},
+        true, false);
+    m_tblMats->setItemDelegateForColumn(1, matTypeDelegate);
+    if (auto *h = m_tblMats->horizontalHeaderItem(1)) {
+        h->setToolTip(tr("Material EM class: Conductor / Dielectric / Semiconductor.\n"
+                         "Via metals are still Conductor here — set via/conductor on the Layers tab."));
+    }
+
+    // Dielectrics.Material / Reference / Ref.Edge
+    m_tblDiels->setItemDelegateForColumn(
+        1, new StackupComboDelegate([this]() { return materialNames(); }, this, true, false));
+    m_tblDiels->setItemDelegateForColumn(
+        3, new StackupComboDelegate([this]() { return referenceCandidates(); }, this, true, true));
+    m_tblDiels->setItemDelegateForColumn(
+        4, fixed({QStringLiteral("Top"), QStringLiteral("Bottom")}, false, true));
+
+    // Layers.Type / Material / Reference / Ref.Edge
+    m_tblLayers->setItemDelegateForColumn(
+        1, fixed({QStringLiteral("conductor"), QStringLiteral("via"),
+                  QStringLiteral("dielectric")}, true, false));
+    if (auto *h = m_tblLayers->horizontalHeaderItem(1)) {
+        h->setToolTip(tr("Layer geometry role: conductor / via / dielectric.\n"
+                         "This is where vias are marked — not in Materials."));
+    }
+    m_tblLayers->setItemDelegateForColumn(
+        2, new StackupComboDelegate([this]() { return materialNames(); }, this, true, false));
+    m_tblLayers->setItemDelegateForColumn(
+        6, new StackupComboDelegate([this]() { return referenceCandidates(); }, this, true, true));
+    m_tblLayers->setItemDelegateForColumn(
+        7, fixed({QStringLiteral("Top"), QStringLiteral("Bottom")}, false, true));
+
+    // Derived.Operation
+    m_tblDerived->setItemDelegateForColumn(
+        2, fixed({QStringLiteral("AND"), QStringLiteral("OR"), QStringLiteral("XOR"),
+                  QStringLiteral("NOT"), QStringLiteral("SIZE")}, false, false));
+
+    // Single-click opens combo editors only (not while rebuilding rows)
+    auto openComboOnClick = [](QTableWidget *table, const QSet<int> &comboCols) {
+        QObject::connect(table, &QTableWidget::clicked, table,
+                         [table, comboCols](const QModelIndex &idx) {
+                             if (!idx.isValid() || !comboCols.contains(idx.column()))
+                                 return;
+                             table->edit(idx);
+                         });
+    };
+    openComboOnClick(m_tblVars, {2});
+    openComboOnClick(m_tblMats, {1});
+    openComboOnClick(m_tblDiels, {1, 3, 4});
+    openComboOnClick(m_tblLayers, {1, 2, 6, 7});
+    openComboOnClick(m_tblDerived, {2});
 }
 
 QTableWidget *StackupEditor::currentTable() const
@@ -512,6 +758,18 @@ void StackupEditor::rebuildTablesFromModel()
 {
     m_blockChangeSignals = true;
 
+    const QList<QTableWidget *> tables = {
+        m_tblVars, m_tblMats, m_tblDiels, m_tblLayers, m_tblDerived, m_tblTables
+    };
+    QVector<QAbstractItemView::EditTriggers> savedTriggers;
+    savedTriggers.reserve(tables.size());
+    for (QTableWidget *t : tables) {
+        savedTriggers.append(t->editTriggers());
+        t->setEditTriggers(QAbstractItemView::NoEditTriggers);
+        t->clearSelection();
+        t->setCurrentCell(-1, -1);
+    }
+
     m_tblVars->setRowCount(0);
     for (const StackupVariable &v : m_substrate.variables()) {
         const int r = m_tblVars->rowCount();
@@ -529,9 +787,15 @@ void StackupEditor::rebuildTablesFromModel()
         m_tblMats->insertRow(r);
         setItem(m_tblMats, r, 0, m.name());
         setItem(m_tblMats, r, 1, m.type());
-        setItem(m_tblMats, r, 2, m.permittivityRaw());
-        setItem(m_tblMats, r, 3, m.lossTangentRaw());
-        setItem(m_tblMats, r, 4, m.conductivityRaw());
+        setItem(m_tblMats, r, 2, m.permittivityRaw().isEmpty() && m.permittivity() != 0.0
+                                      ? QString::number(m.permittivity())
+                                      : m.permittivityRaw());
+        setItem(m_tblMats, r, 3, m.lossTangentRaw().isEmpty() && m.lossTangent() != 0.0
+                                      ? QString::number(m.lossTangent())
+                                      : m.lossTangentRaw());
+        setItem(m_tblMats, r, 4, m.conductivityRaw().isEmpty() && m.conductivity() != 0.0
+                                      ? QString::number(m.conductivity())
+                                      : m.conductivityRaw());
         setItem(m_tblMats, r, 5, m.rsRaw());
         setItem(m_tblMats, r, 6, m.thermalConductivityRaw());
         setItem(m_tblMats, r, 7, m.thermalConductivityTable());
@@ -574,8 +838,10 @@ void StackupEditor::rebuildTablesFromModel()
         setItem(m_tblLayers, r, 1, l.type());
         setItem(m_tblLayers, r, 2, l.material());
         setItem(m_tblLayers, r, 3, QString::number(l.layerNumber()));
-        setItem(m_tblLayers, r, 4, l.zminRaw());
-        setItem(m_tblLayers, r, 5, l.zmaxRaw());
+        setItem(m_tblLayers, r, 4, l.zminRaw().isEmpty() ? QString::number(l.zmin(), 'f', 4)
+                                                         : l.zminRaw());
+        setItem(m_tblLayers, r, 5, l.zmaxRaw().isEmpty() ? QString::number(l.zmax(), 'f', 4)
+                                                         : l.zmaxRaw());
         setItem(m_tblLayers, r, 6, l.reference());
         setItem(m_tblLayers, r, 7, l.referenceEdge());
         setItem(m_tblLayers, r, 8, QString::number(l.zmin(), 'f', 4), true);
@@ -615,6 +881,9 @@ void StackupEditor::rebuildTablesFromModel()
             setItem(m_tblTables, r, 2, p.valueRaw);
         }
     }
+
+    for (int i = 0; i < tables.size(); ++i)
+        tables[i]->setEditTriggers(savedTriggers[i]);
 
     m_blockChangeSignals = false;
 }

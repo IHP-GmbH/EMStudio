@@ -12,6 +12,7 @@
 
 #include <QDialog>
 #include <QStyledItemDelegate>
+#include <functional>
 
 class QTabWidget;
 class QTableWidget;
@@ -42,6 +43,32 @@ public:
     static QColor parseColor(const QString &raw);
     static QIcon  colorIcon(const QColor &c);
     static bool   isExpression(const QString &raw);
+};
+
+/*!*******************************************************************************************************************
+ * \brief Combo-box editor for columns with a fixed or dynamic choice list (Volker-style).
+ **********************************************************************************************************************/
+class StackupComboDelegate : public QStyledItemDelegate
+{
+    Q_OBJECT
+public:
+    using ItemsFn = std::function<QStringList()>;
+
+    explicit StackupComboDelegate(ItemsFn itemsFn, QObject *parent = nullptr,
+                                  bool editable = true, bool allowEmpty = true);
+
+    QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                          const QModelIndex &index) const override;
+    void setEditorData(QWidget *editor, const QModelIndex &index) const override;
+    void setModelData(QWidget *editor, QAbstractItemModel *model,
+                      const QModelIndex &index) const override;
+    void updateEditorGeometry(QWidget *editor, const QStyleOptionViewItem &option,
+                              const QModelIndex &index) const override;
+
+private:
+    ItemsFn m_itemsFn;
+    bool m_editable = true;
+    bool m_allowEmpty = true;
 };
 
 class StackupEditor : public QDialog
@@ -101,6 +128,12 @@ private:
     QString resolveHostPython() const;
     bool runAdsConvert(const QStringList &args, QString *stdoutText, QString *stderrText);
     bool loadImportedXml(const QString &xmlPath, const QString &sourceLabel);
+    QStringList materialNames() const;
+    QStringList dielectricNames() const;
+    QStringList layerNames() const;
+    QStringList referenceCandidates() const;
+    void installComboDelegates();
+    void applyUniformFonts();
 
     QTabWidget *m_tabs = nullptr;
     QTableWidget *m_tblVars = nullptr;

@@ -80,6 +80,7 @@
 #include <QApplication>
 #include <QSplashScreen>
 #include <QCoreApplication>
+#include <QGuiApplication>
 
 /*!*******************************************************************************************************************
  * \brief Prints usage information for the EMStudio application.
@@ -112,6 +113,15 @@ void printHelp()
  **********************************************************************************************************************/
 int main(int argc, char *argv[])
 {
+#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
+    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+#endif
+#if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
+    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+#endif
+
     QApplication a(argc, argv);
 
     QCoreApplication::setApplicationName("EMStudio");

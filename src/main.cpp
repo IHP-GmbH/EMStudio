@@ -81,6 +81,52 @@
 #include <QSplashScreen>
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QFont>
+#include <QFontInfo>
+#include <QScreen>
+#include <cstdint>
+
+#if defined(Q_OS_WIN)
+#  include <windows.h>
+#endif
+
+namespace {
+
+#if defined(Q_OS_WIN)
+/*! Prefer Per-Monitor V2 before QApplication so Qt High-DPI and the native
+ *  menu bar agree on the Windows display scale (e.g. 150% on 4K). */
+void enableWindowsPerMonitorDpiV2()
+{
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (!user32)
+        return;
+    // MinGW headers may lack DPI_AWARENESS_CONTEXT; use void* and ordinal -4 (V2).
+    typedef BOOL (WINAPI *SetCtxFn)(void *);
+    SetCtxFn setCtx = reinterpret_cast<SetCtxFn>(
+        GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
+    if (setCtx)
+        setCtx(reinterpret_cast<void *>(static_cast<intptr_t>(-4)));
+}
+#endif
+
+/*! Normalize the application font to a point size (no locked pixelSize).
+ *  On Windows, a pixel-sized system font + incomplete HiDPI awareness makes
+ *  Qt widgets stay ~100% while the native menu bar follows Windows scaling. */
+void normalizeApplicationFontForHighDpi()
+{
+    const QFont appFont = QApplication::font();
+    const QFontInfo fi(appFont);
+    QFont normalized(fi.family().isEmpty() ? appFont.family() : fi.family());
+    normalized.setStyleHint(QFont::SansSerif);
+    const qreal pt = fi.pointSizeF();
+    if (pt > 0.0)
+        normalized.setPointSizeF(pt);
+    else
+        normalized.setPointSize(9);
+    QApplication::setFont(normalized);
+}
+
+} // namespace
 
 /*!*******************************************************************************************************************
  * \brief Prints usage information for the EMStudio application.
@@ -113,9 +159,18 @@ void printHelp()
  **********************************************************************************************************************/
 int main(int argc, char *argv[])
 {
+#if defined(Q_OS_WIN)
+    enableWindowsPerMonitorDpiV2();
+#endif
+
+    // Qt5: opt into automatic High-DPI scaling (Qt6 enables this by default).
+    // Must be set before QApplication. PassThrough keeps fractional scales
+    // such as Windows 125%/150% instead of rounding to 1x/2x.
 #if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
     QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+    if (!qEnvironmentVariableIsSet("QT_ENABLE_HIGHDPI_SCALING"))
+        qputenv("QT_ENABLE_HIGHDPI_SCALING", "1");
 #endif
 #if QT_VERSION >= QT_VERSION_CHECK(5, 14, 0)
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
@@ -123,9 +178,18 @@ int main(int argc, char *argv[])
 #endif
 
     QApplication a(argc, argv);
+    normalizeApplicationFontForHighDpi();
 
     QCoreApplication::setApplicationName("EMStudio");
     QCoreApplication::setApplicationVersion(QStringLiteral(EMSTUDIO_VERSION_STR));
+
+#ifndef QT_NO_DEBUG_OUTPUT
+    if (QScreen *screen = QGuiApplication::primaryScreen()) {
+        qDebug() << "HiDPI: logicalDpi" << screen->logicalDotsPerInch()
+                 << "devicePixelRatio" << screen->devicePixelRatio()
+                 << "appFontPt" << QApplication::font().pointSizeF();
+    }
+#endif
 
     QString gdsFile;
     QString topCell;

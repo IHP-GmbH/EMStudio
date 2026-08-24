@@ -42,7 +42,7 @@
 #include <QProcessEnvironment>
 #include <QApplication>
 #include <QFontDatabase>
-#include <QHeaderView>
+#include <QFontInfo>
 
 #include "extension/variantmanager.h"
 #include "extension/variantfactory.h"
@@ -260,18 +260,13 @@ MainWindow::MainWindow(QWidget *parent)
 
     updateEditStackupButtonState();
 
+    // Fixed-pitch log font, sized in points so HiDPI scaling still applies.
     QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-    mono.setPointSizeF(QApplication::font().pointSizeF());
+    const qreal pt = QFontInfo(QApplication::font()).pointSizeF();
+    if (pt > 0.0)
+        mono.setPointSizeF(pt);
+    mono.setPixelSize(-1);
     m_ui->editSimulationLog->setFont(mono);
-
-    if (m_ui->lstRunControl)
-        m_ui->lstRunControl->setFont(QApplication::font());
-    if (m_ui->tblStackupOverrides) {
-        const QFont f = QApplication::font();
-        m_ui->tblStackupOverrides->setFont(f);
-        m_ui->tblStackupOverrides->horizontalHeader()->setFont(f);
-        m_ui->tblStackupOverrides->verticalHeader()->setFont(f);
-    }
 
     //hide python code button and text line
     m_ui->lblRunPythonScript->setVisible(false);

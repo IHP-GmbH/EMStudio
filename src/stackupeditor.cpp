@@ -67,10 +67,7 @@ QTableWidget *makeTable(const QStringList &headers)
     t->setEditTriggers(QAbstractItemView::DoubleClicked
                        | QAbstractItemView::EditKeyPressed
                        | QAbstractItemView::AnyKeyPressed);
-    const QFont f = QApplication::font();
-    t->setFont(f);
-    t->horizontalHeader()->setFont(f);
-    t->verticalHeader()->setFont(f);
+    // Inherit application font (HiDPI-aware). Do not force setFont() here.
     return t;
 }
 
@@ -249,7 +246,6 @@ QWidget *StackupComboDelegate::createEditor(QWidget *parent, const QStyleOptionV
     auto *cb = new QComboBox(parent);
     cb->setEditable(m_editable);
     cb->setInsertPolicy(QComboBox::NoInsert);
-    cb->setFont(QApplication::font());
     if (m_allowEmpty)
         cb->addItem(QString());
     if (m_itemsFn) {
@@ -495,25 +491,10 @@ Substrate StackupEditor::substrate() const
 
 void StackupEditor::applyUniformFonts()
 {
-    // Keep dialog chrome and tables on the same application font (helps 4K / HiDPI).
-    const QFont f = QApplication::font();
-    setFont(f);
-    if (m_edDescription)
-        m_edDescription->setFont(f);
-    if (m_lblSchema)
-        m_lblSchema->setFont(f);
-    if (m_tabs)
-        m_tabs->setFont(f);
-    const QList<QTableWidget *> tables = {
-        m_tblVars, m_tblMats, m_tblDiels, m_tblLayers, m_tblDerived, m_tblTables
-    };
-    for (QTableWidget *t : tables) {
-        if (!t)
-            continue;
-        t->setFont(f);
-        t->horizontalHeader()->setFont(f);
-        t->verticalHeader()->setFont(f);
-    }
+    // Intentionally empty: widgets inherit the HiDPI-normalized application
+    // font from main(). Forcing QApplication::font() onto each control can
+    // lock a pixel size and leave the UI at ~100% while the native menu
+    // follows Windows display scaling (e.g. 150% on 4K).
 }
 
 QStringList StackupEditor::materialNames() const

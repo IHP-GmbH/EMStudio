@@ -45,6 +45,171 @@ jobs:
             build/**/EMStudio
           if-no-files-found: warn
 
+  # Explicit Ubuntu 24.04 portable-ish bundle (Qt runtime shipped in the artifact).
+  build-ubuntu24:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'gcc_64'
+
+      - name: Install build / smoke-test deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libgl1-mesa-dev \
+            libgl1 \
+            libegl1 \
+            libdbus-1-3 \
+            libfontconfig1 \
+            libfreetype6 \
+            libxkbcommon0 \
+            libxkbcommon-x11-0 \
+            libxcb1 \
+            libxcb-cursor0 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-render0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-shm0 \
+            libxcb-sync1 \
+            libxcb-xfixes0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1
+
+      - name: Configure (qmake)
+        run: |
+          mkdir -p build
+          cd build
+          qmake CONFIG+=release ../EMStudio.pro
+
+      - name: Build
+        run: |
+          cd build
+          make -j"$(nproc)"
+
+      - name: Stage Ubuntu 24 bundle with Qt runtime
+        run: |
+          set -euxo pipefail
+          test -x build/EMStudio
+
+          QT_PREFIX="$(qmake -query QT_INSTALL_PREFIX)"
+          QT_LIBS="$(qmake -query QT_INSTALL_LIBS)"
+          QT_PLUGINS="$(qmake -query QT_INSTALL_PLUGINS)"
+
+          rm -rf dist
+          mkdir -p dist/lib dist/plugins
+          cp -a build/EMStudio dist/
+          cp -a scripts dist/scripts
+          cp -a keywords dist/keywords
+          mkdir -p dist/icons
+          cp -a icons/logo.png dist/icons/ || true
+          cp -a icons/logo.png dist/logo.png || true
+
+          # Qt shared libraries + ICU from the aqt install (not assumed on the target host).
+          cp -a "${QT_LIBS}"/libQt5*.so* dist/lib/
+          cp -a "${QT_LIBS}"/libicu*.so* dist/lib/ 2>/dev/null || true
+
+          # Plugins loaded at runtime (not visible via ldd of the main binary).
+          for plugindir in platforms imageformats xcbglintegrations platforminputcontexts iconengines styles; do
+            if [[ -d "${QT_PLUGINS}/${plugindir}" ]]; then
+              cp -a "${QT_PLUGINS}/${plugindir}" dist/plugins/
+            fi
+          done
+
+          # Pull Qt-prefix deps of plugins into dist/lib as well.
+          while IFS= read -r -d '' plug; do
+            while IFS= read -r lib; do
+              [[ -n "${lib}" && -f "${lib}" ]] || continue
+              case "${lib}" in
+                "${QT_PREFIX}"/*|"${QT_LIBS}"/*)
+                  cp -an "${lib}" dist/lib/
+                  ;;
+              esac
+            done < <(ldd "${plug}" | awk '/=>/{print $3}')
+          done < <(find dist/plugins -type f -name '*.so' -print0)
+
+          # Let Qt find plugins relative to the executable.
+          cat > dist/qt.conf <<'EOF'
+          [Paths]
+          Prefix = .
+          Libraries = lib
+          Plugins = plugins
+          EOF
+
+          # Wrapper so users do not need to set LD_LIBRARY_PATH / QT_PLUGIN_PATH.
+          cat > dist/EMStudio.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export LD_LIBRARY_PATH="${DIR}/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+          export QT_PLUGIN_PATH="${DIR}/plugins"
+          export QT_QPA_PLATFORM_PLUGIN_PATH="${DIR}/plugins/platforms"
+          exec "${DIR}/EMStudio" "$@"
+          EOF
+          # Strip leading spaces that YAML indentation can leave in the heredoc body.
+          sed -i 's/^[[:space:]]*//' dist/qt.conf dist/EMStudio.sh
+          chmod +x dist/EMStudio.sh dist/EMStudio
+
+          printf '%s\n' \
+            'EMStudio Linux (Ubuntu 24.04) CI build' \
+            '' \
+            'Qt 5.15 runtime is bundled under ./lib and ./plugins.' \
+            'On a normal Ubuntu 24 desktop (X11/Wayland + OpenGL), run:' \
+            '  ./EMStudio.sh' \
+            '' \
+            'Keep scripts/ and keywords/ next to the binary.' \
+            'System packages still needed (usually already present):' \
+            '  libxkbcommon-x11-0 libxcb-cursor0 libgl1 libegl1 libdbus-1-3 fontconfig' \
+            > dist/README.txt
+
+          echo "=== staged bundle ==="
+          ls -la dist
+          echo "=== Qt libs count ==="
+          ls dist/lib | wc -l
+          echo "=== ldd (with bundled libs) ==="
+          LD_LIBRARY_PATH="dist/lib" ldd dist/EMStudio | tee /tmp/emstudio-ldd.txt
+          if grep -E 'not found' /tmp/emstudio-ldd.txt | grep -E 'Qt5|icu'; then
+            echo "Missing Qt/ICU libraries in the bundle" >&2
+            exit 1
+          fi
+
+      - name: Smoke-test bundled binary (headless)
+        run: |
+          set -euxo pipefail
+          # Start briefly under xvfb; exit code 0 or timeout both mean libs/plugins loaded.
+          # Qt apps that open the main window may keep running — kill after a few seconds.
+          if ! timeout 8s xvfb-run -a ./dist/EMStudio.sh -platform xcb; then
+            status=$?
+            # 124 = timeout (app stayed up) → OK for smoke test
+            if [[ "${status}" -ne 124 ]]; then
+              echo "Smoke test failed with exit ${status}" >&2
+              exit "${status}"
+            fi
+          fi
+
+      - name: Upload Ubuntu 24 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: emstudio-linux-ubuntu24
+          path: dist
+          if-no-files-found: error
+          retention-days: 14
+
   tests-linux:
     runs-on: ubuntu-latest
 

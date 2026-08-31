@@ -45,24 +45,42 @@ It provides an integrated workflow for:
 
 # Installation
 
-## Pre-built Installer (Windows)
-
-You can download a pre-built Windows installation if you are logged into your GitHub account.
-Without login, downloading the installer is not possible!
+You can download a ready-to-run build if you are logged into your GitHub account.
+Without login, downloading is not possible!
 
 - Go to Actions (In the Bar next to Code, Issues, Pull requests, etc.)
 - Click on the latest run with a green checkmark
-- Scroll to the bottom of the page
-- Press the download button on the right next to emstudio-windows-installer
+- Scroll to the bottom of the page ("Artifacts")
+- Download the build for your platform (see below)
+
+## Pre-built Installer (Windows)
+
+Download the artifact named **emstudio-windows-installer** and run the installer it contains.
 
 <img src="./doc/png/prebuilt_win.png" alt="installer" width="700">
 
+---
+
+## Pre-built Bundle (Linux)
+
+Download the artifact named **emstudio-linux-ubuntu24**. It's a self-contained bundle — no need to install Qt or any development tools.
+
+1. Unzip the downloaded artifact.
+2. Run it with:
+
+```bash
+./EMStudio.sh
+```
+
+This works on a normal Ubuntu desktop session (X11 or Wayland, with the usual graphics drivers). If it doesn't start on a minimal/server system, you may be missing one of these common packages: `libxkbcommon-x11-0 libxcb-cursor0 libgl1 libegl1 libdbus-1-3 fontconfig`.
 
 ---
 
-## Build from source (Linux)
+## Building from source (developers only)
 
-Linux users typically build EMStudio from source:
+Most users should use the pre-built downloads above. If you want to build EMStudio yourself:
+
+**Linux:**
 
 ```bash
 cd /path/to/EMStudio
@@ -71,14 +89,14 @@ make -j$(nproc)
 ./EMStudio
 ```
 
----
+If `./EMStudio` fails to start with a "Qt platform plugin" error, use the pre-built Linux bundle above instead, or see [issue #19](https://github.com/IHP-GmbH/EMStudio/issues/19) for a workaround.
 
-## Build from source (Windows / MSVC)
+**Windows (MinGW, matching our CI build):**
 
 ```cmd
 cd \path\to\EMStudio
 qmake EMStudio.pro
-nmake 
+mingw32-make
 .\release\EMStudio.exe
 ```
 
@@ -160,7 +178,7 @@ scripts/klEmsDriver.py
 ```
 
 3. Name it e.g. **EMStudio via KLayout**  
-4. *(Optional)* Change the icon: `icons/logo.ico`
+4. *(Optional)* Change the icon: `installer/emstudio.ico`
 
 # KLayout Integration (method 2)
 

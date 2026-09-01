@@ -16,6 +16,77 @@
 
 #include <algorithm>
 
+namespace {
+
+const QString kGeneratorCommentPrefix =
+    QStringLiteral("Created/modified using the XML Stackup Editor in");
+const QString kLegacyGeneratorPrefix =
+    QStringLiteral("Created/modified using the EMStudio Stackup Editor");
+const QString kLegacyDescriptionPrefix = QStringLiteral("File description:");
+const QString kHeaderSeparator = QString(60, QLatin1Char('='));
+
+QString sanitizeXmlCommentText(QString text)
+{
+    text.replace(QStringLiteral("--"), QStringLiteral("- -"));
+    while (text.endsWith(QLatin1Char('-')))
+        text.chop(1);
+    return text;
+}
+
+QString extractDescriptionFromHeaderComments(const QStringList &comments)
+{
+    if (comments.size() >= 2) {
+        const QString first = comments.at(0).trimmed();
+        if (first.startsWith(kGeneratorCommentPrefix, Qt::CaseInsensitive)
+            || first.startsWith(kLegacyGeneratorPrefix, Qt::CaseInsensitive)) {
+            if (comments.at(1).trimmed() == kHeaderSeparator) {
+                QStringList lines;
+                int i = 2;
+                for (; i < comments.size(); ++i) {
+                    const QString line = comments.at(i).trimmed();
+                    if (line == kHeaderSeparator)
+                        break;
+                    lines << line;
+                }
+                if (i < comments.size())
+                    return lines.join(QLatin1Char('\n'));
+            }
+
+            // Legacy setupEM format: generator + separator + single "File description:" comment.
+            if (comments.size() >= 3 && comments.at(2).trimmed().startsWith(
+                    kLegacyDescriptionPrefix, Qt::CaseInsensitive)) {
+                return comments.at(2).trimmed().mid(kLegacyDescriptionPrefix.size()).trimmed();
+            }
+        }
+    }
+
+    for (const QString &comment : comments) {
+        const QString text = comment.trimmed();
+        if (text.startsWith(kLegacyDescriptionPrefix, Qt::CaseInsensitive))
+            return text.mid(kLegacyDescriptionPrefix.size()).trimmed();
+    }
+
+    return {};
+}
+
+void writeStackupHeaderComments(QXmlStreamWriter &xml, const QString &description)
+{
+    xml.writeComment(QStringLiteral(" %1 EMStudio ")
+                         .arg(sanitizeXmlCommentText(kGeneratorCommentPrefix)));
+
+    const QString trimmed = description.trimmed();
+    if (trimmed.isEmpty())
+        return;
+
+    xml.writeComment(QStringLiteral(" %1 ").arg(kHeaderSeparator));
+    const QStringList lines = trimmed.split(QLatin1Char('\n'), Qt::KeepEmptyParts);
+    for (const QString &line : lines)
+        xml.writeComment(QStringLiteral(" %1 ").arg(sanitizeXmlCommentText(line)));
+    xml.writeComment(QStringLiteral(" %1 ").arg(kHeaderSeparator));
+}
+
+} // namespace
+
 Substrate::Substrate() = default;
 
 bool Substrate::parseXmlFile(const QString &filePath)
@@ -51,17 +122,20 @@ bool Substrate::parseXmlFile(const QString &filePath)
     };
 
     ThermalTable *currentTable = nullptr;
+    bool inStackup = false;
+    bool collectingStackupHeader = false;
+    QStringList stackupHeaderComments;
 
     while (!xml.atEnd() && !xml.hasError()) {
         const auto token = xml.readNext();
 
         if (token == QXmlStreamReader::Comment) {
             const QString c = xml.text().toString().trimmed();
-            if (c.startsWith(QStringLiteral("File description:"), Qt::CaseInsensitive)) {
-                m_description = c.mid(QStringLiteral("File description:").size()).trimmed();
+            if (collectingStackupHeader) {
+                stackupHeaderComments.append(c);
             } else if (m_description.isEmpty()
-                       && c.contains(QStringLiteral("File description"), Qt::CaseInsensitive)) {
-                m_description = c;
+                       && c.startsWith(kLegacyDescriptionPrefix, Qt::CaseInsensitive)) {
+                m_description = c.mid(kLegacyDescriptionPrefix.size()).trimmed();
             }
             continue;
         }
@@ -73,8 +147,19 @@ bool Substrate::parseXmlFile(const QString &filePath)
         const auto attrs = xml.attributes();
 
         if (name == QLatin1String("Stackup")) {
+            inStackup = true;
+            collectingStackupHeader = true;
+            stackupHeaderComments.clear();
             m_schemaVersion = attrS(attrs, "schemaVersion");
-        } else if (name == QLatin1String("ELayers")) {
+            continue;
+        }
+
+        if (collectingStackupHeader && inStackup) {
+            m_description = extractDescriptionFromHeaderComments(stackupHeaderComments);
+            collectingStackupHeader = false;
+        }
+
+        if (name == QLatin1String("ELayers")) {
             m_lengthUnit = attrS(attrs, "LengthUnit", QStringLiteral("um"));
         } else if (name == QLatin1String("Substrate")) {
             bool ok = false;
@@ -154,6 +239,9 @@ bool Substrate::parseXmlFile(const QString &filePath)
 
     file.close();
 
+    if (collectingStackupHeader && m_description.isEmpty())
+        m_description = extractDescriptionFromHeaderComments(stackupHeaderComments);
+
     if (xml.hasError()) {
         qWarning() << "XML parsing error:" << xml.errorString();
         return false;
@@ -183,10 +271,7 @@ bool Substrate::writeXmlFile(const QString &filePath) const
     xml.writeStartElement(QStringLiteral("Stackup"));
     xml.writeAttribute(QStringLiteral("schemaVersion"), schema);
 
-    xml.writeComment(QStringLiteral(" Created/modified using the EMStudio Stackup Editor "));
-    if (!m_description.trimmed().isEmpty()) {
-        xml.writeComment(QStringLiteral(" File description: %1 ").arg(m_description.trimmed()));
-    }
+    writeStackupHeaderComments(xml, m_description);
 
     if (!m_variables.isEmpty()) {
         xml.writeStartElement(QStringLiteral("Variables"));

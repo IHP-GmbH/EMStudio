@@ -39,6 +39,17 @@ endif()
 
 find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Xml)
 
+# Fallback plugin path for ensureQtPluginPathFallback() in main.cpp: the
+# plugins directory of the Qt used for this build, baked in as a fallback
+# for when qt.conf's "Plugins = plugins" (relative, for bundled deploys)
+# doesn't resolve to an existing folder, e.g. a plain local build.
+get_target_property(EMSTUDIO_QT_QMAKE_EXECUTABLE Qt5::qmake IMPORTED_LOCATION)
+execute_process(
+    COMMAND "${EMSTUDIO_QT_QMAKE_EXECUTABLE}" -query QT_INSTALL_PLUGINS
+    OUTPUT_VARIABLE EMSTUDIO_QT_PLUGINS_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+
 # -----------------------------------------------------------------------------
 # Versioning (как в .pro)
 # -----------------------------------------------------------------------------
@@ -215,6 +226,7 @@ target_compile_definitions(EMStudio PRIVATE
     EMSTUDIO_VERSION_STR="${EMSTUDIO_VERSION}"
     EMSTUDIO_MAJOR=${EMSTUDIO_MAJOR}
     EMSTUDIO_GIT_DATE_STR="${EMSTUDIO_GIT_DATE}"
+    EMSTUDIO_BUILD_QT_PLUGINS_PATH="${EMSTUDIO_QT_PLUGINS_DIR}"
 )
 
 target_link_libraries(EMStudio PRIVATE

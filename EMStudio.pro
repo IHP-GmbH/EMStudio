@@ -121,3 +121,10 @@ DEFINES += EMSTUDIO_MAJOR=$$EMSTUDIO_MAJOR
 
 EMSTUDIO_GIT_DATE = $$system(git log -1 --format=%cd --date=format:%Y-%m-%dT%H:%M:%S)
 DEFINES += EMSTUDIO_GIT_DATE_STR=\\\"$${EMSTUDIO_GIT_DATE}\\\"
+
+# Fallback plugin path for ensureQtPluginPathFallback() in main.cpp: the
+# plugins directory of the Qt used for this build, baked in as a fallback
+# for when qt.conf's "Plugins = plugins" (relative, for bundled deploys)
+# doesn't resolve to an existing folder, e.g. a plain local build.
+EMSTUDIO_QT_PLUGINS_DIR = $$[QT_INSTALL_PLUGINS]
+DEFINES += EMSTUDIO_BUILD_QT_PLUGINS_PATH=\\\"$${EMSTUDIO_QT_PLUGINS_DIR}\\\"

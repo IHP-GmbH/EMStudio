@@ -74,6 +74,7 @@
 
 #include <QTimer>
 #include <QDebug>
+#include <QDir>
 #include <QPixmap>
 #include <QFileInfo>
 #include <QMessageBox>
@@ -88,9 +89,35 @@
 
 #if defined(Q_OS_WIN)
 #  include <windows.h>
+#elif defined(Q_OS_LINUX)
+#  include <unistd.h>
 #endif
 
 namespace {
+
+/*! Path of the running executable's own directory, determined without
+ *  relying on QCoreApplication (which isn't constructed yet). Needed because
+ *  QLibraryInfo only resolves qt.conf's paths relative to the executable
+ *  once an application instance exists - too late to fix up plugin loading,
+ *  which happens inside the QApplication constructor itself. */
+QString executableDirectory()
+{
+#if defined(Q_OS_WIN)
+    wchar_t buffer[MAX_PATH];
+    const DWORD len = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    if (len == 0 || len == MAX_PATH)
+        return QString();
+    return QFileInfo(QString::fromWCharArray(buffer, len)).absolutePath();
+#elif defined(Q_OS_LINUX)
+    char buffer[4096];
+    const ssize_t len = readlink("/proc/self/exe", buffer, sizeof(buffer) - 1);
+    if (len <= 0)
+        return QString();
+    return QFileInfo(QString::fromLocal8Bit(buffer, static_cast<int>(len))).absolutePath();
+#else
+    return QString();
+#endif
+}
 
 #if defined(Q_OS_WIN)
 /*! Prefer Per-Monitor V2 before QApplication so Qt High-DPI and the native
@@ -124,6 +151,45 @@ void normalizeApplicationFontForHighDpi()
     else
         normalized.setPointSize(9);
     QApplication::setFont(normalized);
+}
+
+/*! qt.conf ships a relative "Plugins = plugins" entry for bundled/deployed
+ *  builds (windeployqt, the CI Linux bundle), where that folder is placed
+ *  next to the executable. A plain local build has no such folder, so Qt
+ *  would resolve the platform plugin search path to a location that doesn't
+ *  exist and refuse to start ("Could not find the Qt platform plugin").
+ *  Detect that case and fall back to the plugin directory of the Qt this
+ *  binary was built against. Must run before QApplication is constructed,
+ *  since platform plugin loading happens inside its constructor - too late
+ *  to query QLibraryInfo, which only resolves qt.conf relative to the
+ *  executable once an application instance exists. */
+void ensureQtPluginPathFallback()
+{
+    if (qEnvironmentVariableIsSet("QT_PLUGIN_PATH")
+        || qEnvironmentVariableIsSet("QT_QPA_PLATFORM_PLUGIN_PATH")) {
+        return; // already configured explicitly, don't override
+    }
+
+    const QString exeDir = executableDirectory();
+    if (exeDir.isEmpty())
+        return; // couldn't determine reliably, leave Qt's own resolution alone
+
+    // Mirrors qt.conf's "[Paths] Plugins = plugins" - keep in sync if that changes.
+    if (QDir(exeDir + QLatin1String("/plugins")).exists())
+        return; // bundled/deployed layout is present, nothing to do
+
+#ifdef EMSTUDIO_BUILD_QT_PLUGINS_PATH
+    const QString fallback = QStringLiteral(EMSTUDIO_BUILD_QT_PLUGINS_PATH);
+    if (QDir(fallback).exists()) {
+        // QCoreApplication::addLibraryPath() is too late here: once qt.conf
+        // declares a Plugins entry, Qt's platform-plugin loader (which runs
+        // inside the QApplication constructor) resolves exclusively through
+        // qt.conf and ignores paths added beforehand. Environment variables
+        // are read directly by that loader, so they reliably take effect.
+        qputenv("QT_PLUGIN_PATH", fallback.toUtf8());
+        qputenv("QT_QPA_PLATFORM_PLUGIN_PATH", (fallback + QLatin1String("/platforms")).toUtf8());
+    }
+#endif
 }
 
 } // namespace
@@ -176,6 +242,8 @@ int main(int argc, char *argv[])
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
 #endif
+
+    ensureQtPluginPathFallback();
 
     QApplication a(argc, argv);
     normalizeApplicationFontForHighDpi();

@@ -89,8 +89,6 @@ make -j$(nproc)
 ./EMStudio
 ```
 
-If `./EMStudio` fails to start with a "Qt platform plugin" error, use the pre-built Linux bundle above instead, or see [issue #19](https://github.com/IHP-GmbH/EMStudio/issues/19) for a workaround.
-
 **Windows (MinGW, matching our CI build):**
 
 ```cmd

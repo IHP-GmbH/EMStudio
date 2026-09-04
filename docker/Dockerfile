@@ -18,6 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools \
     qttools5-dev qttools5-dev-tools \
     libqt5svg5-dev \
+    libqt5charts5-dev \
     libqt5opengl5-dev \
     libx11-6 libx11-xcb1 libxcb1 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
     libxcb-render-util0 libxcb-render0 libxcb-shape0 libxcb-shm0 libxcb-sync1 \
@@ -30,18 +31,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 # ----------------------------
-# Python venv + gmsh + deps
+# Python venv + gds2palace (PyPI) + Touchstone deps
+# Matches Volker setupEM / gds2palace (PyPI floors, Sep 2026).
+# See repo-root requirements-python.txt for the same list for host/WSL venvs.
 # ----------------------------
 RUN python3 -m venv /opt/venv \
- && source /opt/venv/bin/activate \
+ && . /opt/venv/bin/activate \
  && pip install --upgrade pip \
- && pip install gmsh gdspy scikit-rf
-
-# ----------------------------
-# gds2palace (not a pip package) -> clone + add to PYTHONPATH
-# ----------------------------
-RUN git clone https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2.git /opt/gds2palace_ihp_sg13g2
-ENV PYTHONPATH="/opt/gds2palace_ihp_sg13g2:${PYTHONPATH:-}"
+ && pip install -U \
+      "gds2palace>=0.4.1" \
+      "gdspy>1.6.0" \
+      gmsh \
+      numpy \
+      scikit-rf
 
 ENV PATH="/opt/venv/bin:/opt/emstudio/bin:/opt/openems/bin:/opt/palace/bin:${PATH}"
 ENV VIRTUAL_ENV="/opt/venv"
@@ -77,7 +79,6 @@ RUN git clone --recursive https://github.com/IHP-GmbH/EMStudio.git \
  && mkdir -p /opt/emstudio/bin \
  && cp -a EMStudio /opt/emstudio/bin/EMStudio
  
-RUN chown -R 1000:1000 /opt/gds2palace_ihp_sg13g2/workflow
 RUN chown -R 1000:1000 /tmp
 RUN mkdir -p /run/user/1000 && chown 1000:1000 /run/user/1000 && chmod 700 /run/user/1000
  

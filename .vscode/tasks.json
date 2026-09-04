@@ -25,6 +25,11 @@
             "type": "shell",
             "command": "${workspaceFolder}/build/EMStudio.exe",
             "group": "build",
+            "options": {
+                "env": {
+                    "PATH": "C:/Qt/5.15.2/mingw81_64/bin;C:/Qt/Tools/mingw810_64/bin;${env:PATH}"
+                }
+            },
             "presentation": {
                 "echo": true,
                 "reveal": "always",

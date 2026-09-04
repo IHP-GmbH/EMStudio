@@ -46,7 +46,10 @@ SOURCES += \
     $$TOP/src/stackupexpr.cpp \
     $$TOP/src/stackupeditor.cpp \
     $$TOP/src/verification.cpp \
-    $$TOP/src/xmlreader.cpp
+    $$TOP/src/xmlreader.cpp \
+    $$TOP/src/touchstone.cpp \
+    $$TOP/src/smithchartwidget.cpp \
+    $$TOP/src/resultsviewer.cpp
 
 HEADERS += \
     $$TOP/src/wslHelper.h \
@@ -79,4 +82,7 @@ HEADERS += \
     $$TOP/src/substrate.h \
     $$TOP/src/substrateview.h \
     $$TOP/src/stackupexpr.h \
-    $$TOP/src/stackupeditor.h
+    $$TOP/src/stackupeditor.h \
+    $$TOP/src/touchstone.h \
+    $$TOP/src/smithchartwidget.h \
+    $$TOP/src/resultsviewer.h

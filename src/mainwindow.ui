@@ -406,6 +406,25 @@
         </item>
        </layout>
       </widget>
+      <widget class="QWidget" name="tabResults">
+       <attribute name="title">
+        <string>Results</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="verticalLayoutResults">
+        <property name="leftMargin">
+         <number>0</number>
+        </property>
+        <property name="topMargin">
+         <number>0</number>
+        </property>
+        <property name="rightMargin">
+         <number>0</number>
+        </property>
+        <property name="bottomMargin">
+         <number>0</number>
+        </property>
+       </layout>
+      </widget>
      </widget>
     </item>
    </layout>
@@ -496,6 +515,11 @@
        <item>
         <property name="text">
          <string>Simulate</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Results</string>
         </property>
        </item>
       </widget>

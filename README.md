@@ -216,7 +216,15 @@ EM solvers installed, as described in the solver documentation. This is no diffe
 
 Note for advanced users: If you want to create simulation models in different directories, 
 and don't want to copy & paste the "modules" or "gds2palace" to each of these folders, you can also include 
-these folders in your PYTHONPATH environment variable. For gds2palace, you can also install that using "pip install gds2palace" and update using "pip install gds2palace --upgrade".
+these folders in your PYTHONPATH environment variable. Prefer installing from PyPI and keeping it current:
+
+```bash
+python -m pip install -U -r requirements-python.txt
+# or at least:
+python -m pip install -U "gds2palace>=0.4.1"
+```
+
+That pulls **gds2palace 0.4.1+** (schema 3.x stackup Variables / Reference / DerivedLayers) together with `gdspy` and `gmsh`. For Touchstone post-processing (`scripts/combine_extend_snp.py`) you also need `numpy` and `scikit-rf`. **Model Fit** on the Results tab launches [snp2le](https://github.com/iic-jku/snp2le) (`pip install snp2le`, Python ≥ 3.10). See `requirements-python.txt` for the full recommended set (aligned with Volker’s [setupEM](https://github.com/VolkerMuehlhaus/setupEM) / [gds2palace](https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2) PyPI packages).
 
 # User Interface 
 

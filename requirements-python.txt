@@ -1,0 +1,30 @@
+# Python packages for EMStudio solver workflows.
+# Aligned with Volker Muehlhaus setupEM / gds2palace (PyPI, Sep 2026).
+# Requires Python >= 3.9
+#
+# Install (host or WSL venv used by Preferences → OPENEMS_PYTHON / PALACE_PYTHON):
+#   python -m pip install -U -r requirements-python.txt
+#
+# Latest checked on PyPI:
+#   gds2palace 0.4.1  |  setupEM 0.5.1  |  gdspy 1.6.13  |  gmsh 4.15.x
+#   scikit-rf 2.1.0   |  numpy 2.x
+
+# --- Palace / Elmer (gds2palace) ---------------------------------------------
+# Pulls gdspy and gmsh as dependencies; pin floor matches Volker's pyproject.
+gds2palace>=0.4.1
+gdspy>1.6.0
+gmsh
+
+# --- Post-processing (scripts/combine_extend_snp.py, Touchstone) -------------
+numpy
+scikit-rf
+
+# --- Model Fit (Results → Model Fit… → snp2le GUI) --------------------------
+# External tool: https://github.com/iic-jku/snp2le  (Python ≥ 3.10, PySide6)
+snp2le>=0.1.9
+
+# --- Optional: Volker's GUI helpers (not required by EMStudio itself) -------
+# setupEM>=0.5.1          # stackupEditor / resultViewer / setupThermal (PySide6)
+# matplotlib              # only if you use setupEM Result Viewer externally
+# scipy
+# requests

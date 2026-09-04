@@ -38,6 +38,7 @@ class QComboBox;
 class QtProperty;
 class QListWidgetItem;
 class QtVariantProperty;
+class ResultsViewer;
 class QtTreePropertyBrowser;
 class QtVariantEditorFactory;
 class QtVariantPropertyManager;
@@ -287,6 +288,8 @@ private:
     void                            updateGdsUserInfo();
     void                            setupSettingsPanel();
     void                            showTab(int indexToShow);
+    void                            updateResultsViewerFromModel();
+    QString                         resolveResultsDirectory() const;
     void                            updateSimulationSettings();
     void                            importPortsFromEditor();
     void                            hookPortCombo(QComboBox* box);
@@ -497,6 +500,7 @@ private:
     QMap<QString, QVariant>         m_sysSettings;
     bool                            m_stackupHasOverridableVars = false;
     QPointer<class StackupEditor>   m_stackupEditor;
+    ResultsViewer                  *m_resultsViewer = nullptr;
 
     bool                            m_headless = false;
     bool                            m_blockPortChanges;

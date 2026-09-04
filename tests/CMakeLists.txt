@@ -1,6 +1,6 @@
 project(EMStudioTests LANGUAGES CXX)
 
-find_package(Qt5 REQUIRED COMPONENTS Test Core Gui Widgets Xml)
+find_package(Qt5 REQUIRED COMPONENTS Test Core Gui Widgets Xml Charts)
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
@@ -61,6 +61,7 @@ target_link_libraries(emstudio_golden_tests PRIVATE
     Qt5::Gui
     Qt5::Widgets
     Qt5::Xml
+    Qt5::Charts
 )
 
 add_test(NAME EMStudioGoldenTests COMMAND emstudio_golden_tests)

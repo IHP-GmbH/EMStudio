@@ -37,7 +37,7 @@ if(NOT Qt5_DIR)
     set(Qt5_DIR "C:/Qt/5.15.2/mingw81_64/lib/cmake/Qt5")
 endif()
 
-find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Xml)
+find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Xml Charts)
 
 # -----------------------------------------------------------------------------
 # Versioning (как в .pro)
@@ -145,6 +145,9 @@ set(SOURCES
     src/stackupeditor.cpp
     src/verification.cpp
     src/xmlreader.cpp
+    src/touchstone.cpp
+    src/smithchartwidget.cpp
+    src/resultsviewer.cpp
 )
 
 set(HEADERS
@@ -182,6 +185,9 @@ set(HEADERS
     src/substrateview.h
     src/stackupexpr.h
     src/stackupeditor.h
+    src/touchstone.h
+    src/smithchartwidget.h
+    src/resultsviewer.h
 )
 
 set(FORMS
@@ -222,6 +228,7 @@ target_link_libraries(EMStudio PRIVATE
     Qt5::Gui
     Qt5::Widgets
     Qt5::Xml
+    Qt5::Charts
 )
 
 # -----------------------------------------------------------------------------

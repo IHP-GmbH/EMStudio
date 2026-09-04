@@ -57,6 +57,7 @@
 #include "ui_mainwindow.h"
 #include "substrateview.h"
 #include "stackupeditor.h"
+#include "resultsviewer.h"
 #include "pythonparser.h"
 #include "keywordseditor.h"
 
@@ -278,6 +279,12 @@ MainWindow::MainWindow(QWidget *parent)
     refreshKeywordTipsForCurrentTool();
 
     refreshSimToolOptions();
+
+    m_resultsViewer = new ResultsViewer(m_ui->tabResults);
+    m_ui->verticalLayoutResults->addWidget(m_resultsViewer);
+    connect(m_resultsViewer, &ResultsViewer::logMessage, this, [this](const QString &text) {
+        appendToSimulationLog(text.toUtf8());
+    });
 
     setStateSaved();
 }
@@ -727,6 +734,54 @@ void MainWindow::showTab(int indexToShow)
                 on_actionSave_triggered();
             }
         }
+
+        if (title.compare(QStringLiteral("Results"), Qt::CaseInsensitive) == 0)
+            updateResultsViewerFromModel();
+    }
+}
+
+QString MainWindow::resolveResultsDirectory() const
+{
+    // Prefer an existing results root near the Python model:
+    // 1) palace_model/<base>_data under the model directory
+    // 2) the model directory itself (OpenEMS often writes .sNp nearby)
+    const QString script = currentPythonScriptPath();
+    if (script.isEmpty())
+        return {};
+
+    const QFileInfo fi(script);
+    const QDir modelDir(fi.absolutePath());
+    const QString base = fi.completeBaseName();
+
+    const QString palaceData = modelDir.filePath(
+        QStringLiteral("palace_model/%1_data").arg(base));
+    if (QDir(palaceData).exists())
+        return QDir::cleanPath(palaceData);
+
+    const QString palaceModel = modelDir.filePath(QStringLiteral("palace_model"));
+    if (QDir(palaceModel).exists())
+        return QDir::cleanPath(palaceModel);
+
+    return QDir::cleanPath(modelDir.absolutePath());
+}
+
+void MainWindow::updateResultsViewerFromModel()
+{
+    if (!m_resultsViewer)
+        return;
+
+    const QString dir = resolveResultsDirectory();
+    if (dir.isEmpty())
+        return;
+
+    // Don't clobber a folder the user already browsed to unless it's empty/unset
+    // or still pointing at a previous auto-resolved path under the old model dir.
+    if (m_resultsViewer->targetDirectory().isEmpty()
+        || QDir(m_resultsViewer->targetDirectory()) == QDir(dir)
+        || m_resultsViewer->targetDirectory().startsWith(QFileInfo(currentPythonScriptPath()).absolutePath())) {
+        m_resultsViewer->setTargetDirectory(dir);
+    } else {
+        m_resultsViewer->rescan();
     }
 }
 

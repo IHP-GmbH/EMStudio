@@ -30,6 +30,7 @@
 
 #include "wslHelper.h"
 #include "mainwindow.h"
+#include "resultsviewer.h"
 #include "ui_mainwindow.h"
 
 
@@ -556,6 +557,30 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
             m_simProcess = nullptr;
         }
         m_palacePhase = PalacePhase::None;
+
+        // Palace/Elmer write CSV; Results needs Touchstone (.sNp) via combine_extend_snp.py
+        if (exitCode == 0 && m_resultsViewer && !m_headless) {
+            QString runDir = detectRunDirFromLog();
+            if (runDir.isEmpty())
+                runDir = resolveResultsDirectory();
+            if (!runDir.isEmpty())
+                m_resultsViewer->setTargetDirectory(runDir);
+
+            QString convertLog;
+            if (m_resultsViewer->tryConvertPalaceCsv(&convertLog)) {
+                appendToSimulationLog(
+                    QStringLiteral("\n[CSV → Touchstone via combine_extend_snp.py]\n%1\n")
+                        .arg(convertLog.isEmpty() ? QStringLiteral("(ok)") : convertLog)
+                        .toUtf8());
+                m_resultsViewer->refresh();
+            } else if (!convertLog.isEmpty()) {
+                appendToSimulationLog(
+                    QStringLiteral("\n[CSV → Touchstone skipped/failed: %1]\n")
+                        .arg(convertLog)
+                        .toUtf8());
+                m_resultsViewer->refresh();
+            }
+        }
 
         if (m_headless)
             QCoreApplication::exit(exitCode);

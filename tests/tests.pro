@@ -1,4 +1,4 @@
-QT += testlib core gui widgets
+QT += testlib core gui widgets charts
 TEMPLATE = app
 TARGET = emstudio_golden_tests
 CONFIG += console c++17

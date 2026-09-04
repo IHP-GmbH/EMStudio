@@ -5,7 +5,8 @@ Docker image providing:
 -   **EMStudio (Qt5 GUI)**
 -   **Palace (MPI build)**
 -   **openEMS**
--   Python venv with `gmsh`, `gdspy`, `scikit-rf`
+-   Python venv with **gds2palace≥0.4.1**, `gmsh`, `gdspy`, `numpy`, `scikit-rf`
+    (installed from PyPI; same set as repo `requirements-python.txt`)
 -   Non-root MPI execution (required by Palace)
 
 ------------------------------------------------------------------------

@@ -24,6 +24,7 @@ jobs:
           host: 'linux'
           target: 'desktop'
           arch: 'gcc_64'
+          modules: 'qtcharts'
 
       - name: Configure (qmake)
         run: |
@@ -63,6 +64,7 @@ jobs:
           host: 'linux'
           target: 'desktop'
           arch: 'gcc_64'
+          modules: 'qtcharts'
 
       - name: Install build / smoke-test deps
         run: |
@@ -229,6 +231,7 @@ jobs:
           host: 'linux'
           target: 'desktop'
           arch: 'gcc_64'
+          modules: 'qtcharts'
 
       - name: Install test deps (gcovr + xvfb)
         run: |
@@ -288,6 +291,7 @@ jobs:
           host: 'windows'
           target: 'desktop'
           arch: 'win64_mingw81'
+          modules: 'qtcharts'
           tools: 'tools_mingw81'
 
       - name: Install Inno Setup

@@ -309,10 +309,28 @@ void Preferences::setupPreferencesPanel()
     klayoutOptionsProp->setValue(m_preferences.value(QStringLiteral("KLAYOUT_OPTIONS"), QString()));
     klayoutGroup->addSubProperty(klayoutOptionsProp);
 
+    // -------------------------------------------------------------------------------------------------------------
+    // ParaView (Elmer Thermal field visualization)
+    // -------------------------------------------------------------------------------------------------------------
+    QtVariantProperty *paraViewGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("ParaView"));
+
+    QtVariantProperty *paraViewExePathProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("PARAVIEW_EXE"));
+    paraViewExePathProp->setWhatsThis("file");
+    paraViewExePathProp->setToolTip(tr("Path to the ParaView executable.\n"
+                                       "Used after a successful Elmer Thermal run to open thermal_results*.vtu.\n"
+                                       "If empty, EMStudio searches PATH and common install folders.\n"
+                                       "Example:\n"
+                                       "  - C:\\\\Program Files\\\\ParaView 5.13.0\\\\bin\\\\paraview.exe"));
+    paraViewExePathProp->setValue(m_preferences.value(QStringLiteral("PARAVIEW_EXE"), QString()));
+    paraViewGroup->addSubProperty(paraViewExePathProp);
+
     m_propertyBrowser->addProperty(openemsGroup);
     m_propertyBrowser->addProperty(palaceGroup);
     m_propertyBrowser->addProperty(elmerGroup);
     m_propertyBrowser->addProperty(klayoutGroup);
+    m_propertyBrowser->addProperty(paraViewGroup);
 
     connect(m_variantManager, &QtVariantPropertyManager::valueChanged,
             this, &Preferences::onVariantValueChanged);

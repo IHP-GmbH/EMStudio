@@ -39,7 +39,8 @@
 QString MainWindow::resolveKeywordsPath(const QString& simKeyLower) const
 {
     QString key = simKeyLower;
-    if (key == QLatin1String("elmer"))
+    if (key == QLatin1String("elmer") || key == QLatin1String("elmer_em")
+        || key == QLatin1String("elmer_thermal"))
         key = QStringLiteral("palace");
 
     const QString base = QCoreApplication::applicationDirPath();
@@ -64,8 +65,10 @@ void MainWindow::on_actionKeywords_triggered()
     const QString path = resolveKeywordsPath(simKey);
     const QString title = (simKey == "openems")
                               ? tr("Keywords Editor (OpenEMS)")
-                              : (simKey == "elmer")
-                              ? tr("Keywords Editor (Elmer)")
+                              : (simKey == "elmer" || simKey == "elmer_em")
+                              ? tr("Keywords Editor (Elmer EM)")
+                              : (simKey == "elmer_thermal")
+                              ? tr("Keywords Editor (Elmer Thermal)")
                               : tr("Keywords Editor (Palace)");
 
     KeywordsEditorDialog dlg(path, title, this);

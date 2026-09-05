@@ -197,13 +197,18 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
     applyGdsAndXmlPaths(script, simKeyLower);
     applyVariableOverridesToScript(script);
 
-    ensurePortsTableInitializedFromScript(script);
-
-    updateSubLayerNamesAutoCheck();
-
-    const QString portCode = buildPortCodeFromGuiTable();
-    if (!portCode.isEmpty())
-        replaceOrInsertPortSection(script, portCode);
+    if (isElmerThermalKey(simKeyLower)) {
+        ensureThermalTableInitializedFromScript(script);
+        const QString thermalCode = buildThermalCodeFromGuiTable();
+        if (!thermalCode.isEmpty())
+            replaceOrInsertThermalSection(script, thermalCode);
+    } else {
+        ensurePortsTableInitializedFromScript(script);
+        updateSubLayerNamesAutoCheck();
+        const QString portCode = buildPortCodeFromGuiTable();
+        if (!portCode.isEmpty())
+            replaceOrInsertPortSection(script, portCode);
+    }
 
     setEditorScriptPreservingState(script);
 }
@@ -241,7 +246,7 @@ void MainWindow::applySimSettingsToScript(QString &script, const QString &simKey
 {
     if (simKeyLower == QLatin1String("openems")) {
         applyOpenEmsSettings(script);
-    } else if (simKeyLower == QLatin1String("palace") || simKeyLower == QLatin1String("elmer")) {
+    } else if (simKeyLower == QLatin1String("palace") || isElmerFamilyKey(simKeyLower)) {
         applyPalaceSettings(script);
     }
 }
@@ -414,7 +419,9 @@ void MainWindow::applyPalaceSettings(QString &script)
 
     applyBoundaries(script, /*alsoTopLevelAssignment=*/false);
 
-    if (simKeyLower == QLatin1String("elmer"))
+    if (isElmerThermalKey(simKeyLower))
+        applyElmerThermalWorkflowToScript(script);
+    else if (isElmerEmKey(simKeyLower) || simKeyLower == QLatin1String("elmer"))
         applyElmerWorkflowToScript(script);
     else if (simKeyLower == QLatin1String("palace"))
         applyPalaceWorkflowToScript(script);

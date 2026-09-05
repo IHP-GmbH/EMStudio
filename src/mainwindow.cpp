@@ -43,6 +43,8 @@
 #include <QApplication>
 #include <QFontDatabase>
 #include <QFontInfo>
+#include <QDir>
+#include <QDirIterator>
 
 #include "extension/variantmanager.h"
 #include "extension/variantfactory.h"
@@ -280,6 +282,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     refreshSimToolOptions();
 
+    setupThermalObjectsUi();
+    updateExcitationUiForCurrentTool();
+
     m_resultsViewer = new ResultsViewer(m_ui->tabResults);
     m_ui->verticalLayoutResults->addWidget(m_resultsViewer);
     connect(m_resultsViewer, &ResultsViewer::logMessage, this, [this](const QString &text) {
@@ -438,8 +443,9 @@ void MainWindow::refreshSimToolOptions()
         ++items;
     }
     if (hasElmer) {
-        m_ui->cbxSimTool->addItem("Elmer", "elmer");
-        ++items;
+        m_ui->cbxSimTool->addItem("Elmer EM", "elmer_em");
+        m_ui->cbxSimTool->addItem("Elmer Thermal", "elmer_thermal");
+        items += 2;
     }
 
     if (items == 0) {
@@ -453,11 +459,11 @@ void MainWindow::refreshSimToolOptions()
         QStringList enabled;
         if (hasOpenEMS) enabled << "OpenEMS";
         if (hasPalace)  enabled << "Palace";
-        if (hasElmer)   enabled << "Elmer";
+        if (hasElmer)   enabled << "Elmer EM" << "Elmer Thermal";
         info(QString("Enabled simulation tools: %1").arg(enabled.join(", ")));
 
         int restoreIdx = -1;
-        const QString wantedKey = m_preferences.value("SIMULATION_TOOL_KEY").toString().trimmed().toLower();
+        QString wantedKey = normalizeSimToolKey(m_preferences.value("SIMULATION_TOOL_KEY").toString());
         if (!wantedKey.isEmpty())
             restoreIdx = m_ui->cbxSimTool->findData(wantedKey);
 
@@ -469,6 +475,8 @@ void MainWindow::refreshSimToolOptions()
                 m_ui->cbxSimTool->setCurrentIndex(savedIdx);
         }
     }
+
+    updateExcitationUiForCurrentTool();
 }
 
 /*!*******************************************************************************************************************
@@ -757,6 +765,21 @@ QString MainWindow::resolveResultsDirectory() const
         QStringLiteral("palace_model/%1_data").arg(base));
     if (QDir(palaceData).exists())
         return QDir::cleanPath(palaceData);
+
+    const QString elmerData = modelDir.filePath(
+        QStringLiteral("elmer_model/%1_data").arg(base));
+    if (QDir(elmerData).exists())
+        return QDir::cleanPath(elmerData);
+
+    // Thermal scripts often use create_sim_path(..., dirname='elmer_model')
+    // which may nest as elmer_model/<basename>_data under elmer_model/
+    const QString elmerRoot = modelDir.filePath(QStringLiteral("elmer_model"));
+    if (QDir(elmerRoot).exists()) {
+        QDirIterator it(elmerRoot, QStringList{QStringLiteral("*_data")}, QDir::Dirs);
+        if (it.hasNext())
+            return QDir::cleanPath(it.next());
+        return QDir::cleanPath(elmerRoot);
+    }
 
     const QString palaceModel = modelDir.filePath(QStringLiteral("palace_model"));
     if (QDir(palaceModel).exists())
@@ -1144,6 +1167,10 @@ void MainWindow::on_actionSave_triggered()
     if (script.trimmed().isEmpty()) {
         if (simKey == QLatin1String("openems"))
             script = createDefaultOpenemsScript();
+        else if (isElmerThermalKey(simKey))
+            script = createDefaultElmerThermalScript();
+        else if (isElmerEmKey(simKey))
+            script = createDefaultElmerEmScript();
         else
             script = createDefaultPalaceScript();
         setEditorScriptPreservingState(script);
@@ -1671,6 +1698,11 @@ void MainWindow::on_txtRunPythonScript_textChanged(const QString &arg1)
  **********************************************************************************************************************/
 void MainWindow::on_btnAddPort_clicked()
 {
+    if (isElmerThermalKey(currentSimToolKey())) {
+        addThermalObjectRow();
+        return;
+    }
+
     const int row = m_ui->tblPorts->rowCount();
     m_ui->tblPorts->insertRow(row);
 
@@ -1733,6 +1765,11 @@ void MainWindow::on_btnAddPort_clicked()
  **********************************************************************************************************************/
 void MainWindow::on_btnReomovePort_clicked()
 {
+    if (isElmerThermalKey(currentSimToolKey())) {
+        removeSelectedThermalObjectRow();
+        return;
+    }
+
     int row = m_ui->tblPorts->currentRow();
     if (row >= 0) {
         m_ui->tblPorts->removeRow(row);
@@ -1747,6 +1784,11 @@ void MainWindow::on_btnReomovePort_clicked()
  **********************************************************************************************************************/
 void MainWindow::on_btnRemovePorts_clicked()
 {
+    if (isElmerThermalKey(currentSimToolKey())) {
+        removeAllThermalObjectRows();
+        return;
+    }
+
     m_ui->tblPorts->setRowCount(0);
     setStateChanged();
 }
@@ -2087,15 +2129,15 @@ void MainWindow::updateBoundaryOptionsForCurrentTool()
     if (!m_variantManager || !m_propertyBrowser)
         return;
 
-    const QString key =
-        m_preferences.value(QLatin1String("SIMULATION_TOOL_KEY"), QLatin1String("OpenEMS"))
-            .toString().trimmed().toLower();
+    const QString key = normalizeSimToolKey(
+        m_preferences.value(QLatin1String("SIMULATION_TOOL_KEY"), QLatin1String("openems"))
+            .toString());
 
     QStringList boundaryOptions;
     if (key == QLatin1String("openems")) {
         boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
         << QLatin1String("MUR") << QLatin1String("PML_8");
-    } else if (key == QLatin1String("palace") || key == QLatin1String("elmer")) {
+    } else if (key == QLatin1String("palace") || isElmerFamilyKey(key)) {
         boundaryOptions << QLatin1String("PEC") << QLatin1String("PMC")
         << QLatin1String("ABC") << QLatin1String("PML");
     } else {
@@ -2166,8 +2208,8 @@ void MainWindow::updateBoundaryTooltipsForCurrentTool()
     if (!m_variantManager || !m_propertyBrowser)
         return;
 
-    const QString key =
-        m_preferences.value("SIMULATION_TOOL_KEY", "openems").toString().trimmed().toLower();
+    const QString key = normalizeSimToolKey(
+        m_preferences.value("SIMULATION_TOOL_KEY", "openems").toString());
 
     auto tipFor = [&](const QString &opt) -> QString {
         if (key == "openems") {
@@ -2175,7 +2217,7 @@ void MainWindow::updateBoundaryTooltipsForCurrentTool()
             if (opt == "PMC")   return "PMC: perfect magnetic conductor (symmetry)";
             if (opt == "MUR")   return "MUR: simple absorbing boundary condition";
             if (opt == "PML_8") return "PML_8: absorbing boundary condition (8 layers)";
-        } else if (key == "palace" || key == "elmer") {
+        } else if (key == "palace" || isElmerFamilyKey(key)) {
             if (opt == "PEC") return "PEC: perfect electric conductor (default)";
             if (opt == "PMC") return "PMC: perfect magnetic conductor (symmetry)";
             if (opt == "ABC") return "ABC: absorbing boundary condition";
@@ -2245,7 +2287,7 @@ void MainWindow::on_btnRun_clicked()
 
     if (key == QLatin1String("openems")) {
         runOpenEMS();
-    } else if (key == QLatin1String("palace") || key == QLatin1String("elmer")) {
+    } else if (key == QLatin1String("palace") || isElmerFamilyKey(key)) {
         runPalace();
     } else {
         error(QString("Unsupported simulation tool: %1").arg(key));
@@ -2261,7 +2303,7 @@ QString MainWindow::currentSimToolKey() const
     if (idx < 0 || !m_ui->cbxSimTool->isEnabled())
         return {};
 
-    return m_ui->cbxSimTool->itemData(idx).toString().trimmed().toLower();
+    return normalizeSimToolKey(m_ui->cbxSimTool->itemData(idx).toString());
 }
 
 /*!*******************************************************************************************************************
@@ -2283,6 +2325,24 @@ QString MainWindow::detectPythonModelSimKey(const QString &text,
             || s == QLatin1String("1");
     };
 
+    // Thermal markers first (create_elmer also matches as substring of create_elmer_thermal)
+    if (text.contains(QStringLiteral("create_elmer_thermal"))
+        || text.contains(QStringLiteral("all_thermal_objects"))
+        || QRegularExpression(R"(\[\s*['"]elmer_thermal['"]\s*\]\s*=\s*True)",
+                              QRegularExpression::CaseInsensitiveOption)
+               .match(text)
+               .hasMatch()) {
+        return QStringLiteral("elmer_thermal");
+    }
+
+    if (parsed) {
+        for (auto it = parsed->settings.constBegin(); it != parsed->settings.constEnd(); ++it) {
+            if (it.key().compare(QLatin1String("elmer_thermal"), Qt::CaseInsensitive) == 0
+                && isTruthy(it.value()))
+                return QStringLiteral("elmer_thermal");
+        }
+    }
+
     if (parsed) {
         for (auto it = parsed->settings.constBegin(); it != parsed->settings.constEnd(); ++it) {
             if (it.key().compare(QLatin1String("elmer"), Qt::CaseInsensitive) != 0)
@@ -2290,7 +2350,7 @@ QString MainWindow::detectPythonModelSimKey(const QString &text,
             if (it.value().type() == QVariant::Bool && !it.value().toBool())
                 return QStringLiteral("palace");
             if (isTruthy(it.value()))
-                return QStringLiteral("elmer");
+                return QStringLiteral("elmer_em");
         }
     }
 
@@ -2302,12 +2362,12 @@ QString MainWindow::detectPythonModelSimKey(const QString &text,
     if (QRegularExpression(R"(\[\s*['"]elmer['"]\s*\]\s*=\s*True)", QRegularExpression::CaseInsensitiveOption)
             .match(text)
             .hasMatch())
-        return QStringLiteral("elmer");
+        return QStringLiteral("elmer_em");
 
     if (text.contains(QStringLiteral("create_elmer")) ||
         text.contains(QStringLiteral("create_elmer_run_script")) ||
         text.contains(QStringLiteral("./run_elmer")))
-        return QStringLiteral("elmer");
+        return QStringLiteral("elmer_em");
 
     QRegularExpression re(R"(\w+\s*\[\s*['"][^'"]+['"]\s*\]\s*=)");
     if (re.match(text).hasMatch())
@@ -2321,7 +2381,7 @@ QString MainWindow::detectPythonModelSimKey(const QString &text,
  **********************************************************************************************************************/
 void MainWindow::selectSimToolByKey(const QString &simKey)
 {
-    const QString key = simKey.trimmed().toLower();
+    const QString key = normalizeSimToolKey(simKey);
     if (key.isEmpty())
         return;
 
@@ -2340,6 +2400,7 @@ void MainWindow::selectSimToolByKey(const QString &simKey)
     refreshKeywordTipsForCurrentTool();
     updateBoundaryOptionsForCurrentTool();
     updateBoundaryTooltipsForCurrentTool();
+    updateExcitationUiForCurrentTool();
 }
 
 /*!*******************************************************************************************************************
@@ -2748,10 +2809,13 @@ void MainWindow::on_btnGenDefaultPython_clicked()
     QString defaultScript;
     if (simKey == QLatin1String("openems")) {
         defaultScript = createDefaultOpenemsScript();
-    } else if (simKey == QLatin1String("palace") || simKey == QLatin1String("elmer")) {
+    } else if (simKey == QLatin1String("palace")) {
         defaultScript = createDefaultPalaceScript();
+    } else if (isElmerThermalKey(simKey)) {
+        defaultScript = createDefaultElmerThermalScript();
+    } else if (isElmerEmKey(simKey) || simKey == QLatin1String("elmer")) {
+        defaultScript = createDefaultElmerEmScript();
     } else {
-        // Fallback: you can choose one, or warn.
         defaultScript = createDefaultOpenemsScript();
     }
 
@@ -2880,6 +2944,46 @@ QString MainWindow::createDefaultPalaceScript()
     return script;
 }
 
+QString MainWindow::createDefaultElmerEmScript()
+{
+    const QString templatePath = resolveModelTemplatePath(QStringLiteral("elmer_model.py"));
+
+    QString templateText;
+    if (!readTextFileUtf8(templatePath, templateText))
+        return QString();
+
+    QString script = templateText;
+    PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
+    if (parseResult.ok) {
+        m_curPythonData = parseResult;
+        const QString simKeyLower = QStringLiteral("elmer_em");
+        applySimSettingsToScript(script, simKeyLower);
+        applyGdsAndXmlPaths(script, simKeyLower);
+        applyBoundaries(script, true);
+        PythonParser::Result finalResult = PythonParser::parseSettingsFromText(script);
+        if (finalResult.ok) {
+            m_curPythonData = finalResult;
+            const auto tips = mergeTipsPreferModel(finalResult.settingTips, m_keywordTips);
+            rebuildSimulationSettingsFromPalace(finalResult.settings, tips, finalResult.topLevel);
+        }
+    }
+    return script;
+}
+
+QString MainWindow::createDefaultElmerThermalScript()
+{
+    const QString templatePath = resolveModelTemplatePath(QStringLiteral("elmer_thermal_model.py"));
+
+    QString templateText;
+    if (!readTextFileUtf8(templatePath, templateText))
+        return QString();
+
+    QString script = templateText;
+    applySimSettingsToScript(script, QStringLiteral("elmer_thermal"));
+    applyGdsAndXmlPaths(script, QStringLiteral("elmer_thermal"));
+    return script;
+}
+
 /*!*******************************************************************************************************************
  * \brief Creates the default OpenEMS Python simulation script.
  *
@@ -2957,11 +3061,12 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
         return;
 
     m_preferences["SIMULATION_TOOL_INDEX"] = index;
-    m_preferences["SIMULATION_TOOL_KEY"]   = key.toLower();
+    m_preferences["SIMULATION_TOOL_KEY"]   = normalizeSimToolKey(key);
 
     refreshKeywordTipsForCurrentTool();
 
     updateBoundaryOptionsForCurrentTool();
+    updateExcitationUiForCurrentTool();
 }
 
 /*!*******************************************************************************************************************
@@ -3312,7 +3417,7 @@ QString MainWindow::requiredFolderForSim(const QString &simKeyLower) const
 {
     if (simKeyLower == QLatin1String("openems"))
         return QStringLiteral("modules");
-    if (simKeyLower == QLatin1String("palace") || simKeyLower == QLatin1String("elmer"))
+    if (simKeyLower == QLatin1String("palace") || isElmerFamilyKey(simKeyLower))
         return QStringLiteral("gds2palace");
     return QString();
 }
@@ -3354,7 +3459,8 @@ MainWindow::askMissingFolderDecision(const QString &simKeyLower,
     const QString simName =
         (simKeyLower == QLatin1String("openems")) ? QStringLiteral("OpenEMS") :
             (simKeyLower == QLatin1String("palace"))  ? QStringLiteral("Palace")  :
-            (simKeyLower == QLatin1String("elmer"))   ? QStringLiteral("Elmer")   :
+            isElmerThermalKey(simKeyLower) ? QStringLiteral("Elmer Thermal") :
+            isElmerFamilyKey(simKeyLower) ? QStringLiteral("Elmer EM") :
             simKeyLower;
 
     QMessageBox msg(const_cast<MainWindow*>(this));

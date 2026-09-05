@@ -76,6 +76,8 @@ public:
 
     double                          substrateOffset() const;
     void                            setSubstrateOffset(double offset);
+    QString                         substrateOffsetRaw() const;
+    void                            setSubstrateOffsetRaw(const QString &raw);
 
     const QString                   &schemaVersion() const;
     void                            setSchemaVersion(const QString &v);
@@ -106,6 +108,7 @@ private:
     QList<ThermalTable>             m_thermalTables;
 
     double                          m_substrateOffset = 0.0;
+    QString                         m_substrateOffsetRaw;
     QString                         m_schemaVersion;
     QString                         m_lengthUnit = QStringLiteral("um");
     QString                         m_description;

@@ -127,6 +127,7 @@ set(SOURCES
     src/gdsreader.cpp
     src/layer.cpp
     src/mainwindow.cpp
+    src/elmerThermalUi.cpp
     src/material.cpp
     src/preferences.cpp
 

@@ -35,6 +35,7 @@ class QProcess;
 class QProcessEnvironment;
 class QLineEdit;
 class QComboBox;
+class QTableWidget;
 class QtProperty;
 class QListWidgetItem;
 class QtVariantProperty;
@@ -323,6 +324,7 @@ private:
     void                            applyOpenEmsSettings(QString &script);
     void                            applyPalaceSettings(QString &script);
     void                            applyElmerWorkflowToScript(QString &script);
+    void                            applyElmerThermalWorkflowToScript(QString &script);
     void                            applyPalaceWorkflowToScript(QString &script);
     void                            syncGuiSettingsToPythonEditor();
     void                            applyBoundaries(QString &script, bool alsoTopLevelAssignment);
@@ -335,10 +337,32 @@ private:
     void                            storeStackupOverridesFromTable();
     QString                         makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const;
     void                            ensurePortsTableInitializedFromScript(const QString &script);
+    void                            ensureThermalTableInitializedFromScript(const QString &script);
     QString                         buildPortCodeFromGuiTable() const;
+    QString                         buildThermalCodeFromGuiTable() const;
     QVector<QPair<int,int>>         findPortBlocks(const QString &script);
+    QVector<QPair<int,int>>         findThermalBlocks(const QString &script);
     void                            replaceOrInsertPortSection(QString &script, const QString &portCode);
+    void                            replaceOrInsertThermalSection(QString &script, const QString &thermalCode);
     void                            setEditorScriptPreservingState(const QString &script);
+    void                            setupThermalObjectsUi();
+    void                            updateExcitationUiForCurrentTool();
+    void                            addThermalObjectRow();
+    void                            removeSelectedThermalObjectRow();
+    void                            removeAllThermalObjectRows();
+    void                            appendThermalObjectRow(const QString &type,
+                                                           double value,
+                                                           int sourceLayer,
+                                                           const QString &targetLayer);
+    QString                         resolveParaViewExecutable() const;
+    QString                         findThermalResultsVtu(const QString &runDir) const;
+    void                            openThermalResultsInParaView(const QString &runDir);
+    bool                            isElmerFamilyKey(const QString &key) const;
+    bool                            isElmerThermalKey(const QString &key) const;
+    bool                            isElmerEmKey(const QString &key) const;
+    QString                         normalizeSimToolKey(const QString &key) const;
+    QString                         createDefaultElmerEmScript();
+    QString                         createDefaultElmerThermalScript();
 
     void                            applyOneSettingToScript(QString &script,
                                                             const QString &key,
@@ -501,6 +525,7 @@ private:
     bool                            m_stackupHasOverridableVars = false;
     QPointer<class StackupEditor>   m_stackupEditor;
     ResultsViewer                  *m_resultsViewer = nullptr;
+    QTableWidget                   *m_tblThermalObjects = nullptr;
 
     bool                            m_headless = false;
     bool                            m_blockPortChanges;

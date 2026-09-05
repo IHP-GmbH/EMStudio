@@ -436,8 +436,11 @@ void SubstrateView::drawSubstrate()
     }
     for (const Layer& L : layers) {
         if (L.type() == "dielectric" || L.name() == "LBE") continue;
+        // Normalize in case Zmax < Zmin (e.g. BACKSIDEGND sheet below wafer).
+        const double lo = std::min(L.zmin(), L.zmax());
+        const double hi = std::max(L.zmin(), L.zmax());
         for (const auto& sp : dielSpans) {
-            if (L.zmin() >= sp.zmin && L.zmax() <= sp.zmax) { contentCount[sp.name] += 1; break; }
+            if (lo >= sp.zmin && hi <= sp.zmax) { contentCount[sp.name] += 1; break; }
         }
     }
 
@@ -516,7 +519,9 @@ void SubstrateView::drawSubstrate()
         QList<VisualLayer> enclosed;
         for (const VisualLayer& layer : allLayers) {
             if (layer.type == "dielectric") continue;
-            if (layer.realZMin >= diel.realZMin && layer.realZMax <= diel.realZMax) enclosed.append(layer);
+            const double lo = std::min(layer.realZMin, layer.realZMax);
+            const double hi = std::max(layer.realZMin, layer.realZMax);
+            if (lo >= diel.realZMin && hi <= diel.realZMax) enclosed.append(layer);
         }
         dielectricMap[diel.name] = enclosed;
     }
@@ -633,7 +638,7 @@ void SubstrateView::drawSubstrate()
     for (const auto& layer : allLayers) {
         const double zStart = layer.zminPx;
         const double zStop  = layer.zmaxPx;
-        const double thicknessUm = layer.realZMax - layer.realZMin;
+        const double thicknessUm = std::abs(layer.realZMax - layer.realZMin);
         const QString tip = tr("%1\n"
                                "Type: %2\n"
                                "Thickness: %3 µm\n"

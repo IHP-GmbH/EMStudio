@@ -98,6 +98,7 @@ bool Substrate::parseXmlFile(const QString &filePath)
     m_derivedLayers.clear();
     m_thermalTables.clear();
     m_substrateOffset = 0.0;
+    m_substrateOffsetRaw.clear();
     m_schemaVersion.clear();
     m_lengthUnit = QStringLiteral("um");
     m_description.clear();
@@ -162,10 +163,11 @@ bool Substrate::parseXmlFile(const QString &filePath)
         if (name == QLatin1String("ELayers")) {
             m_lengthUnit = attrS(attrs, "LengthUnit", QStringLiteral("um"));
         } else if (name == QLatin1String("Substrate")) {
+            m_substrateOffsetRaw = attrS(attrs, "Offset").trimmed();
             bool ok = false;
-            m_substrateOffset = attrS(attrs, "Offset").toDouble(&ok);
+            m_substrateOffset = m_substrateOffsetRaw.toDouble(&ok);
             if (!ok)
-                m_substrateOffset = 0.0;
+                m_substrateOffset = 0.0; // may still be an "=expr"; resolved in resolveGeometry()
         } else if (name == QLatin1String("Variable")) {
             StackupVariable v;
             v.name = attrS(attrs, "Name");
@@ -331,9 +333,13 @@ bool Substrate::writeXmlFile(const QString &filePath) const
     xml.writeEndElement();
 
     xml.writeStartElement(QStringLiteral("Layers"));
-    if (m_substrateOffset != 0.0 && schema == QLatin1String("2.0")) {
+    if (!m_substrateOffsetRaw.isEmpty()
+        || m_substrateOffset != 0.0) {
         xml.writeEmptyElement(QStringLiteral("Substrate"));
-        xml.writeAttribute(QStringLiteral("Offset"), QString::number(m_substrateOffset));
+        xml.writeAttribute(QStringLiteral("Offset"),
+                           m_substrateOffsetRaw.isEmpty()
+                               ? QString::number(m_substrateOffset)
+                               : m_substrateOffsetRaw);
     }
     for (const Layer &lay : m_layers) {
         xml.writeEmptyElement(QStringLiteral("Layer"));
@@ -481,6 +487,17 @@ bool Substrate::resolveGeometry(const QHash<QString, QVariant> &vars, QString *e
         }
         return true;
     };
+
+    // Substrate Offset may be a literal or "=expr" (e.g. "=substrate_thickness").
+    {
+        const QString raw = m_substrateOffsetRaw.isEmpty()
+                                ? QString::number(m_substrateOffset)
+                                : m_substrateOffsetRaw;
+        double off = 0.0;
+        if (!evalT(raw, &off))
+            return false;
+        m_substrateOffset = off;
+    }
 
     // Resolve dielectric thicknesses
     for (Dielectric &d : m_dielectrics) {
@@ -667,7 +684,20 @@ const QList<ThermalTable> &Substrate::thermalTables() const { return m_thermalTa
 QList<ThermalTable> &Substrate::thermalTables() { return m_thermalTables; }
 
 double Substrate::substrateOffset() const { return m_substrateOffset; }
-void Substrate::setSubstrateOffset(double offset) { m_substrateOffset = offset; }
+void Substrate::setSubstrateOffset(double offset)
+{
+    m_substrateOffset = offset;
+    m_substrateOffsetRaw = QString::number(offset);
+}
+
+QString Substrate::substrateOffsetRaw() const { return m_substrateOffsetRaw; }
+void Substrate::setSubstrateOffsetRaw(const QString &raw)
+{
+    m_substrateOffsetRaw = raw.trimmed();
+    bool ok = false;
+    const double d = m_substrateOffsetRaw.toDouble(&ok);
+    m_substrateOffset = ok ? d : 0.0;
+}
 
 const QString &Substrate::schemaVersion() const { return m_schemaVersion; }
 void Substrate::setSchemaVersion(const QString &v) { m_schemaVersion = v; }

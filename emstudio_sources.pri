@@ -32,6 +32,7 @@ SOURCES += \
     $$TOP/src/gdsreader.cpp \
     $$TOP/src/layer.cpp \
     $$TOP/src/mainwindow.cpp \
+    $$TOP/src/elmerThermalUi.cpp \
     $$TOP/src/material.cpp \
     $$TOP/src/preferences.cpp \
     $$TOP/src/pythonToEditor.cpp \

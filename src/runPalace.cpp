@@ -97,10 +97,13 @@ void MainWindow::runPalace(bool interactive)
     }
 
     if (interactive) {
-        if (currentSimToolKey() == QLatin1String("elmer"))
+        const QString toolKey = currentSimToolKey();
+        if (isElmerThermalKey(toolKey)) {
+            m_simSettings[QStringLiteral("elmer_thermal")] = true;
+        } else if (isElmerFamilyKey(toolKey)) {
             m_simSettings[QStringLiteral("elmer")] = true;
-        if (currentSimToolKey() == QLatin1String("elmer"))
             m_simSettings[QStringLiteral("iterative")] = true;
+        }
 
         syncGuiSettingsToPythonEditor();
         on_actionSave_triggered();
@@ -143,7 +146,7 @@ void MainWindow::runPalace(bool interactive)
     startPalacePythonStage(ctx);
 
     if (!m_simProcess->waitForStarted(3000)) {
-        if (ctx.simKeyLower == QLatin1String("elmer"))
+        if (isElmerFamilyKey(ctx.simKeyLower))
             error("Failed to start gds2palace Python preprocessing (Windows native).", false);
 #ifdef Q_OS_WIN
         else if (!ctx.useWsl)
@@ -179,8 +182,8 @@ void MainWindow::runPalace(bool interactive)
  **********************************************************************************************************************/
 bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
 {
-    ctx.simKeyLower = currentSimToolKey().toLower();
-    if (ctx.simKeyLower != QLatin1String("palace") && ctx.simKeyLower != QLatin1String("elmer")) {
+    ctx.simKeyLower = normalizeSimToolKey(currentSimToolKey());
+    if (ctx.simKeyLower != QLatin1String("palace") && !isElmerFamilyKey(ctx.simKeyLower)) {
         outError = QStringLiteral("Current simulation tool is not Palace or Elmer.");
         return false;
     }
@@ -194,7 +197,7 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     ctx.runMode = m_preferences.value("PALACE_RUN_MODE", 0).toInt();
 
     bool isScriptMode = false;
-    if (ctx.runMode == 1 && ctx.simKeyLower != QLatin1String("elmer")) {
+    if (ctx.runMode == 1 && !isElmerFamilyKey(ctx.simKeyLower)) {
         ctx.launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
         if (ctx.launcherWin.isEmpty()) {
             outError = QStringLiteral("PALACE_RUN_SCRIPT is not configured.");
@@ -221,17 +224,22 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
         return false;
     }
 
-    ctx.runDirGuessWin = QDir(fi.absolutePath())
-                             .filePath(QStringLiteral("palace_model/%1_data").arg(ctx.baseName));
+    if (isElmerFamilyKey(ctx.simKeyLower)) {
+        ctx.runDirGuessWin = QDir(fi.absolutePath())
+                                 .filePath(QStringLiteral("elmer_model/%1_data").arg(ctx.baseName));
+    } else {
+        ctx.runDirGuessWin = QDir(fi.absolutePath())
+                                 .filePath(QStringLiteral("palace_model/%1_data").arg(ctx.baseName));
+    }
 
     ctx.palaceRoot = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
-    if (ctx.palaceRoot.isEmpty() && !isScriptMode && ctx.simKeyLower != QLatin1String("elmer")) {
+    if (ctx.palaceRoot.isEmpty() && !isScriptMode && !isElmerFamilyKey(ctx.simKeyLower)) {
         outError = QStringLiteral("PALACE_INSTALL_PATH is not configured in Preferences.");
         return false;
     }
 
 #ifdef Q_OS_WIN
-    ctx.useWsl = (ctx.simKeyLower != QLatin1String("elmer"));
+    ctx.useWsl = !isElmerFamilyKey(ctx.simKeyLower);
 
     if (ctx.useWsl) {
         if (!ensureWslAvailable(outError))
@@ -274,7 +282,7 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     ctx.modelDirLinux  = QFileInfo(ctx.modelWin).absolutePath();
     ctx.modelLinux     = ctx.modelWin;
 
-    if (ctx.simKeyLower == QLatin1String("elmer")) {
+    if (isElmerFamilyKey(ctx.simKeyLower)) {
         if (!resolveElmerPythonLaunch(ctx.pythonCmd, ctx.pythonArgs)) {
             outError = QStringLiteral("No Python found for Elmer preprocessing. Set ELMER_PYTHON in Preferences.");
             return false;
@@ -312,7 +320,7 @@ void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
             QString("Starting Palace Python preprocessing in WSL (%1)...\n").arg(ctx.distro));
     }
 #else
-    if (ctx.simKeyLower == QLatin1String("elmer"))
+    if (isElmerFamilyKey(ctx.simKeyLower))
         m_ui->editSimulationLog->insertPlainText(
             QStringLiteral("Starting gds2palace Python preprocessing (native)...\n"));
     else if (ctx.runMode == 1)
@@ -324,7 +332,7 @@ void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
     m_ui->editSimulationLog->insertPlainText(QString("[Using Python: %1]\n").arg(ctx.pythonCmd));
     m_ui->editSimulationLog->insertPlainText(QString("[Initial Palace run directory guess: %1]\n").arg(ctx.runDirGuessWin));
 
-    if (ctx.simKeyLower == QLatin1String("elmer")) {
+    if (isElmerFamilyKey(ctx.simKeyLower)) {
         const QString solverPath =
             m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH")).toString().trimmed();
         if (!solverPath.isEmpty()) {
@@ -385,7 +393,7 @@ void MainWindow::startPalacePythonStage(const PalaceRunContext &ctx)
     m_simProcess->start(wslExe, args);
 #else
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    if (ctx.simKeyLower == QLatin1String("elmer"))
+    if (isElmerFamilyKey(ctx.simKeyLower))
         applyElmerHomeToProcessEnv(env);
 
     m_simProcess->setProcessEnvironment(env);
@@ -521,7 +529,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
 
         appendToSimulationLog(
             QString("[Using simulation tool: %1]\n")
-                .arg(ctx.simKeyLower == QLatin1String("elmer") ? QStringLiteral("Elmer")
+                .arg(isElmerFamilyKey(ctx.simKeyLower) ? QStringLiteral("Elmer")
                     : ctx.simKeyLower == QLatin1String("palace") ? QStringLiteral("Palace")
                                                                 : solverKind == Gds2PalaceSolverKind::Elmer ? QStringLiteral("Elmer")
                                                                 : solverKind == Gds2PalaceSolverKind::Palace ? QStringLiteral("Palace")
@@ -543,7 +551,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
     if (m_palacePhase == PalacePhase::PalaceSolver) {
         const QString simKey = currentSimToolKey();
         QString msg;
-        if (simKey == QLatin1String("elmer"))
+        if (isElmerFamilyKey(simKey))
             msg = QString("\n[Elmer solver finished with exit code %1]\n").arg(exitCode);
         else if (runMode == 1)
             msg = QString("\n[Palace launcher finished with exit code %1]\n").arg(exitCode);
@@ -558,27 +566,35 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
         }
         m_palacePhase = PalacePhase::None;
 
-        // Palace/Elmer write CSV; Results needs Touchstone (.sNp) via combine_extend_snp.py
-        if (exitCode == 0 && m_resultsViewer && !m_headless) {
-            QString runDir = detectRunDirFromLog();
-            if (runDir.isEmpty())
-                runDir = resolveResultsDirectory();
-            if (!runDir.isEmpty())
-                m_resultsViewer->setTargetDirectory(runDir);
+        // Palace/Elmer EM write CSV; Results needs Touchstone (.sNp) via combine_extend_snp.py
+        // Elmer Thermal produces .vtu temperature fields — open in ParaView instead.
+        if (exitCode == 0 && !m_headless) {
+            if (isElmerThermalKey(currentSimToolKey())) {
+                QString runDir = detectRunDirFromLog();
+                if (runDir.isEmpty())
+                    runDir = resolveResultsDirectory();
+                openThermalResultsInParaView(runDir);
+            } else if (m_resultsViewer) {
+                QString runDir = detectRunDirFromLog();
+                if (runDir.isEmpty())
+                    runDir = resolveResultsDirectory();
+                if (!runDir.isEmpty())
+                    m_resultsViewer->setTargetDirectory(runDir);
 
-            QString convertLog;
-            if (m_resultsViewer->tryConvertPalaceCsv(&convertLog)) {
-                appendToSimulationLog(
-                    QStringLiteral("\n[CSV → Touchstone via combine_extend_snp.py]\n%1\n")
-                        .arg(convertLog.isEmpty() ? QStringLiteral("(ok)") : convertLog)
-                        .toUtf8());
-                m_resultsViewer->refresh();
-            } else if (!convertLog.isEmpty()) {
-                appendToSimulationLog(
-                    QStringLiteral("\n[CSV → Touchstone skipped/failed: %1]\n")
-                        .arg(convertLog)
-                        .toUtf8());
-                m_resultsViewer->refresh();
+                QString convertLog;
+                if (m_resultsViewer->tryConvertPalaceCsv(&convertLog)) {
+                    appendToSimulationLog(
+                        QStringLiteral("\n[CSV → Touchstone via combine_extend_snp.py]\n%1\n")
+                            .arg(convertLog.isEmpty() ? QStringLiteral("(ok)") : convertLog)
+                            .toUtf8());
+                    m_resultsViewer->refresh();
+                } else if (!convertLog.isEmpty()) {
+                    appendToSimulationLog(
+                        QStringLiteral("\n[CSV → Touchstone skipped/failed: %1]\n")
+                            .arg(convertLog)
+                            .toUtf8());
+                    m_resultsViewer->refresh();
+                }
             }
         }
 
@@ -630,8 +646,12 @@ QString MainWindow::detectRunDirFromLog() const
  **********************************************************************************************************************/
 QString MainWindow::guessDefaultPalaceRunDir(const QString &modelFile, const QString &baseName) const
 {
-    const QString defRunDir = QFileInfo(modelFile).absolutePath()
-    + QStringLiteral("/palace_model/%1_data").arg(baseName);
+    const QString root = QFileInfo(modelFile).absolutePath();
+    const QString elmerRunDir = root + QStringLiteral("/elmer_model/%1_data").arg(baseName);
+    if (QFileInfo::exists(elmerRunDir))
+        return elmerRunDir;
+
+    const QString defRunDir = root + QStringLiteral("/palace_model/%1_data").arg(baseName);
     if (!QFileInfo::exists(defRunDir))
         return QString();
     return defRunDir;
@@ -982,7 +1002,7 @@ MainWindow::Gds2PalaceSolverKind MainWindow::detectGds2PalaceSolverKind(
     if (runDir.isEmpty())
         return Gds2PalaceSolverKind::Unknown;
 
-    if (simKeyLower == QLatin1String("elmer"))
+    if (isElmerFamilyKey(simKeyLower))
         return Gds2PalaceSolverKind::Elmer;
     if (simKeyLower == QLatin1String("palace"))
         return Gds2PalaceSolverKind::Palace;
@@ -1005,8 +1025,8 @@ MainWindow::Gds2PalaceSolverKind MainWindow::detectGds2PalaceSolverKind(
 
 void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
 {
-    if (ctx.simKeyLower == QLatin1String("elmer") ||
-        currentSimToolKey() == QLatin1String("elmer")) {
+    if (isElmerFamilyKey(ctx.simKeyLower) ||
+        isElmerFamilyKey(currentSimToolKey())) {
         startElmerSolverStage(ctx);
         return;
     }

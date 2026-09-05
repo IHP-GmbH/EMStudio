@@ -1,13 +1,13 @@
 # 📘 EMStudio – User Guide & Developer Documentation
 
 <p align="center">
-  <img src="icons/logo.png" alt="EMStudio Logo" width="180"/>
+  <img src="icons/logo.png" alt="EMStudio Logo" width="280"/>
 </p>
 
 <h1 align="center">EMStudio</h1>
 
 <p align="center">
-  Qt-based GUI for electromagnetic (EM) simulations  
+  Qt-based GUI for electromagnetic and thermal simulations  
   Developed at IHP Microelectronics
 </p>
 
@@ -15,17 +15,18 @@
 
 # Overview
 
-**EMStudio** is a Qt-based desktop application for preparing, visualizing, and managing electromagnetic simulations.
+**EMStudio** is a Qt-based desktop application for preparing, visualizing, and managing
+electromagnetic and thermal simulations.
 
 It provides an integrated workflow for:
 
 - Loading GDS layout data  
-- Choosing substrate stacks (dielectrics, metals, layers)  
+- Choosing substrate stacks (dielectrics, metals, layers, thermal tables)  
 - Visualizing a 2.5D cross-section  
 - Configuring simulation parameters  
-- Generating configuration files for EM solvers (OpenEMS, Palace)  
+- Generating configuration files for solvers (**OpenEMS**, **Palace**, **Elmer EM**, **Elmer Thermal**)  
 - Editing Python driver scripts with syntax highlighting  
-- Running simulations and streaming log output
+- Running simulations, streaming logs, and viewing results (S-parameters / ParaView for thermal)
 
 ---
 

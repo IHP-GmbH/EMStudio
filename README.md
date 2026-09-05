@@ -363,6 +363,20 @@ When you press the run button, the simulation model script will be executed, usi
 
 <img src="./doc/png/simulate2.png" alt="simulate" width="700">
 
+## Results
+
+After a successful **OpenEMS**, **Palace**, or **Elmer EM** run, open the **Results** tab to inspect S-parameters.
+EMStudio scans the simulation data directory for Touchstone files (`.sNp`). For Palace / Elmer EM,
+CSV outputs can be converted automatically via `scripts/combine_extend_snp.py`.
+
+You can overlay parameters (**S11**, **S21**, …), switch between **dB + Phase**, **Smith chart**,
+and a zoomed Smith view, and launch **Model Fit…** (`snp2le`) when available.
+
+<img src="./doc/png/results1.png" alt="Results viewer S-parameters" width="700">
+
+For **Elmer Thermal**, the Results tab is hidden — temperature fields are viewed in ParaView instead
+(see the Thermal section above).
+
 --
 
 ## Switching simulation tools

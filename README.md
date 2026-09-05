@@ -34,12 +34,14 @@ It provides an integrated workflow for:
 
 - Cross-platform Qt GUI (Linux & Windows)  
 - GDS reader (`gdsreader.cpp`)  
-- Substrate & material model  
+- Substrate & material model (including thermal conductivity / tables)  
 - 2.5D stack visualization (`substrateview`)  
 - Python script editor with syntax highlighting & autocompletion  
 - Python/Palace parser with JSON configuration  
 - QtPropertyBrowser-based parameter editor  
-- Preferences dialog (paths, solver settings, Python interpreter)  
+- Preferences dialog (paths, solver settings, Python interpreter, ParaView)  
+- Simulation tools: **OpenEMS**, **Palace**, **Elmer EM**, **Elmer Thermal**  
+- Results viewer for S-parameters; ParaView launch for thermal VTU fields  
 - Command-line interface for automation  
 
 ---
@@ -103,7 +105,7 @@ mingw32-make
 
 ## External solvers (required for full functionality)
 
-EMStudio integrates with external electromagnetic solvers.  
+EMStudio integrates with external electromagnetic and thermal solvers.  
 For full functionality, these tools must be installed separately by the user.
 
 Please ensure the solvers are available in your `PATH`, or configure their locations explicitly in the EMStudio settings.
@@ -122,6 +124,23 @@ Parallel finite-element electromagnetic solver.
 
 - Project page & documentation: https://awslabs.github.io/palace/
 - Source code: https://github.com/awslabs/palace
+
+### Elmer (EM and Thermal)
+
+Finite-element solver used by EMStudio for **Elmer EM** (S-parameters via gds2palace)
+and **Elmer Thermal** (steady-state heat conduction).
+
+- Project page: https://www.elmerfem.org/
+- Source / downloads: https://github.com/ElmerCSC/elmerfem
+
+For thermal field visualization after a successful run, install
+[ParaView](https://www.paraview.org/download/) and set `PARAVIEW_EXE` in Preferences
+(or leave it empty to auto-detect a common install path).
+
+The screenshot below shows an **Elmer Thermal** stackup in EMStudio together with the
+resulting temperature field opened in ParaView:
+
+<img src="./doc/png/elmer_thermal1.png" alt="Elmer Thermal workflow with ParaView" width="700">
 
 ---
 
@@ -202,18 +221,19 @@ This will find your KLayout installation by searching the PATH, and then start K
 
 # Workflow overview
 
-**EMStudio** is a Qt-based desktop application for preparing, visualizing, and managing electromagnetic simulations.
+**EMStudio** is a Qt-based desktop application for preparing, visualizing, and managing
+electromagnetic and thermal simulations.
 
 EMStudio can be started stand-alone, or from the klayout layout editor.
 
-After simulation settings and port configuration are configured, 
+After simulation settings and port (or thermal object) configuration are configured, 
 EMStudio can save a simulation model to disk, and also start simulation. The simulation model requires the **solver workflow folder**
-('modules' for openEMS, 'gds2palace' for Palace) and the **stackup file** (*.XML)
+('modules' for openEMS, 'gds2palace' for Palace / Elmer) and the **stackup file** (*.XML)
 to be present in your target directory. This means you usually want to have 
-**one** folder for each solver type (openEMS or Palace) where simulation model scripts are located together with the solver modules folder and the substrate files.
+**one** folder for each solver type (openEMS, Palace, or Elmer) where simulation model scripts are located together with the solver modules folder and the substrate files.
 
-Note that the solver workflow folders are only the "bridge" to openEMS and Palace EM solvers, and you need to have these 
-EM solvers installed, as described in the solver documentation. This is no different from using the normal Python script based IHP EM workflows.
+Note that the solver workflow folders are only the "bridge" to openEMS, Palace, and Elmer,
+and you need to have these solvers installed, as described in the solver documentation. This is no different from using the normal Python script based IHP EM workflows.
 
 Note for advanced users: If you want to create simulation models in different directories, 
 and don't want to copy & paste the "modules" or "gds2palace" to each of these folders, you can also include 
@@ -315,9 +335,9 @@ Before leaving any tab, save your changes using File > Save or Ctrl+S
 
 <img src="./doc/png/python1.png" alt="python" width="700">
 
-## Ports 
+## Ports / Thermal
 
-On the ports tab, you need to configure simulation ports. It is expected that ports are included in the GDSII file on special layers, one layer per port, as described in the documentation of the IHP EM workflows. The EM workflows support in-plane ports (in xy plane) and vertical via ports (z direction). The direction of current flow in the port must be set by the user: `x`,`y`,`z` or `-x`,`-y`,`-z` for reverse polarity. Port polarity matters when multiple ports are connected to the same return path.
+On the **Ports** tab (OpenEMS / Palace / Elmer EM), you need to configure simulation ports. It is expected that ports are included in the GDSII file on special layers, one layer per port, as described in the documentation of the IHP EM workflows. The EM workflows support in-plane ports (in xy plane) and vertical via ports (z direction). The direction of current flow in the port must be set by the user: `x`,`y`,`z` or `-x`,`-y`,`-z` for reverse polarity. Port polarity matters when multiple ports are connected to the same return path.
 
 For in-plane ports, specify only the "To Layer" field, and leave the "From Layer" field empty. This will create the correct port configuration in the Python model script.
 
@@ -329,21 +349,28 @@ When creating ports entries from scratch, there is a checkbox "Use Substrate Lay
 
 In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area. 
 
+When **Elmer Thermal** is selected as the simulation tool, the Ports tab becomes **Thermal**. Instead of EM ports you define thermal objects (heat sources in Watts and constant-temperature boundaries in Kelvin), each with a GDS marker layer and a target stackup layer. After a successful solve, EMStudio opens the temperature field (`thermal_results*.vtu`) in ParaView.
+
+<img src="./doc/png/elmer_thermal1.png" alt="Elmer Thermal and ParaView" width="700">
+
 ## Simulate
 
-On the Simulate tab, you can run the model script to generate the EM solver input files and start the simulation model. 
+On the Simulate tab, you can run the model script to generate the solver input files and start the simulation. 
 
 <img src="./doc/png/simulate1.png" alt="simulate" width="700">
 
-When you press the run button, the simulation model script will be executed, using the Python interpreter that you defined using Setup > Preferences. For openEMS, simulation only starts when setting `preview_only=True` in the simulation model. 
+When you press the run button, the simulation model script will be executed, using the Python interpreter that you defined using Setup > Preferences. For openEMS, simulation only starts when setting `preview_only=True` in the simulation model. For Elmer Thermal, use the Windows native Elmer Python / ElmerSolver paths from Preferences (`ELMER_PYTHON`, `ELMER_SOLVER_PATH`).
 
 <img src="./doc/png/simulate2.png" alt="simulate" width="700">
 
 --
 
-## Switching between openEMS and Palace
+## Switching simulation tools
 
-At present, EMStudio does **not** allow to switch the simulator for an existing model. The simulator choice is fixed after choosing the template.
+Choose the solver with the **Simulation Tool** combo on the Main tab:
+**OpenEMS | Palace | Elmer EM | Elmer Thermal**.
+Generate a matching default model (or open an existing Python model) for that tool.
+Switching tools for an already customized script is not automatic — start from the matching template or open a model written for that solver.
 
 ---
 
@@ -353,7 +380,8 @@ At present, EMStudio does **not** allow to switch the simulator for an existing 
 
 EMStudio is compatible with most publicly available example projects that demonstrate complete EM simulation flows based on **IHP SG13G2** technology.
 
-These repositories provide real-world examples for both **OpenEMS** and **Palace**, including GDS layouts, stackup files, simulation scripts, and S‑parameter extraction.
+These repositories provide real-world examples for **OpenEMS**, **Palace**, and **Elmer**
+(including thermal), with GDS layouts, stackup files, simulation scripts, and post-processing.
 
 ---
 
@@ -418,15 +446,40 @@ EMStudio will:
 
 ---
 
+## 3. Elmer Thermal Example (gds2palace / Elmer)
+
+Elmer Thermal models follow the same gds2palace stackup + GDS flow as Palace/Elmer EM,
+with heat sources and constant-temperature boundaries instead of RF ports.
+
+Typical ingredients:
+
+- Stackup XML with thermal conductivity (and optional temperature tables)  
+- GDS marker layers for heatsource / consttemp objects  
+- Python model using `create_elmer_thermal`  
+- Results: `thermal_results*.vtu` (open in ParaView) and `thermal_results.dat` (min/max T)
+
+### Using with EMStudio
+
+1. Set **Simulation Tool** to **Elmer Thermal**  
+2. Configure `ELMER_SOLVER_PATH`, `ELMER_PYTHON` (Python ≥ 3.12 recommended), and optionally `PARAVIEW_EXE`  
+3. Open or generate a thermal Python model, set GDS + XML, define Thermal objects  
+4. Run from the Simulate tab — on success, ParaView opens the temperature field  
+
+<img src="./doc/png/elmer_thermal1.png" alt="Elmer Thermal example" width="700">
+
+---
+
 # Summary
 
 These example repositories are ideal for learning EMStudio workflows and validating correct operation.
 
-EMStudio can be used directly with both OpenEMS and Palace models for:
+EMStudio can be used directly with OpenEMS, Palace, and Elmer models for:
 
 - Full‑wave EM simulation  
-- SG13G2 stack evaluation  
+- Steady-state thermal (heat) simulation with Elmer Thermal  
+- SG13G2 / interposer stack evaluation  
 - Port setup & S‑parameter extraction  
+- Thermal object setup and ParaView field viewing  
 - Automated script generation  
 - KLayout‑based design environment integration
 

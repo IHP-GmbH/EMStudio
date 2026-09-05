@@ -349,9 +349,7 @@ When creating ports entries from scratch, there is a checkbox "Use Substrate Lay
 
 In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area. 
 
-When **Elmer Thermal** is selected as the simulation tool, the Ports tab becomes **Thermal**. Instead of EM ports you define thermal objects (heat sources in Watts and constant-temperature boundaries in Kelvin), each with a GDS marker layer and a target stackup layer. After a successful solve, EMStudio opens the temperature field (`thermal_results*.vtu`) in ParaView.
-
-<img src="./doc/png/elmer_thermal1.png" alt="Elmer Thermal and ParaView" width="700">
+When **Elmer Thermal** is selected as the simulation tool, the Ports tab becomes **Thermal**. Instead of EM ports you define thermal objects (heat sources in Watts and constant-temperature boundaries in Kelvin), each with a GDS marker layer and a target stackup layer. After a successful solve, EMStudio opens the temperature field (`thermal_results*.vtu`) in ParaView (see the screenshot under [Elmer (EM and Thermal)](#elmer-em-and-thermal) above).
 
 ## Simulate
 
@@ -479,7 +477,7 @@ Typical ingredients:
 3. Open or generate a thermal Python model, set GDS + XML, define Thermal objects  
 4. Run from the Simulate tab — on success, ParaView opens the temperature field  
 
-<img src="./doc/png/elmer_thermal1.png" alt="Elmer Thermal example" width="700">
+(See the Elmer Thermal screenshot under [Elmer (EM and Thermal)](#elmer-em-and-thermal).)
 
 ---
 

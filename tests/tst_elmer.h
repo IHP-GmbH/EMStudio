@@ -25,6 +25,10 @@ private slots:
     void findThermalResultsVtu_prefersThermalResultsPrefix();
     void resolveParaViewExecutable_usesPreferenceWhenPresent();
     void substrateOffset_expressionResolvesWithVariables();
+    void thermalRows_addRemoveAndWorkflowHelpers();
+    void openThermalResults_noVtuIsNoop();
+    void openThermalResults_withVtuAndParaViewStub();
+    void generateScript_elmerThermalFromGui();
 };
 
 #endif // TST_ELMER_H

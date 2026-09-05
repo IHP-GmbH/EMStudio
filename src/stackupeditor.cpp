@@ -1233,6 +1233,7 @@ bool StackupEditor::loadImportedXml(const QString &xmlPath, const QString &sourc
 
 void StackupEditor::onImportAdsSubst()
 {
+    // GCOVR_EXCL_START — QFileDialog / QMessageBox interactive ADS import
     if (!maybeSave())
         return;
 
@@ -1285,10 +1286,12 @@ void StackupEditor::onImportAdsSubst()
         QMessageBox::information(this, tr("Import complete"),
                                  tr("Stackup imported successfully.\nUse Save As… to store the XML."));
     }
+    // GCOVR_EXCL_STOP
 }
 
 void StackupEditor::onImportAdsLtd()
 {
+    // GCOVR_EXCL_START — QFileDialog / QMessageBox interactive ADS import
     if (!maybeSave())
         return;
 
@@ -1331,10 +1334,12 @@ void StackupEditor::onImportAdsLtd()
         QMessageBox::information(this, tr("Import complete"),
                                  tr("Stackup imported successfully.\nUse Save As… to store the XML."));
     }
+    // GCOVR_EXCL_STOP
 }
 
 void StackupEditor::onExportAdsSubst()
 {
+    // GCOVR_EXCL_START — QFileDialog / QMessageBox interactive ADS export
     collectModelFromTables();
 
     QString start = m_filePath;
@@ -1374,4 +1379,5 @@ void StackupEditor::onExportAdsSubst()
                  err.isEmpty()
                      ? tr("Open in ADS and verify the stackup.")
                      : err));
+    // GCOVR_EXCL_STOP
 }

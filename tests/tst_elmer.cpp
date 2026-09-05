@@ -315,3 +315,165 @@ void ElmerTest::substrateOffset_expressionResolvesWithVariables()
     }
     QVERIFY(foundBg);
 }
+
+void ElmerTest::thermalRows_addRemoveAndWorkflowHelpers()
+{
+    MainWindow w;
+
+    const QString stub = ensureTestElmerSolverStub();
+    QVERIFY2(!stub.isEmpty(), "Elmer solver stub not found");
+#ifndef Q_OS_WIN
+    QFile::setPermissions(stub,
+                          QFile::permissions(stub) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+    w.testSetPreference(QStringLiteral("ELMER_SOLVER_PATH"), stub);
+    w.refreshSimToolOptionsForTests();
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("elmer_thermal"), &err), qPrintable(err));
+
+    w.testRemoveAllThermalObjects();
+    QCOMPARE(w.testThermalRowCount(), 0);
+
+    w.testEnsureThermalTableFromScript(
+        QStringLiteral(
+            "thermal_objects = simulation_setup.all_thermal_objects()\n"
+            "thermal_objects.add_heatsource(simulation_setup.heatsource("
+            "power=0.2, source_layernum=201, target_layername='M1'))\n"));
+    QCOMPARE(w.testThermalRowCount(), 1);
+
+    w.testClickAddThermalObject();
+    QCOMPARE(w.testThermalRowCount(), 2);
+
+    w.testSetThermalCurrentRow(1);
+    w.testClickRemoveSelectedThermalObject();
+    QCOMPARE(w.testThermalRowCount(), 1);
+
+    const QString rebuilt = w.testBuildThermalCodeFromGui();
+    QVERIFY(rebuilt.contains(QStringLiteral("add_heatsource")));
+    QVERIFY(rebuilt.contains(QStringLiteral("M1")));
+
+    QString palaceish =
+        QStringLiteral("settings['palace'] = True\n"
+                       "config_name, data_dir = simulation_setup.create_palace(settings)\n"
+                       "path = utilities.create_sim_path(script_path, model_basename)\n");
+    const QString thermalized = w.testApplyElmerThermalWorkflow(palaceish);
+    QVERIFY(thermalized.contains(QStringLiteral("elmer_thermal")));
+    QVERIFY(thermalized.contains(QStringLiteral("create_elmer_thermal")));
+    QVERIFY(thermalized.contains(QStringLiteral("dirname='elmer_model'")));
+
+    const QString withSection = w.testReplaceOrInsertThermalSection(
+        QStringLiteral("# ==== run simulation ====\nprint('x')\n"),
+        QStringLiteral("thermal_objects = simulation_setup.all_thermal_objects()\n"));
+    QVERIFY(withSection.contains(QStringLiteral("all_thermal_objects")));
+    QVERIFY(withSection.contains(QStringLiteral("run simulation")));
+
+    const QString replaced = w.testReplaceOrInsertThermalSection(
+        QStringLiteral("thermal_objects = simulation_setup.all_thermal_objects()\n"
+                       "thermal_objects.add_heatsource(simulation_setup.heatsource("
+                       "power=1, source_layernum=1, target_layername='A'))\n"
+                       "print('done')\n"),
+        QStringLiteral("thermal_objects = simulation_setup.all_thermal_objects()\n"
+                       "thermal_objects.add_consttemp(simulation_setup.constanttemp("
+                       "temp=300, source_layernum=2, target_layername='B'))\n"));
+    QVERIFY(replaced.contains(QStringLiteral("add_consttemp")));
+    QVERIFY(!replaced.contains(QStringLiteral("add_heatsource")));
+}
+
+void ElmerTest::openThermalResults_noVtuIsNoop()
+{
+    MainWindow w;
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // No VTU → early return; should not throw / hang.
+    w.testOpenThermalResultsInParaView(dir.path());
+}
+
+void ElmerTest::openThermalResults_withVtuAndParaViewStub()
+{
+    MainWindow w;
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString vtu = dir.filePath(QStringLiteral("thermal_results.vtu"));
+    {
+        QFile f(vtu);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("<VTKFile/>");
+        f.close();
+    }
+
+#ifdef Q_OS_WIN
+    const QString pv = dir.filePath(QStringLiteral("paraview_stub.cmd"));
+    {
+        QFile f(pv);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream(&f) << "@echo off\r\nexit /b 0\r\n";
+    }
+#else
+    const QString pv = dir.filePath(QStringLiteral("paraview_stub.sh"));
+    {
+        QFile f(pv);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream(&f) << "#!/bin/sh\nexit 0\n";
+    }
+    QFile::setPermissions(pv,
+                          QFile::permissions(pv) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.testSetPreference(QStringLiteral("PARAVIEW_EXE"), pv);
+    w.testOpenThermalResultsInParaView(dir.path());
+
+    // Helper script should be written next to the VTU.
+    QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("_emstudio_open_thermal_paraview.py"))));
+}
+
+void ElmerTest::generateScript_elmerThermalFromGui()
+{
+    MainWindow w;
+
+    const QString scripts = repoScriptsDir();
+    QVERIFY2(QDir(scripts).exists(), qPrintable(scripts));
+    w.testSetPreference(QStringLiteral("MODEL_TEMPLATES_DIR"), scripts);
+
+    const QString stub = ensureTestElmerSolverStub();
+    QVERIFY(!stub.isEmpty());
+#ifndef Q_OS_WIN
+    QFile::setPermissions(stub,
+                          QFile::permissions(stub) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+    w.testSetPreference(QStringLiteral("ELMER_SOLVER_PATH"), stub);
+    w.refreshSimToolOptionsForTests();
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("elmer_thermal"), &err), qPrintable(err));
+    QVERIFY(w.testInitDefaultElmerThermalModel());
+
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY(!xmlPath.isEmpty());
+    w.setSubstrateFile(xmlPath);
+    w.setTopCell(QStringLiteral("TOP"));
+    w.setGdsFile(QStringLiteral("dummy.gds"));
+
+    w.testEnsureThermalTableFromScript(
+        QStringLiteral(
+            "thermal_objects = simulation_setup.all_thermal_objects()\n"
+            "thermal_objects.add_heatsource(simulation_setup.heatsource("
+            "power=0.1, source_layernum=201, target_layername='Metal1'))\n"));
+
+    QString genErr;
+    const QString script = w.testGenerateScriptFromGuiState(&genErr);
+    QVERIFY2(!script.isEmpty(), qPrintable(genErr));
+    QVERIFY(script.contains(QStringLiteral("elmer_thermal"))
+            || script.contains(QStringLiteral("create_elmer_thermal"))
+            || script.contains(QStringLiteral("all_thermal_objects")));
+}

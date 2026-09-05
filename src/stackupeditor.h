@@ -88,6 +88,20 @@ public:
     void selectStackItem(const QString &name, const QString &kind);
     void clearTableSelection();
 
+#ifdef EMSTUDIO_TESTING
+    bool testSaveToPath(const QString &path) { return saveToPath(path); }
+    bool testLoadImportedXml(const QString &xmlPath, const QString &sourceLabel)
+    {
+        return loadImportedXml(xmlPath, sourceLabel);
+    }
+    QString testResolveAdsConvertScript() const { return resolveAdsConvertScript(); }
+    QString testResolveHostPython() const { return resolveHostPython(); }
+    bool testRunAdsConvert(const QStringList &args, QString *stdoutText, QString *stderrText)
+    {
+        return runAdsConvert(args, stdoutText, stderrText);
+    }
+#endif
+
 public slots:
     void markModified();
 

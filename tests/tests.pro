@@ -18,6 +18,14 @@ SOURCES += \
     tst_openems_golden.cpp \
     tst_palace_golden.cpp \
     tst_elmer.cpp \
+    tst_touchstone.cpp \
+    tst_smithchart.cpp \
+    tst_stackupexpr.cpp \
+    tst_substrate.cpp \
+    tst_stackup_editor.cpp \
+    tst_results_viewer.cpp \
+    tst_substrate_view.cpp \
+    tst_tips.cpp \
     tst_preferences_dialog.cpp \
     tst_python_editor.cpp \
     tst_wsl_helper.cpp
@@ -32,6 +40,14 @@ HEADERS += \
     tst_openems_golden.h \
     tst_palace_golden.h \
     tst_elmer.h \
+    tst_touchstone.h \
+    tst_smithchart.h \
+    tst_stackupexpr.h \
+    tst_substrate.h \
+    tst_stackup_editor.h \
+    tst_results_viewer.h \
+    tst_substrate_view.h \
+    tst_tips.h \
     tst_preferences_dialog.h \
     tst_python_editor.h \
     tst_wsl_helper.h

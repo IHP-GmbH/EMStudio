@@ -20,6 +20,14 @@
 #include "tst_preferences_dialog.h"
 #include "tst_keywords_editor_dialog.h"
 #include "tst_elmer.h"
+#include "tst_touchstone.h"
+#include "tst_smithchart.h"
+#include "tst_stackupexpr.h"
+#include "tst_substrate.h"
+#include "tst_stackup_editor.h"
+#include "tst_results_viewer.h"
+#include "tst_substrate_view.h"
+#include "tst_tips.h"
 
 namespace
 {
@@ -129,6 +137,14 @@ int main(int argc, char **argv)
         ADD_TEST(PalaceGolden),
         ADD_TEST(OpenemsGolden),
         ADD_TEST(ElmerTest),
+        ADD_TEST(TouchstoneTest),
+        ADD_TEST(SmithChartTest),
+        ADD_TEST(StackupExprTest),
+        ADD_TEST(SubstrateTest),
+        ADD_TEST(StackupEditorTest),
+        ADD_TEST(ResultsViewerTest),
+        ADD_TEST(SubstrateViewTest),
+        ADD_TEST(TipsTest),
         ADD_TEST(AboutDialogTest),
         ADD_TEST(PreferencesDialogTest),
         ADD_TEST(FindDialogTest),

@@ -769,5 +769,68 @@ QString MainWindow::testResolveParaViewExecutable() const
     return resolveParaViewExecutable();
 }
 
+void MainWindow::testClickAddThermalObject()
+{
+    addThermalObjectRow();
+}
+
+void MainWindow::testClickRemoveSelectedThermalObject()
+{
+    removeSelectedThermalObjectRow();
+}
+
+void MainWindow::testRemoveAllThermalObjects()
+{
+    removeAllThermalObjectRows();
+}
+
+void MainWindow::testSetThermalCurrentRow(int row)
+{
+    setupThermalObjectsUi();
+    if (m_tblThermalObjects)
+        m_tblThermalObjects->setCurrentCell(row, 0);
+}
+
+QString MainWindow::testApplyElmerThermalWorkflow(const QString &script) const
+{
+    QString s = script;
+    const_cast<MainWindow *>(this)->applyElmerThermalWorkflowToScript(s);
+    return s;
+}
+
+QString MainWindow::testReplaceOrInsertThermalSection(const QString &script,
+                                                      const QString &thermalCode) const
+{
+    QString s = script;
+    const_cast<MainWindow *>(this)->replaceOrInsertThermalSection(s, thermalCode);
+    return s;
+}
+
+void MainWindow::testOpenThermalResultsInParaView(const QString &runDir)
+{
+    openThermalResultsInParaView(runDir);
+}
+
+QString MainWindow::testResolveKeywordsPath(const QString &simKeyLower) const
+{
+    return resolveKeywordsPath(simKeyLower);
+}
+
+QMap<QString, QString> MainWindow::testLoadKeywordTipsCsv(const QString &simKeyLower) const
+{
+    return loadKeywordTipsCsv(simKeyLower);
+}
+
+void MainWindow::testRefreshKeywordTipsForCurrentTool()
+{
+    refreshKeywordTipsForCurrentTool();
+}
+
+QMap<QString, QString> MainWindow::testMergeTipsPreferModel(const QMap<QString, QString> &modelTips,
+                                                            const QMap<QString, QString> &fallbackTips) const
+{
+    return mergeTipsPreferModel(modelTips, fallbackTips);
+}
+
 #endif
 

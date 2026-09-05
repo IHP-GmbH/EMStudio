@@ -1,0 +1,4 @@
+! Sample 2-port Touchstone (MA, GHz) — column order S11,S21,S12,S22
+# GHZ S MA R 75
+1.0 0.9 10 0.1 90 0.2 -45 0.8 0
+2.0 0.85 20 0.15 80 0.25 -30 0.75 5

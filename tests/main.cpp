@@ -19,6 +19,7 @@
 #include "tst_headless_dispatch.h"
 #include "tst_preferences_dialog.h"
 #include "tst_keywords_editor_dialog.h"
+#include "tst_elmer.h"
 
 namespace
 {
@@ -127,6 +128,7 @@ int main(int argc, char **argv)
         ADD_TEST(PythonEditorTest),
         ADD_TEST(PalaceGolden),
         ADD_TEST(OpenemsGolden),
+        ADD_TEST(ElmerTest),
         ADD_TEST(AboutDialogTest),
         ADD_TEST(PreferencesDialogTest),
         ADD_TEST(FindDialogTest),

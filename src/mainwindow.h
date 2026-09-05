@@ -228,6 +228,20 @@ public:
                                     const QString& launcherPath = QString());
     QString                         testMainLogText() const;
 
+    // Elmer EM / Thermal helpers
+    QString                         testNormalizeSimToolKey(const QString &key) const;
+    bool                            testIsElmerFamilyKey(const QString &key) const;
+    bool                            testIsElmerEmKey(const QString &key) const;
+    bool                            testIsElmerThermalKey(const QString &key) const;
+    QString                         testDetectPythonModelSimKey(const QString &text) const;
+    bool                            testInitDefaultElmerEmModel();
+    bool                            testInitDefaultElmerThermalModel();
+    void                            testEnsureThermalTableFromScript(const QString &script);
+    QString                         testBuildThermalCodeFromGui() const;
+    int                             testThermalRowCount() const;
+    QString                         testFindThermalResultsVtu(const QString &runDir) const;
+    QString                         testResolveParaViewExecutable() const;
+
 #ifdef Q_OS_WIN
     QString                         testParsePhysicalCoresFromLscpuCsv(const QString& out) const;
 #endif

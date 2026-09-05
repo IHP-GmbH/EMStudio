@@ -700,5 +700,74 @@ QString MainWindow::testMainLogText() const
     : QString();
 }
 
+QString MainWindow::testNormalizeSimToolKey(const QString &key) const
+{
+    return normalizeSimToolKey(key);
+}
+
+bool MainWindow::testIsElmerFamilyKey(const QString &key) const
+{
+    return isElmerFamilyKey(key);
+}
+
+bool MainWindow::testIsElmerEmKey(const QString &key) const
+{
+    return isElmerEmKey(key);
+}
+
+bool MainWindow::testIsElmerThermalKey(const QString &key) const
+{
+    return isElmerThermalKey(key);
+}
+
+QString MainWindow::testDetectPythonModelSimKey(const QString &text) const
+{
+    return detectPythonModelSimKey(text);
+}
+
+bool MainWindow::testInitDefaultElmerEmModel()
+{
+    const QString script = createDefaultElmerEmScript();
+    if (script.trimmed().isEmpty())
+        return false;
+    testSetEditorText(script);
+    return true;
+}
+
+bool MainWindow::testInitDefaultElmerThermalModel()
+{
+    const QString script = createDefaultElmerThermalScript();
+    if (script.trimmed().isEmpty())
+        return false;
+    testSetEditorText(script);
+    return true;
+}
+
+void MainWindow::testEnsureThermalTableFromScript(const QString &script)
+{
+    removeAllThermalObjectRows();
+    ensureThermalTableInitializedFromScript(script);
+}
+
+QString MainWindow::testBuildThermalCodeFromGui() const
+{
+    return buildThermalCodeFromGuiTable();
+}
+
+int MainWindow::testThermalRowCount() const
+{
+    return m_tblThermalObjects ? m_tblThermalObjects->rowCount() : 0;
+}
+
+QString MainWindow::testFindThermalResultsVtu(const QString &runDir) const
+{
+    return findThermalResultsVtu(runDir);
+}
+
+QString MainWindow::testResolveParaViewExecutable() const
+{
+    return resolveParaViewExecutable();
+}
+
 #endif
 

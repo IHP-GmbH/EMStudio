@@ -17,6 +17,7 @@ SOURCES += \
     tst_mainwindow_ports.cpp \
     tst_openems_golden.cpp \
     tst_palace_golden.cpp \
+    tst_elmer.cpp \
     tst_preferences_dialog.cpp \
     tst_python_editor.cpp \
     tst_wsl_helper.cpp
@@ -30,6 +31,7 @@ HEADERS += \
     tst_mainwindow_ports.h \
     tst_openems_golden.h \
     tst_palace_golden.h \
+    tst_elmer.h \
     tst_preferences_dialog.h \
     tst_python_editor.h \
     tst_wsl_helper.h

@@ -50,9 +50,6 @@ coverage*
 test_results.txt
 test_results_*.txt
 
-# --- Local examples (downloaded stackup XMLs etc.) ---
-examples/
-
 # --- Local run artifacts ---
 output/
 docker/workspace/.bash_history

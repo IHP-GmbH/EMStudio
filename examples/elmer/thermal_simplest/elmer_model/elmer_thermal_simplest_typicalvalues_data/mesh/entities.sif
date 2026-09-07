@@ -1,0 +1,110 @@
+!------ Skeleton for body section -----
+Body 1
+  Name = Metal4
+End
+
+Body 2
+  Name = Metal5
+End
+
+Body 3
+  Name = TopVia1
+End
+
+Body 4
+  Name = TopMetal1
+End
+
+Body 5
+  Name = TopVia2
+End
+
+Body 6
+  Name = TopMetal2
+End
+
+Body 7
+  Name = Passive
+End
+
+Body 8
+  Name = SiO2
+End
+
+Body 9
+  Name = Substrate_Interposer
+End
+
+Body 10
+  Name = source_201
+End
+
+!------ Skeleton for boundary section -----
+Boundary Condition 1
+  Name = Metal4_1_xy
+End
+
+Boundary Condition 2
+  Name = Metal4_1_z
+End
+
+Boundary Condition 3
+  Name = Metal5_1_xy
+End
+
+Boundary Condition 4
+  Name = Metal5_1_z
+End
+
+Boundary Condition 5
+  Name = Metal5_2_xy
+End
+
+Boundary Condition 6
+  Name = Metal5_2_z
+End
+
+Boundary Condition 7
+  Name = TopMetal1_1_xy
+End
+
+Boundary Condition 8
+  Name = TopMetal1_1_z
+End
+
+Boundary Condition 9
+  Name = TopMetal1_2_xy
+End
+
+Boundary Condition 10
+  Name = TopMetal1_2_z
+End
+
+Boundary Condition 11
+  Name = TopMetal2_1_xy
+End
+
+Boundary Condition 12
+  Name = TopMetal2_1_z
+End
+
+Boundary Condition 13
+  Name = TopMetal2_2_xy
+End
+
+Boundary Condition 14
+  Name = TopMetal2_2_z
+End
+
+Boundary Condition 15
+  Name = source_201_1_xy
+End
+
+Boundary Condition 16
+  Name = source_201_1_z
+End
+
+Boundary Condition 17
+  Name = constanttemp_202
+End
+

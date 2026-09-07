@@ -1,0 +1,197 @@
+
+Check Keywords "warn"
+
+Header
+Mesh DB "mesh" "."
+End
+
+Simulation
+Coordinate Mapping(3) = Integer 1 2 3
+Simulation Type = Steady state
+Steady State Max Iterations = 1
+Coordinate System = String "Cartesian"
+Coordinate Scaling = Real 1e-6
+Use Mesh Names = Logical True
+Mesh Levels = 1
+Post File = ../thermal_results.vtu
+End
+
+
+Equation 1
+Name = "ThermalPhysics"
+Active Solvers(2) = 1 2
+End
+
+Solver 1
+Equation = Heat Equation
+Procedure = "HeatSolve" "HeatSolver"
+Variable = Temperature
+Linear System Solver = Iterative
+Linear System Iterative Method = BiCGStabl
+Linear System Max Iterations = 2500
+Linear System Convergence Tolerance = 1.0e-10
+Linear System Preconditioning = ILU1
+Steady State Convergence Tolerance = 1.0e-5
+End        
+
+Solver 2
+  Equation = SaveScalars
+  Procedure = "SaveData" "SaveScalars"
+
+  Filename = "../thermal_results.dat"
+
+  Variable 1 = Temperature
+  Operator 1 = min
+  Operator 2 = max
+End
+
+Material 1
+   Name = string "Metal4"
+   Density = Real 1.0
+   Heat Conductivity = 237.0
+End
+
+Material 2
+   Name = string "Metal5"
+   Density = Real 1.0
+   Heat Conductivity = 237.0
+End
+
+Material 3
+   Name = string "TopVia1"
+   Density = Real 1.0
+   Heat Conductivity = 174.0
+End
+
+Material 4
+   Name = string "TopMetal1"
+   Density = Real 1.0
+   Heat Conductivity = 237.0
+End
+
+Material 5
+   Name = string "TopVia2"
+   Density = Real 1.0
+   Heat Conductivity = 174.0
+End
+
+Material 6
+   Name = string "TopMetal2"
+   Density = Real 1.0
+   Heat Conductivity = 237.0
+End
+
+Material 7
+   Name = string "Passive"
+   Density = Real 1.0
+   Heat Conductivity = 0.5
+End
+
+Material 8
+   Name = string "SiO2"
+   Density = Real 1.0
+   Heat Conductivity = 1.0
+End
+
+Material 9
+   Name = string "HighResSubstrate"
+   Density = Real 1.0
+   Heat Conductivity = Variable Temperature
+    Real
+      280.00 163.00
+      290.00 155.20
+      300.00 148.00
+      310.00 141.30
+      320.00 135.10
+      330.00 129.30
+      340.00 124.00
+      350.00 119.00
+      360.00 114.40
+      370.00 110.20
+      380.00 106.20
+      390.00 102.40
+      400.00 98.90
+      410.00 96.10
+      420.00 93.40
+      430.00 90.90
+      440.00 88.50
+      450.00 86.20
+    End
+End
+
+Material 10
+   Name = string "TFR"
+   Density = Real 1.0
+   Heat Conductivity = 100.0
+End
+
+Body 1
+   Equation = Integer 1
+   Name = "Metal4"
+   Material = 1
+End
+
+Body 2
+   Equation = Integer 1
+   Name = "Metal5"
+   Material = 2
+End
+
+Body 3
+   Equation = Integer 1
+   Name = "TopVia1"
+   Material = 3
+End
+
+Body 4
+   Equation = Integer 1
+   Name = "TopMetal1"
+   Material = 4
+End
+
+Body 5
+   Equation = Integer 1
+   Name = "TopVia2"
+   Material = 5
+End
+
+Body 6
+   Equation = Integer 1
+   Name = "TopMetal2"
+   Material = 6
+End
+
+Body 7
+   Equation = Integer 1
+   Name = "Passive"
+   Material = 7
+End
+
+Body 8
+   Equation = Integer 1
+   Name = "SiO2"
+   Material = 8
+End
+
+Body 9
+   Equation = Integer 1
+   Name = "Substrate_Interposer"
+   Material = 9
+End
+
+Body 10
+   Equation = Integer 1
+   Name = "source_201"
+   Material = 10
+   Body Force = 1
+End
+
+Body Force 1
+   Volumetric Heat Source = -distribute 6.500000e-01
+End
+
+Boundary Condition 1
+   Name = "constanttemp_202"
+   Temperature = Real 298.000000
+End
+

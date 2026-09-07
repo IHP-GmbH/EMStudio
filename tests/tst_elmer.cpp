@@ -477,3 +477,18 @@ void ElmerTest::generateScript_elmerThermalFromGui()
             || script.contains(QStringLiteral("create_elmer_thermal"))
             || script.contains(QStringLiteral("all_thermal_objects")));
 }
+
+void ElmerTest::forceStartSimulationOff_clearsTrueFlags()
+{
+    MainWindow w;
+    const QString in =
+        QStringLiteral(
+            "start_simulation = True  # run solver from script\n"
+            "settings['start_simulation'] = True\n"
+            "settings[\"other\"] = 1\n");
+    const QString out = w.testForceStartSimulationOff(in);
+    QVERIFY(out.contains(QStringLiteral("start_simulation = False")));
+    QVERIFY(out.contains(QStringLiteral("settings['start_simulation'] = False")));
+    QVERIFY(!out.contains(QStringLiteral("start_simulation = True")));
+    QVERIFY(out.contains(QStringLiteral("settings[\"other\"] = 1")));
+}

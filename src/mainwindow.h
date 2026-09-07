@@ -248,6 +248,7 @@ public:
     QString                         testApplyElmerThermalWorkflow(const QString &script) const;
     QString                         testReplaceOrInsertThermalSection(const QString &script,
                                                                       const QString &thermalCode) const;
+    QString                         testForceStartSimulationOff(const QString &script) const;
     void                            testOpenThermalResultsInParaView(const QString &runDir);
     QString                         testResolveKeywordsPath(const QString &simKeyLower) const;
     QMap<QString, QString>          testLoadKeywordTipsCsv(const QString &simKeyLower) const;
@@ -354,6 +355,7 @@ private:
     void                            applyElmerThermalWorkflowToScript(QString &script);
     void                            applyPalaceWorkflowToScript(QString &script);
     void                            syncGuiSettingsToPythonEditor();
+    void                            forceStartSimulationOff(QString &script) const;
     void                            applyBoundaries(QString &script, bool alsoTopLevelAssignment);
     void                            applyGdsAndXmlPaths(QString &script, const QString &simKeyLower);
     void                            applyVariableOverridesToScript(QString &script);

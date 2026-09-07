@@ -72,8 +72,10 @@ Download the artifact named **emstudio-linux-ubuntu24**. It's a self-contained b
 2. Run it with:
 
 ```bash
-./EMStudio.sh
+./EMStudio
 ```
+
+`EMStudio` is a small launcher that sets up the bundled Qt libraries; the real binary is `EMStudio.bin`. Do not start `EMStudio.bin` directly unless you set `LD_LIBRARY_PATH` yourself.
 
 This works on a normal Ubuntu desktop session (X11 or Wayland, with the usual graphics drivers). If it doesn't start on a minimal/server system, you may be missing one of these common packages: `libxkbcommon-x11-0 libxcb-cursor0 libgl1 libegl1 libdbus-1-3 fontconfig`.
 

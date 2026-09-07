@@ -806,6 +806,13 @@ QString MainWindow::testReplaceOrInsertThermalSection(const QString &script,
     return s;
 }
 
+QString MainWindow::testForceStartSimulationOff(const QString &script) const
+{
+    QString s = script;
+    forceStartSimulationOff(s);
+    return s;
+}
+
 void MainWindow::testOpenThermalResultsInParaView(const QString &runDir)
 {
     openThermalResultsInParaView(runDir);

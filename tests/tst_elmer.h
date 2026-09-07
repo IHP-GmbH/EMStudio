@@ -29,6 +29,7 @@ private slots:
     void openThermalResults_noVtuIsNoop();
     void openThermalResults_withVtuAndParaViewStub();
     void generateScript_elmerThermalFromGui();
+    void forceStartSimulationOff_clearsTrueFlags();
 };
 
 #endif // TST_ELMER_H

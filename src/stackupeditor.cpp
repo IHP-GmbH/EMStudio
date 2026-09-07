@@ -1139,24 +1139,40 @@ QString StackupEditor::resolveHostPython() const
     QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
     settings.beginGroup(QStringLiteral("Preferences"));
     const QString elmerPy = settings.value(QStringLiteral("ELMER_PYTHON")).toString().trimmed();
+    const QString openemsPy = settings.value(QStringLiteral("OPENEMS_PYTHON")).toString().trimmed();
     settings.endGroup();
 
+#ifdef Q_OS_WIN
+    auto usable = [](const QString &p) {
+        return !p.isEmpty() && QFileInfo::exists(p) && !p.startsWith(QLatin1Char('/'));
+    };
+#else
     auto usable = [](const QString &p) {
         return !p.isEmpty() && QFileInfo::exists(p);
     };
+#endif
 
-    if (usable(elmerPy) && !elmerPy.startsWith(QLatin1Char('/')))
+    if (usable(elmerPy))
         return elmerPy;
+    if (usable(openemsPy))
+        return openemsPy;
+
+    const QString py3 = QStandardPaths::findExecutable(QStringLiteral("python3"));
+    if (usable(py3))
+        return py3;
 
     const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("python"));
     if (usable(fromPath))
         return fromPath;
 
+#ifdef Q_OS_WIN
     const QString pyLauncher = QStandardPaths::findExecutable(QStringLiteral("py"));
     if (usable(pyLauncher))
         return pyLauncher;
-
     return QStringLiteral("python");
+#else
+    return QStringLiteral("python3");
+#endif
 }
 
 bool StackupEditor::runAdsConvert(const QStringList &args, QString *stdoutText, QString *stderrText)

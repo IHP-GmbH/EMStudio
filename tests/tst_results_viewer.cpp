@@ -267,3 +267,18 @@ void ResultsViewerTest::nestedDirs_groupItemsAndConvertWithoutCsv()
     empty.setAttribute(Qt::WA_DontShowOnScreen, true);
     QVERIFY(!empty.tryConvertPalaceCsv(&log));
 }
+
+void ResultsViewerTest::hasTouchstoneFiles_skipsNeedForConvert()
+{
+    const QString s2p = QFINDTESTDATA("testdata/sample.s2p");
+    QVERIFY(!s2p.isEmpty());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    copyFixture(s2p, dir.filePath(QStringLiteral("already.s2p")));
+
+    ResultsViewer v;
+    v.setAttribute(Qt::WA_DontShowOnScreen, true);
+    v.setTargetDirectory(dir.path());
+    QVERIFY(v.hasTouchstoneFiles());
+}

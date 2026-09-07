@@ -3124,16 +3124,25 @@ void MainWindow::loadPythonModel(const QString &fileName)
         return;
     }
 
-    const QString text = QString::fromUtf8(file.readAll());
+    const QString textRaw = QString::fromUtf8(file.readAll());
     file.close();
+
+    QString text = textRaw;
+    forceStartSimulationOff(text);
 
     loadVariableOverridesFromScript(text);
 
+    // Parse from disk, then override start_simulation in memory (editor keeps forced False).
     PythonParser::Result res = PythonParser::parseSettings(fileName);
     if (!res.ok) {
         error(tr("Failed to parse Python model file:\n%1").arg(res.error));
         return;
     }
+
+    if (res.settings.contains(QStringLiteral("start_simulation")))
+        res.settings.insert(QStringLiteral("start_simulation"), false);
+    if (res.topLevel.contains(QStringLiteral("start_simulation")))
+        res.topLevel.insert(QStringLiteral("start_simulation"), false);
 
     m_curPythonData = res;
 
@@ -3145,6 +3154,9 @@ void MainWindow::loadPythonModel(const QString &fileName)
 
     const auto tips = mergeTipsPreferModel(res.settingTips, m_keywordTips);
     rebuildSimulationSettingsFromPalace(res.settings, tips, res.topLevel);
+
+    if (m_simSettings.contains(QStringLiteral("start_simulation")))
+        m_simSettings.insert(QStringLiteral("start_simulation"), false);
 
     const QDir modelDir(fi.absolutePath());
 

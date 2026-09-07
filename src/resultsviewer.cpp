@@ -214,6 +214,9 @@ void ResultsViewer::buildUi()
     connect(refreshBtn, &QPushButton::clicked, this, &ResultsViewer::refresh);
     fileBtnRow->addWidget(refreshBtn);
     m_convertBtn = new QPushButton(tr("CSV → Touchstone"), filesGroup);
+    m_convertBtn->setToolTip(
+        tr("Manual fallback: run combine_extend_snp.py when only Palace CSV is present.\n"
+           "Usually unnecessary after a normal EMStudio Run (Touchstone is created already)."));
     m_convertBtn->setToolTip(tr("Run combine_extend_snp.py on this folder "
                                 "(Palace port-S.csv → .sNp). Needed before plotting."));
     connect(m_convertBtn, &QPushButton::clicked, this, &ResultsViewer::convertPalaceCsv);
@@ -459,6 +462,13 @@ bool ResultsViewer::hasPalaceCsv() const
     return false;
 }
 
+bool ResultsViewer::hasTouchstoneFiles() const
+{
+    if (m_targetDir.isEmpty() || !QDir(m_targetDir).exists())
+        return false;
+    return !findTouchstoneFiles(m_targetDir).isEmpty();
+}
+
 QString ResultsViewer::resolveCombineScript() const
 {
     const QString appDir = QCoreApplication::applicationDirPath();
@@ -483,27 +493,46 @@ QString ResultsViewer::resolveHostPython() const
     settings.beginGroup(QStringLiteral("Preferences"));
     const QString openemsPy = settings.value(QStringLiteral("OPENEMS_PYTHON")).toString().trimmed();
     const QString elmerPy = settings.value(QStringLiteral("ELMER_PYTHON")).toString().trimmed();
+    const QString palacePy = settings.value(QStringLiteral("PALACE_PYTHON")).toString().trimmed();
     settings.endGroup();
 
-    auto usableWin = [](const QString &p) {
+#ifdef Q_OS_WIN
+    // On Windows, ignore WSL-style absolute paths (Palace often points at /home/...).
+    auto usable = [](const QString &p) {
         return !p.isEmpty() && QFileInfo::exists(p) && !p.startsWith(QLatin1Char('/'));
     };
+#else
+    auto usable = [](const QString &p) {
+        return !p.isEmpty() && QFileInfo::exists(p);
+    };
+#endif
 
-    // Prefer a native Windows interpreter with scikit-rf (not WSL PALACE_PYTHON).
-    if (usableWin(openemsPy))
+    if (usable(openemsPy))
         return openemsPy;
-    if (usableWin(elmerPy))
+    if (usable(elmerPy))
         return elmerPy;
+#ifndef Q_OS_WIN
+    // Native Linux Palace venv is a valid host interpreter for combine_extend_snp.py.
+    if (usable(palacePy))
+        return palacePy;
+#endif
 
-    const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("python"));
-    if (usableWin(fromPath))
-        return fromPath;
+    const QString py3 = QStandardPaths::findExecutable(QStringLiteral("python3"));
+    if (usable(py3))
+        return py3;
 
+    const QString py = QStandardPaths::findExecutable(QStringLiteral("python"));
+    if (usable(py))
+        return py;
+
+#ifdef Q_OS_WIN
     const QString pyLauncher = QStandardPaths::findExecutable(QStringLiteral("py"));
-    if (usableWin(pyLauncher))
+    if (usable(pyLauncher))
         return pyLauncher;
-
     return QStringLiteral("python");
+#else
+    return QStringLiteral("python3");
+#endif
 }
 
 QStringList ResultsViewer::hostPythonArgs(const QString &python) const
@@ -1061,9 +1090,10 @@ void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
         if (auto *axY = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Vertical).value(0)))
             axY->setTitleText(QStringLiteral("dB"));
         if (auto *axY = qobject_cast<QValueAxis *>(phChart->axes(Qt::Vertical).value(0))) {
-            axY->setTitleText(QStringLiteral("phase"));
+            axY->setTitleText(QStringLiteral("°"));
             axY->setRange(-180.0, 180.0);
-            axY->setTickCount(9); // -180..180 every 45
+            axY->setTickCount(5); // -180,-90,0,90,180 — readable in narrow panes
+            axY->setLabelFormat(QStringLiteral("%.0f"));
         }
 
         colLayout->addWidget(makeChartView(dbChart), 1);

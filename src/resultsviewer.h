@@ -57,8 +57,8 @@ public:
     void setTargetDirectory(const QString &dir);
     QString targetDirectory() const;
     void rescan();
-    //! Runs scripts/combine_extend_snp.py with cwd = target dir. Returns true on success.
     bool tryConvertPalaceCsv(QString *logOut = nullptr);
+    bool hasTouchstoneFiles() const;
 
 public slots:
     void refresh();

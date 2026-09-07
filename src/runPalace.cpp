@@ -581,19 +581,27 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
                 if (!runDir.isEmpty())
                     m_resultsViewer->setTargetDirectory(runDir);
 
-                QString convertLog;
-                if (m_resultsViewer->tryConvertPalaceCsv(&convertLog)) {
+                // Palace/Elmer launcher often already ran combine_snp → .sNp present.
+                // Skip a redundant host-side CSV→Touchstone pass in that case.
+                if (m_resultsViewer->hasTouchstoneFiles()) {
                     appendToSimulationLog(
-                        QStringLiteral("\n[CSV → Touchstone via combine_extend_snp.py]\n%1\n")
-                            .arg(convertLog.isEmpty() ? QStringLiteral("(ok)") : convertLog)
-                            .toUtf8());
+                        QByteArray("\n[CSV → Touchstone skipped: Touchstone (.sNp) already present]\n"));
                     m_resultsViewer->refresh();
-                } else if (!convertLog.isEmpty()) {
-                    appendToSimulationLog(
-                        QStringLiteral("\n[CSV → Touchstone skipped/failed: %1]\n")
-                            .arg(convertLog)
-                            .toUtf8());
-                    m_resultsViewer->refresh();
+                } else {
+                    QString convertLog;
+                    if (m_resultsViewer->tryConvertPalaceCsv(&convertLog)) {
+                        appendToSimulationLog(
+                            QStringLiteral("\n[CSV → Touchstone via combine_extend_snp.py]\n%1\n")
+                                .arg(convertLog.isEmpty() ? QStringLiteral("(ok)") : convertLog)
+                                .toUtf8());
+                        m_resultsViewer->refresh();
+                    } else if (!convertLog.isEmpty()) {
+                        appendToSimulationLog(
+                            QStringLiteral("\n[CSV → Touchstone skipped/failed: %1]\n")
+                                .arg(convertLog)
+                                .toUtf8());
+                        m_resultsViewer->refresh();
+                    }
                 }
             }
         }

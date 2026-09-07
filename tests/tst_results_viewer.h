@@ -20,6 +20,7 @@ private slots:
     void filterCheckboxes_affectListing();
     void checkedFile_togglesParamButtonsAndSmith();
     void nestedDirs_groupItemsAndConvertWithoutCsv();
+    void hasTouchstoneFiles_skipsNeedForConvert();
 };
 
 #endif // TST_RESULTS_VIEWER_H

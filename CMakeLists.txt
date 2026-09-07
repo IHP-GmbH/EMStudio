@@ -6,12 +6,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# Set RC compiler to use 64-bit windres from mingw810_64
-# Temporarily disabled due to windres compilation issues
-# if(WIN32)
-#     set(CMAKE_RC_COMPILER "C:/Qt/Tools/mingw810_64/bin/windres.exe")
-#     set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} -F pe-x86-64")
-# endif()
+# Windows resource compiler (embeds app icon + DPI manifest into the .exe)
+if(WIN32 AND NOT CMAKE_RC_COMPILER)
+    find_program(CMAKE_RC_COMPILER NAMES windres windres.exe
+        HINTS "C:/Qt/Tools/mingw810_64/bin" ENV PATH)
+endif()
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
@@ -202,15 +201,17 @@ set(RESOURCES
 )
 
 if(WIN32)
-    # Temporarily disabled due to windres compilation issues
-    # set(APP_ICON appicon.rc)
+    enable_language(RC)
+    # windres resolves ICON/manifest paths relative to cwd; force source tree includes
+    set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} -I\"${CMAKE_SOURCE_DIR}\"")
+    set(APP_ICON "${CMAKE_SOURCE_DIR}/appicon.rc")
 endif()
 
 # -----------------------------------------------------------------------------
 # Target
 # -----------------------------------------------------------------------------
 
-add_executable(EMStudio
+add_executable(EMStudio WIN32
     ${SOURCES}
     ${HEADERS}
     ${FORMS}

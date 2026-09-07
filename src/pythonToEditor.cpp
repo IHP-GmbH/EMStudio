@@ -50,6 +50,8 @@
 #include "substrateview.h"
 #include "pythonparser.h"
 
+#include <QRegularExpression>
+
 /*!*******************************************************************************************************************
  * \brief Checks whether a simulation setting represents a file path (GDS or XML).
  *
@@ -249,6 +251,28 @@ void MainWindow::applySimSettingsToScript(QString &script, const QString &simKey
     } else if (simKeyLower == QLatin1String("palace") || isElmerFamilyKey(simKeyLower)) {
         applyPalaceSettings(script);
     }
+    
+    forceStartSimulationOff(script);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Forces \c start_simulation to False (top-level and settings['start_simulation']).
+ *
+ * Imported Volker-style scripts sometimes set this True, which would start Palace/Elmer from
+ * Python itself instead of EMStudio's Run button. Templates already use False.
+ **********************************************************************************************************************/
+void MainWindow::forceStartSimulationOff(QString &script) const
+{
+    if (script.isEmpty())
+        return;
+
+    static const QRegularExpression reTop(
+        QStringLiteral(R"((?m)^([ \t]*start_simulation[ \t]*=[ \t]*)(\S+)([ \t]*(?:#.*)?)?$)"));
+    script.replace(reTop, QStringLiteral("\\1False\\3"));
+
+    static const QRegularExpression reDict(
+        QStringLiteral(R"((\w+\s*\[\s*['"]start_simulation['"]\s*\]\s*=\s*)(\S+))"));
+    script.replace(reDict, QStringLiteral("\\1False"));
 }
 
 /*!*******************************************************************************************************************

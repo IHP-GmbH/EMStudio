@@ -106,6 +106,7 @@ bool MainWindow::applyPythonScriptFromEditor()
     if (!parsedTop.isEmpty()) {
         m_simSettings["TopCell"]      = parsedTop;
         m_simSettings["gds_cellname"] = parsedTop;
+        m_simSettings["cellname"]     = parsedTop;
     }
 
     rebuildSimulationSettingsFromPalace(res.settings, res.settingTips, res.topLevel);
@@ -133,6 +134,7 @@ bool MainWindow::applyPythonScriptFromEditor()
         if (!cellName.isEmpty()) {
             m_simSettings["TopCell"]      = cellName;
             m_simSettings["gds_cellname"] = cellName;
+            m_simSettings["cellname"]     = cellName;
 
             QSignalBlocker b(m_ui->cbxTopCell);
             const int idx = m_ui->cbxTopCell->findText(cellName);

@@ -18,6 +18,9 @@
 
 #include "resultsviewer.h"
 
+#include <QSettings>
+#include <QIODevice>
+
 namespace {
 
 void copyFixture(const QString &src, const QString &dst)
@@ -281,4 +284,42 @@ void ResultsViewerTest::hasTouchstoneFiles_skipsNeedForConvert()
     v.setAttribute(Qt::WA_DontShowOnScreen, true);
     v.setTargetDirectory(dir.path());
     QVERIFY(v.hasTouchstoneFiles());
+}
+
+void ResultsViewerTest::preferredPython_ordersPalaceBeforeOpenems()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString palacePy = dir.filePath(QStringLiteral("palace_python.exe"));
+    const QString openemsPy = dir.filePath(QStringLiteral("openems_python.exe"));
+    QVERIFY(QFile(palacePy).open(QIODevice::WriteOnly));
+    QVERIFY(QFile(openemsPy).open(QIODevice::WriteOnly));
+
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("Preferences"));
+    const QVariant oldPalace = settings.value(QStringLiteral("PALACE_PYTHON"));
+    const QVariant oldOpenems = settings.value(QStringLiteral("OPENEMS_PYTHON"));
+    const QVariant oldElmer = settings.value(QStringLiteral("ELMER_PYTHON"));
+    settings.setValue(QStringLiteral("PALACE_PYTHON"), palacePy);
+    settings.setValue(QStringLiteral("OPENEMS_PYTHON"), openemsPy);
+    settings.setValue(QStringLiteral("ELMER_PYTHON"), QString());
+    settings.endGroup();
+    settings.sync();
+
+    ResultsViewer v;
+    v.setAttribute(Qt::WA_DontShowOnScreen, true);
+
+    v.setPreferredPythonPreferenceKey(QStringLiteral("PALACE_PYTHON"));
+    QCOMPARE(v.testResolveHostPython(), palacePy);
+    QCOMPARE(v.testHostPythonCandidates().value(0), palacePy);
+
+    v.setPreferredPythonPreferenceKey(QStringLiteral("OPENEMS_PYTHON"));
+    QCOMPARE(v.testResolveHostPython(), openemsPy);
+
+    settings.beginGroup(QStringLiteral("Preferences"));
+    settings.setValue(QStringLiteral("PALACE_PYTHON"), oldPalace);
+    settings.setValue(QStringLiteral("OPENEMS_PYTHON"), oldOpenems);
+    settings.setValue(QStringLiteral("ELMER_PYTHON"), oldElmer);
+    settings.endGroup();
+    settings.sync();
 }

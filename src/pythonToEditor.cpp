@@ -614,21 +614,55 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
 
     const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
     if (!topCell.isEmpty()) {
-        QRegularExpression re(R"(^\s*gds_cellname\s*=.*$)",  QRegularExpression::MultilineOption);
-        if(script.contains(re)) {
-            script.replace(re, QStringLiteral("gds_cellname = \"%1\"").arg(topCell));
-        }
-        else {
-            QRegularExpression reGdsFile(R"((?m)^[ \t]*gds_filename\s*=.*$)");
-            QRegularExpressionMatch m = reGdsFile.match(script);
+        // Only rewrite true top-level string assignments for gds_cellname.
+        // Must NOT match call kwargs like: cellname=gds_cellname)
+        // Replace the whole line (drop trailing comments) — matches historical golden output.
+        auto replaceTopLevelGdsCellname = [&]() -> bool {
+            const QRegularExpression reVar(
+                QStringLiteral("(?m)^[ \\t]*gds_cellname[ \\t]*=[ \\t]*(?:\"[^\"]*\"|'[^']*')[ \\t]*(?:#.*)?$"));
+            if (!script.contains(reVar))
+                return false;
+            script.replace(reVar, QStringLiteral("gds_cellname = \"%1\"").arg(topCell));
+            return true;
+        };
 
-            const QString line = QStringLiteral("gds_cellname = \"%1\"\n").arg(topCell);
+        const bool hadGdsCell = replaceTopLevelGdsCellname();
 
-            if (m.hasMatch()) {
-                const int insertPos = m.capturedStart();
-                script.insert(insertPos, line);
+        // Dict-style: settings['cellname'] / settings["gds_cellname"] (gds2palace / Elmer)
+        static const QRegularExpression reDictKey(
+            QStringLiteral(R"(\w+\s*\[\s*['"](?:gds_)?cellname['"]\s*\])"));
+        static const QRegularExpression reDictAssign(
+            QStringLiteral(R"((\w+\s*\[\s*['"](?:gds_)?cellname['"]\s*\]\s*=\s*)([^\n#]+)([^\n]*))"));
+        const bool hadDictCell = script.contains(reDictKey);
+        if (hadDictCell)
+            script.replace(reDictAssign, QStringLiteral("\\1\"%1\"\\3").arg(topCell));
+
+        // Do not rewrite top-level openEMS `cellname = ""` — that stays optional/empty while
+        // GUI Top Cell syncs via gds_cellname (templates) or settings['cellname'] (gds2palace).
+
+        // Invent gds_cellname only when neither gds_cellname nor settings cellname exists.
+        if (!hadGdsCell && !hadDictCell) {
+            const QRegularExpression reGdsFile(QStringLiteral(R"((?m)^[ \t]*gds_filename\s*=.*$)"));
+            const QRegularExpressionMatch gdsMatch = reGdsFile.match(script);
+            if (gdsMatch.hasMatch()) {
+                int pos = gdsMatch.capturedStart();
+                // OpenEMS template has a blank line before gds_filename; golden expects
+                // gds_cellname immediately after the section comment (no extra blank).
+                if (pos >= 2 && script.mid(pos - 2, 2) == QLatin1String("\n\n")) {
+                    script.remove(pos - 1, 1);
+                    --pos;
+                }
+                script.insert(pos, QStringLiteral("gds_cellname = \"%1\"\n").arg(topCell));
             } else {
-                script.prepend(line + QStringLiteral("\n"));
+                const QRegularExpression reSettingsInit(
+                    QStringLiteral(R"((?m)^([ \t]*settings\s*=\s*\{\s*\}[ \t]*)$)"));
+                const QRegularExpressionMatch setMatch = reSettingsInit.match(script);
+                if (setMatch.hasMatch()) {
+                    const QString line =
+                        QStringLiteral("%1\nsettings['cellname'] = \"%2\"")
+                            .arg(setMatch.captured(1), topCell);
+                    script.replace(setMatch.capturedStart(), setMatch.capturedLength(), line);
+                }
             }
         }
     }

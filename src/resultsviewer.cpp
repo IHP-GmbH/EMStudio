@@ -487,7 +487,17 @@ QString ResultsViewer::resolveCombineScript() const
     return nearExe;
 }
 
-QString ResultsViewer::resolveHostPython() const
+void ResultsViewer::setPreferredPythonPreferenceKey(const QString &prefKey)
+{
+    m_preferredPythonPrefKey = prefKey.trimmed();
+}
+
+QString ResultsViewer::preferredPythonPreferenceKey() const
+{
+    return m_preferredPythonPrefKey;
+}
+
+QStringList ResultsViewer::hostPythonCandidates() const
 {
     QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
     settings.beginGroup(QStringLiteral("Preferences"));
@@ -507,32 +517,80 @@ QString ResultsViewer::resolveHostPython() const
     };
 #endif
 
-    if (usable(openemsPy))
-        return openemsPy;
-    if (usable(elmerPy))
-        return elmerPy;
-#ifndef Q_OS_WIN
-    // Native Linux Palace venv is a valid host interpreter for combine_extend_snp.py.
-    if (usable(palacePy))
-        return palacePy;
-#endif
+    auto appendUnique = [](QStringList &out, const QString &p) {
+        if (p.isEmpty())
+            return;
+        if (!out.contains(p))
+            out.append(p);
+    };
+
+    QStringList orderedKeys;
+    if (!m_preferredPythonPrefKey.isEmpty())
+        orderedKeys << m_preferredPythonPrefKey;
+    // Fallbacks: keep tool-specific venvs before PATH lookup.
+    orderedKeys << QStringLiteral("PALACE_PYTHON")
+                << QStringLiteral("ELMER_PYTHON")
+                << QStringLiteral("OPENEMS_PYTHON");
+
+    QStringList out;
+    for (const QString &key : orderedKeys) {
+        QString path;
+        if (key == QLatin1String("OPENEMS_PYTHON"))
+            path = openemsPy;
+        else if (key == QLatin1String("ELMER_PYTHON"))
+            path = elmerPy;
+        else if (key == QLatin1String("PALACE_PYTHON"))
+            path = palacePy;
+        if (usable(path))
+            appendUnique(out, path);
+    }
 
     const QString py3 = QStandardPaths::findExecutable(QStringLiteral("python3"));
     if (usable(py3))
-        return py3;
+        appendUnique(out, py3);
 
     const QString py = QStandardPaths::findExecutable(QStringLiteral("python"));
     if (usable(py))
-        return py;
+        appendUnique(out, py);
 
 #ifdef Q_OS_WIN
     const QString pyLauncher = QStandardPaths::findExecutable(QStringLiteral("py"));
     if (usable(pyLauncher))
-        return pyLauncher;
-    return QStringLiteral("python");
-#else
-    return QStringLiteral("python3");
+        appendUnique(out, pyLauncher);
 #endif
+
+    if (out.isEmpty()) {
+#ifdef Q_OS_WIN
+        out << QStringLiteral("python");
+#else
+        out << QStringLiteral("python3");
+#endif
+    }
+    return out;
+}
+
+QString ResultsViewer::resolveHostPython() const
+{
+    const QStringList cands = hostPythonCandidates();
+    return cands.isEmpty() ? QStringLiteral("python3") : cands.first();
+}
+
+QString ResultsViewer::resolvePythonWithSnp2le(QString *detailOut) const
+{
+    QString lastDetail;
+    for (const QString &python : hostPythonCandidates()) {
+        QString detail;
+        if (snp2leImportOk(python, &detail)) {
+            if (detailOut)
+                *detailOut = detail;
+            return python;
+        }
+        if (!detail.isEmpty())
+            lastDetail = detail;
+    }
+    if (detailOut)
+        *detailOut = lastDetail;
+    return {};
 }
 
 QStringList ResultsViewer::hostPythonArgs(const QString &python) const
@@ -591,9 +649,14 @@ QString ResultsViewer::pickModelFitFile() const
     return newestOf(m_masterFiles);
 }
 
-bool ResultsViewer::snp2leImportOk(QString *detailOut) const
+bool ResultsViewer::snp2leImportOk(const QString &python, QString *detailOut) const
 {
-    const QString python = resolveHostPython();
+    if (python.isEmpty()) {
+        if (detailOut)
+            *detailOut = tr("No Python interpreter configured.");
+        return false;
+    }
+
     QStringList args = hostPythonArgs(python);
     args << QStringLiteral("-c")
          << QStringLiteral("import snp2le; print(getattr(snp2le, '__version__', 'ok'))");
@@ -635,17 +698,20 @@ void ResultsViewer::launchModelFit()
         return;
     }
 
-    const QString python = resolveHostPython();
     QString detail;
-    if (!snp2leImportOk(&detail)) {
+    const QString python = resolvePythonWithSnp2le(&detail);
+    if (python.isEmpty()) {
+        const QString hintPy = resolveHostPython();
         const QString installCmd = QStringLiteral("%1 -m pip install -U snp2le")
-                                       .arg(QDir::toNativeSeparators(python));
+                                       .arg(QDir::toNativeSeparators(hintPy));
         const QString reqCmd = QStringLiteral("%1 -m pip install -U -r requirements-python.txt")
-                                   .arg(QDir::toNativeSeparators(python));
+                                   .arg(QDir::toNativeSeparators(hintPy));
         QMessageBox::warning(
             this,
             tr("Model Fit — snp2le not installed"),
-            tr("snp2le is not available for:\n%1\n\n"
+            tr("snp2le is not available for the configured Python interpreters "
+               "(tried preferred tool venv first).\n"
+               "Suggested install target:\n%1\n\n"
                "Install it in that same Python (native host, not WSL), then try again:\n\n"
                "  %2\n\n"
                "Or install the full EMStudio Python set from the repo root:\n\n"
@@ -653,7 +719,7 @@ void ResultsViewer::launchModelFit()
                "snp2le needs Python ≥ 3.10 (PySide6 GUI).\n"
                "Project: https://github.com/iic-jku/snp2le\n\n"
                "Check output:\n%4")
-                .arg(QDir::toNativeSeparators(python),
+                .arg(QDir::toNativeSeparators(hintPy),
                      installCmd,
                      reqCmd,
                      detail.isEmpty() ? tr("(no details)") : detail));

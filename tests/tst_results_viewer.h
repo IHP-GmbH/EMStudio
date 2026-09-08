@@ -21,6 +21,7 @@ private slots:
     void checkedFile_togglesParamButtonsAndSmith();
     void nestedDirs_groupItemsAndConvertWithoutCsv();
     void hasTouchstoneFiles_skipsNeedForConvert();
+    void preferredPython_ordersPalaceBeforeOpenems();
 };
 
 #endif // TST_RESULTS_VIEWER_H

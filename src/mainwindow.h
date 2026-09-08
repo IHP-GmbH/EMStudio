@@ -249,6 +249,8 @@ public:
     QString                         testReplaceOrInsertThermalSection(const QString &script,
                                                                       const QString &thermalCode) const;
     QString                         testForceStartSimulationOff(const QString &script) const;
+    QString                         testApplyGdsAndXmlPaths(const QString &script,
+                                                           const QString &simKeyLower) const;
     void                            testOpenThermalResultsInParaView(const QString &runDir);
     QString                         testResolveKeywordsPath(const QString &simKeyLower) const;
     QMap<QString, QString>          testLoadKeywordTipsCsv(const QString &simKeyLower) const;
@@ -318,6 +320,7 @@ private:
     void                            setupSettingsPanel();
     void                            showTab(int indexToShow);
     void                            updateResultsViewerFromModel();
+    void                            syncResultsViewerHostPython();
     QString                         resolveResultsDirectory() const;
     void                            updateSimulationSettings();
     void                            importPortsFromEditor();

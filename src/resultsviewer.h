@@ -60,6 +60,14 @@ public:
     bool tryConvertPalaceCsv(QString *logOut = nullptr);
     bool hasTouchstoneFiles() const;
 
+    void setPreferredPythonPreferenceKey(const QString &prefKey);
+    QString preferredPythonPreferenceKey() const;
+
+#ifdef EMSTUDIO_TESTING
+    QString testResolveHostPython() const { return resolveHostPython(); }
+    QStringList testHostPythonCandidates() const { return hostPythonCandidates(); }
+#endif
+
 public slots:
     void refresh();
     void convertPalaceCsv();
@@ -114,13 +122,16 @@ private:
     void setLegend(const QVector<PlottedTrace> &plotted);
     bool hasPalaceCsv() const;
     QString resolveCombineScript() const;
+    QStringList hostPythonCandidates() const;
     QString resolveHostPython() const;
+    QString resolvePythonWithSnp2le(QString *detailOut = nullptr) const;
     QStringList hostPythonArgs(const QString &python) const;
     QString pickModelFitFile() const;
     bool isRawTouchstoneName(const QString &fileName) const;
-    bool snp2leImportOk(QString *detailOut = nullptr) const;
+    bool snp2leImportOk(const QString &python, QString *detailOut = nullptr) const;
 
     QString m_targetDir;
+    QString m_preferredPythonPrefKey;
     QStringList m_masterFiles;
     QSet<QString> m_checkedPaths;
     QSet<QPair<int, int>> m_checkedParams; // 1-based (m,k) like Volker

@@ -290,6 +290,7 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_resultsViewer, &ResultsViewer::logMessage, this, [this](const QString &text) {
         appendToSimulationLog(text.toUtf8());
     });
+    syncResultsViewerHostPython();
 
     setStateSaved();
 }
@@ -333,12 +334,22 @@ void MainWindow::onTopCellChanged(const QString &text)
     if (top.isEmpty())
         return;
 
-    m_simSettings["TopCell"] = top;
-    m_simSettings["gds_cellname"] = top;
+    m_simSettings[QStringLiteral("TopCell")] = top;
+    m_simSettings[QStringLiteral("gds_cellname")] = top;
+    m_simSettings[QStringLiteral("cellname")] = top;
 
-    if (m_ui->editRunPythonScript->document()->isModified()) {
-        setStateChanged();
-        return;
+    // Keep Simulation Settings properties in sync when the model exposes them.
+    if (m_simSettingsGroup && m_variantManager) {
+        QSignalBlocker blocker(m_variantManager);
+        for (QtProperty *prop : m_simSettingsGroup->subProperties()) {
+            if (!prop)
+                continue;
+            const QString name = prop->propertyName();
+            if (name.compare(QLatin1String("cellname"), Qt::CaseInsensitive) == 0
+                || name.compare(QLatin1String("gds_cellname"), Qt::CaseInsensitive) == 0) {
+                m_variantManager->setValue(prop, top);
+            }
+        }
     }
 
     QString script = m_ui->editRunPythonScript->toPlainText();
@@ -347,10 +358,9 @@ void MainWindow::onTopCellChanged(const QString &text)
         return;
     }
 
+    // Always patch cellname lines — the dropdown is the UI source of truth for GDS cell.
     const QString simKeyLower = currentSimToolKey().toLower();
-
     applyGdsAndXmlPaths(script, simKeyLower);
-
     setEditorScriptPreservingState(script);
 
     setStateChanged();
@@ -793,6 +803,8 @@ void MainWindow::updateResultsViewerFromModel()
     if (!m_resultsViewer)
         return;
 
+    syncResultsViewerHostPython();
+
     const QString dir = resolveResultsDirectory();
     if (dir.isEmpty())
         return;
@@ -806,6 +818,23 @@ void MainWindow::updateResultsViewerFromModel()
     } else {
         m_resultsViewer->rescan();
     }
+}
+
+void MainWindow::syncResultsViewerHostPython()
+{
+    if (!m_resultsViewer)
+        return;
+
+    const QString key = currentSimToolKey().toLower();
+    QString pref;
+    if (key == QLatin1String("openems"))
+        pref = QStringLiteral("OPENEMS_PYTHON");
+    else if (isElmerFamilyKey(key))
+        pref = QStringLiteral("ELMER_PYTHON");
+    else if (key == QLatin1String("palace"))
+        pref = QStringLiteral("PALACE_PYTHON");
+
+    m_resultsViewer->setPreferredPythonPreferenceKey(pref);
 }
 
 /*!*******************************************************************************************************************
@@ -1462,6 +1491,7 @@ void MainWindow::updateGdsUserInfo()
     if (topWasResolved) {
         m_simSettings["TopCell"]      = top;
         m_simSettings["gds_cellname"] = top;
+        m_simSettings["cellname"]     = top;
     }
 
     updateSubLayerNamesCheckboxState();
@@ -2401,6 +2431,7 @@ void MainWindow::selectSimToolByKey(const QString &simKey)
     updateBoundaryOptionsForCurrentTool();
     updateBoundaryTooltipsForCurrentTool();
     updateExcitationUiForCurrentTool();
+    syncResultsViewerHostPython();
 }
 
 /*!*******************************************************************************************************************
@@ -3067,6 +3098,7 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
 
     updateBoundaryOptionsForCurrentTool();
     updateExcitationUiForCurrentTool();
+    syncResultsViewerHostPython();
 }
 
 /*!*******************************************************************************************************************
@@ -3188,6 +3220,8 @@ void MainWindow::loadPythonModel(const QString &fileName)
         if (idx >= 0) {
             m_ui->cbxTopCell->setCurrentIndex(idx);
             m_simSettings[QStringLiteral("gds_cellname")] = cellName;
+            m_simSettings[QStringLiteral("cellname")] = cellName;
+            m_simSettings[QStringLiteral("TopCell")] = cellName;
         }
     }
 
@@ -3801,6 +3835,7 @@ void MainWindow::applyTopCellFromModel(const QString& cellName)
 
     m_simSettings[QStringLiteral("TopCell")]      = top;
     m_simSettings[QStringLiteral("gds_cellname")] = top;
+    m_simSettings[QStringLiteral("cellname")]     = top;
 
     {
         QSignalBlocker b(m_ui->cbxTopCell);

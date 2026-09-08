@@ -813,6 +813,14 @@ QString MainWindow::testForceStartSimulationOff(const QString &script) const
     return s;
 }
 
+QString MainWindow::testApplyGdsAndXmlPaths(const QString &script,
+                                           const QString &simKeyLower) const
+{
+    QString s = script;
+    const_cast<MainWindow *>(this)->applyGdsAndXmlPaths(s, simKeyLower);
+    return s;
+}
+
 void MainWindow::testOpenThermalResultsInParaView(const QString &runDir)
 {
     openThermalResultsInParaView(runDir);

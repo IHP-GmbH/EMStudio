@@ -8,9 +8,11 @@
 #include "tst_elmer.h"
 
 #include <QtTest/QtTest>
+#include <QComboBox>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSignalBlocker>
 #include <QTemporaryDir>
 #include <QTextStream>
 
@@ -491,4 +493,98 @@ void ElmerTest::forceStartSimulationOff_clearsTrueFlags()
     QVERIFY(out.contains(QStringLiteral("settings['start_simulation'] = False")));
     QVERIFY(!out.contains(QStringLiteral("start_simulation = True")));
     QVERIFY(out.contains(QStringLiteral("settings[\"other\"] = 1")));
+}
+
+void ElmerTest::applyGdsAndXmlPaths_updatesCellnameAndGdsCellname()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.show();
+
+    auto *cbx = w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"));
+    QVERIFY(cbx);
+    {
+        QSignalBlocker b(cbx);
+        cbx->clear();
+        cbx->addItem(QStringLiteral("NewCell_A"));
+        cbx->setCurrentIndex(0);
+    }
+
+    const QString in = QStringLiteral(
+        "gds_filename = \"x.gds\"\n"
+        "gds_cellname = \"OldGdsCell\"\n"
+        "cellname = \"OldCell\"\n"
+        "settings['cellname'] = \"OldSettingsCell\"\n"
+        "XML_filename = \"x.xml\"\n");
+
+    const QString out = w.testApplyGdsAndXmlPaths(in, QStringLiteral("palace"));
+    QVERIFY(out.contains(QStringLiteral("gds_cellname = \"NewCell_A\"")));
+    // optional OpenEMS-style cellname left alone when gds_cellname exists
+    QVERIFY(out.contains(QStringLiteral("cellname = \"OldCell\"")));
+    QVERIFY(out.contains(QStringLiteral("settings['cellname'] = \"NewCell_A\"")));
+    QVERIFY(!out.contains(QStringLiteral("OldGdsCell")));
+    QVERIFY(!out.contains(QStringLiteral("OldSettingsCell")));
+    // comment on gds_cellname line is dropped (stable golden style)
+    QVERIFY(!out.contains(QStringLiteral("gds_cellname = \"NewCell_A\" #")));
+}
+
+void ElmerTest::applyGdsAndXmlPaths_doesNotTouchReadGdsKwarg()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.show();
+
+    auto *cbx = w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"));
+    QVERIFY(cbx);
+    {
+        QSignalBlocker b(cbx);
+        cbx->clear();
+        cbx->addItem(QStringLiteral("t1"));
+        cbx->setCurrentIndex(0);
+    }
+
+    const QString in = QStringLiteral(
+        "gds_filename = \"x.gds\"\n"
+        "gds_cellname = \"old\"\n"
+        "allpolygons = gds_reader.read_gds(gds_filename,\n"
+        "                                  layernumbers,\n"
+        "                                  cellname=gds_cellname)\n");
+
+    const QString out = w.testApplyGdsAndXmlPaths(in, QStringLiteral("palace"));
+    QVERIFY(out.contains(QStringLiteral("gds_cellname = \"t1\"")));
+    QVERIFY(out.contains(QStringLiteral("cellname=gds_cellname)")));
+    QVERIFY(!out.contains(QStringLiteral("cellname=\"t1\"")));
+}
+
+void ElmerTest::applyGdsAndXmlPaths_doesNotPrependGdsCellnameWhenSettingsCellnameExists()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.show();
+
+    auto *cbx = w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"));
+    QVERIFY(cbx);
+    {
+        QSignalBlocker b(cbx);
+        cbx->clear();
+        cbx->addItem(QStringLiteral("0_INT_T595_HeatSpreader"));
+        cbx->setCurrentIndex(0);
+    }
+
+    // Volker-style Elmer Thermal: cellname lives only in settings[], not as top-level gds_cellname.
+    const QString in = QStringLiteral(
+        "from gds2palace import *\n"
+        "settings = {}\n"
+        "settings['elmer_thermal'] = True\n"
+        "settings['cellname'] = 'OldCell'\n"
+        "settings['GdsFile'] = '/tmp/x.gds'\n"
+        "thermal_objects = simulation_setup.all_thermal_objects()\n"
+        "config_name, data_dir = simulation_setup.create_elmer_thermal(settings)\n");
+
+    const QString out = w.testApplyGdsAndXmlPaths(in, QStringLiteral("elmer_thermal"));
+    QVERIFY(out.contains(QStringLiteral("settings['cellname'] = \"0_INT_T595_HeatSpreader\"")));
+    QVERIFY(!out.contains(QStringLiteral("gds_cellname")));
+    QVERIFY(out.trimmed().startsWith(QStringLiteral("from gds2palace")));
+    QVERIFY(out.contains(QStringLiteral("create_elmer_thermal")));
+    QVERIFY(out.contains(QStringLiteral("all_thermal_objects")));
 }

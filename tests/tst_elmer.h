@@ -30,6 +30,9 @@ private slots:
     void openThermalResults_withVtuAndParaViewStub();
     void generateScript_elmerThermalFromGui();
     void forceStartSimulationOff_clearsTrueFlags();
+    void applyGdsAndXmlPaths_updatesCellnameAndGdsCellname();
+    void applyGdsAndXmlPaths_doesNotTouchReadGdsKwarg();
+    void applyGdsAndXmlPaths_doesNotPrependGdsCellnameWhenSettingsCellnameExists();
 };
 
 #endif // TST_ELMER_H

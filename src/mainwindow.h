@@ -404,6 +404,8 @@ private:
     QString                         detectPythonModelSimKey(const QString &text,
                                                             const PythonParser::Result *parsed = nullptr) const;
     void                            selectSimToolByKey(const QString &simKey);
+    bool                            elmerSolverConfigured() const;
+    void                            warnElmerSolverNotConfigured(const QString &simKey);
     QString                         loadOrReusePythonScriptText(const QString &filePath);
     QString                         resolveKeywordsPath(const QString& simKeyLower) const;
 

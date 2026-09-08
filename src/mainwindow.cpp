@@ -38,6 +38,7 @@
 #include <QCloseEvent>
 #include <QJsonDocument>
 #include <QSignalBlocker>
+#include <QPushButton>
 #include <QStandardPaths>
 #include <QProcessEnvironment>
 #include <QApplication>
@@ -445,42 +446,55 @@ void MainWindow::refreshSimToolOptions()
 
     int items = 0;
     if (hasOpenEMS) {
-        m_ui->cbxSimTool->addItem("OpenEMS", "openems");
+        m_ui->cbxSimTool->addItem(QStringLiteral("OpenEMS"), QStringLiteral("openems"));
         ++items;
     }
     if (hasPalace) {
-        m_ui->cbxSimTool->addItem("Palace", "palace");
+        m_ui->cbxSimTool->addItem(QStringLiteral("Palace"), QStringLiteral("palace"));
         ++items;
     }
+
+    // Elmer modes are always listed so thermal/EM model import can switch the UI
+    // even before ELMER_SOLVER_PATH is set. Run is gated separately.
     if (hasElmer) {
-        m_ui->cbxSimTool->addItem("Elmer EM", "elmer_em");
-        m_ui->cbxSimTool->addItem("Elmer Thermal", "elmer_thermal");
-        items += 2;
+        m_ui->cbxSimTool->addItem(QStringLiteral("Elmer EM"), QStringLiteral("elmer_em"));
+        m_ui->cbxSimTool->addItem(QStringLiteral("Elmer Thermal"), QStringLiteral("elmer_thermal"));
+    } else {
+        m_ui->cbxSimTool->addItem(QStringLiteral("Elmer EM (not configured)"),
+                                  QStringLiteral("elmer_em"));
+        m_ui->cbxSimTool->addItem(QStringLiteral("Elmer Thermal (not configured)"),
+                                  QStringLiteral("elmer_thermal"));
     }
+    items += 2;
 
     if (items == 0) {
-        m_ui->cbxSimTool->addItem("No simulation tool configured");
+        m_ui->cbxSimTool->addItem(QStringLiteral("No simulation tool configured"));
         m_ui->cbxSimTool->setEnabled(false);
-        info("No valid simulation tools found. Set OpenEMS Python path, PALACE_INSTALL_PATH / PALACE_RUN_SCRIPT, and/or ELMER_SOLVER_PATH in Preferences.");
+        info(QStringLiteral("No valid simulation tools found. Set OpenEMS Python path, "
+                            "PALACE_INSTALL_PATH / PALACE_RUN_SCRIPT, and/or ELMER_SOLVER_PATH "
+                            "in Preferences."));
     } else {
         m_ui->cbxSimTool->setEnabled(true);
         m_ui->cbxSimTool->setCurrentIndex(0);
 
         QStringList enabled;
-        if (hasOpenEMS) enabled << "OpenEMS";
-        if (hasPalace)  enabled << "Palace";
-        if (hasElmer)   enabled << "Elmer EM" << "Elmer Thermal";
-        info(QString("Enabled simulation tools: %1").arg(enabled.join(", ")));
+        if (hasOpenEMS) enabled << QStringLiteral("OpenEMS");
+        if (hasPalace)  enabled << QStringLiteral("Palace");
+        if (hasElmer)
+            enabled << QStringLiteral("Elmer EM") << QStringLiteral("Elmer Thermal");
+        else
+            enabled << QStringLiteral("Elmer EM/Thermal (UI only — set ELMER_SOLVER_PATH to run)");
+        info(QStringLiteral("Enabled simulation tools: %1").arg(enabled.join(QStringLiteral(", "))));
 
         int restoreIdx = -1;
-        QString wantedKey = normalizeSimToolKey(m_preferences.value("SIMULATION_TOOL_KEY").toString());
+        QString wantedKey = normalizeSimToolKey(m_preferences.value(QStringLiteral("SIMULATION_TOOL_KEY")).toString());
         if (!wantedKey.isEmpty())
             restoreIdx = m_ui->cbxSimTool->findData(wantedKey);
 
         if (restoreIdx >= 0) {
             m_ui->cbxSimTool->setCurrentIndex(restoreIdx);
         } else {
-            const int savedIdx = m_preferences.value("SIMULATION_TOOL_INDEX", 0).toInt();
+            const int savedIdx = m_preferences.value(QStringLiteral("SIMULATION_TOOL_INDEX"), 0).toInt();
             if (savedIdx >= 0 && savedIdx < m_ui->cbxSimTool->count())
                 m_ui->cbxSimTool->setCurrentIndex(savedIdx);
         }
@@ -2313,6 +2327,15 @@ void MainWindow::on_btnRun_clicked()
         return;
     }
 
+    if (isElmerFamilyKey(key) && !elmerSolverConfigured()) {
+#ifndef EMSTUDIO_TESTING
+        warnElmerSolverNotConfigured(key);
+#else
+        error(tr("ELMER_SOLVER_PATH is not configured."));
+#endif
+        return;
+    }
+
     m_ui->txtLog->clear();
 
     if (key == QLatin1String("openems")) {
@@ -2432,6 +2455,40 @@ void MainWindow::selectSimToolByKey(const QString &simKey)
     updateBoundaryTooltipsForCurrentTool();
     updateExcitationUiForCurrentTool();
     syncResultsViewerHostPython();
+}
+
+bool MainWindow::elmerSolverConfigured() const
+{
+    const QString elmerSolverPath =
+        m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH")).toString().trimmed();
+    if (elmerSolverPath.isEmpty())
+        return false;
+    const QString distro = m_preferences.value(QStringLiteral("WSL_DISTRO")).toString().trimmed();
+    return pathIsExecutablePortable(elmerSolverPath, distro, 800);
+}
+
+void MainWindow::warnElmerSolverNotConfigured(const QString &simKey)
+{
+    const QString key = normalizeSimToolKey(simKey);
+    const QString toolLabel = isElmerThermalKey(key)
+        ? tr("Elmer Thermal")
+        : tr("Elmer EM");
+
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(tr("Elmer solver not configured"));
+    box.setText(tr("This is an %1 model, but ELMER_SOLVER_PATH is not set "
+                   "(or the path is not usable).")
+                    .arg(toolLabel));
+    box.setInformativeText(
+        tr("The model was imported and the matching UI is available.\n"
+           "Set ELMER_SOLVER_PATH in Preferences before you run a simulation."));
+    QPushButton *prefsBtn =
+        box.addButton(tr("Open Preferences…"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Ok);
+    box.exec();
+    if (box.clickedButton() == prefsBtn)
+        on_actionPrefernces_triggered();
 }
 
 /*!*******************************************************************************************************************
@@ -3183,6 +3240,17 @@ void MainWindow::loadPythonModel(const QString &fileName)
         simKey = QStringLiteral("palace");
 
     selectSimToolByKey(simKey);
+
+    if (isElmerThermalKey(simKey))
+        ensureThermalTableInitializedFromScript(text);
+
+    if (isElmerFamilyKey(simKey) && !elmerSolverConfigured()) {
+#ifndef EMSTUDIO_TESTING
+        warnElmerSolverNotConfigured(simKey);
+#else
+        info(tr("Elmer model imported, but ELMER_SOLVER_PATH is not configured."), false);
+#endif
+    }
 
     const auto tips = mergeTipsPreferModel(res.settingTips, m_keywordTips);
     rebuildSimulationSettingsFromPalace(res.settings, tips, res.topLevel);

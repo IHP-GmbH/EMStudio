@@ -20,6 +20,7 @@ private slots:
     void detectPythonModelSimKey_elmerThermalMarkers();
     void detectPythonModelSimKey_elmerEmMarkers();
     void refreshSimToolOptions_enablesElmerWhenSolverStubConfigured();
+    void refreshSimToolOptions_listsElmerThermalEvenWithoutSolverPath();
     void defaultElmerThermalTemplate_containsThermalWorkflow();
     void thermalTable_roundTripFromScript();
     void findThermalResultsVtu_prefersThermalResultsPrefix();

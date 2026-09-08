@@ -125,6 +125,29 @@ void ElmerTest::refreshSimToolOptions_enablesElmerWhenSolverStubConfigured()
     QCOMPARE(w.testCurrentSimToolKey(), QStringLiteral("elmer_thermal"));
 }
 
+void ElmerTest::refreshSimToolOptions_listsElmerThermalEvenWithoutSolverPath()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+
+    // No usable ElmerSolver — UI modes must still be selectable for import/detection.
+    w.testSetPreference(QStringLiteral("ELMER_SOLVER_PATH"), QString());
+    w.refreshSimToolOptionsForTests();
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("elmer_thermal"), &err), qPrintable(err));
+    QCOMPARE(w.testCurrentSimToolKey(), QStringLiteral("elmer_thermal"));
+
+    const QString snippet =
+        QStringLiteral(
+            "settings['elmer_thermal'] = True\n"
+            "thermal_objects = simulation_setup.all_thermal_objects()\n"
+            "thermal_objects.add_heatsource(simulation_setup.heatsource("
+            "power=0.1, source_layernum=201, target_layername='TFR'))\n");
+    w.testEnsureThermalTableFromScript(snippet);
+    QCOMPARE(w.testThermalRowCount(), 1);
+}
+
 void ElmerTest::defaultElmerThermalTemplate_containsThermalWorkflow()
 {
     MainWindow w;

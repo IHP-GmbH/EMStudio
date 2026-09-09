@@ -29,6 +29,7 @@
 #include <QGraphicsSimpleTextItem>
 #include <QAbstractGraphicsShapeItem>
 #include <QHash>
+#include <QSet>
 #include <QMouseEvent>
 
 #include "substrateview.h"
@@ -493,19 +494,38 @@ void SubstrateView::drawSubstrate()
         zDraw += vUm;
     }
 
+    // Names of Dielectrics/* bands (AIR, SiO2, …). Layer entries with Type="dielectric"
+    // (e.g. MIM_Diel) are local bricks inside those bands — not extra stack slices.
+    QSet<QString> stackDielNames;
+    for (const Dielectric& d : drawOrder)
+        stackDielNames.insert(d.name());
+
     for (const Layer& layer : layers) {
         if (layer.name() == "LBE") continue;
         VisualLayer vis;
         vis.name     = layer.name();
         vis.type     = layer.type();
+        // Embedded dielectric fill (schema Layer Type="dielectric") must not use the
+        // stack-band labeling path — that left zminPx/zmaxPx unset and drew "5.730 µm"
+        // / "MIM_Diel …" on top of AIR after the Y flip.
+        if (vis.type == QLatin1String("dielectric")
+            && !stackDielNames.contains(vis.name)) {
+            vis.type = QStringLiteral("embedded_dielectric");
+        }
         vis.realZMin = layer.zmin();
         vis.realZMax = layer.zmax();
+        vis.zminPx   = 0.0;
+        vis.zmaxPx   = 0.0;
         for (const Material& mat : materials) {
             if (mat.name() == layer.material()) { vis.color = mat.color(); break; }
         }
         if (!vis.color.isValid()) {
-            vis.color = (vis.type == "via") ? QColor(150, 100, 0, 160)
-                                            : QColor(200, 0, 0, 160);
+            if (vis.type == QLatin1String("via"))
+                vis.color = QColor(150, 100, 0, 160);
+            else if (vis.type == QLatin1String("embedded_dielectric"))
+                vis.color = QColor(255, 224, 255, 160);
+            else
+                vis.color = QColor(200, 0, 0, 160);
         }
         allLayers.append(vis);
     }
@@ -589,7 +609,10 @@ void SubstrateView::drawSubstrate()
     for (const auto& L : allLayers) {
         const double h = std::abs(L.zmaxPx - L.zminPx);
         if (L.type == "dielectric") minDielH = std::min(minDielH, h);
-        else if (L.type == "conductor") { minCondH = std::min(minCondH, h); if (L.name.size() > longestCond.size()) longestCond = L.name; }
+        else if (L.type == "conductor" || L.type == "embedded_dielectric") {
+            minCondH = std::min(minCondH, h);
+            if (L.name.size() > longestCond.size()) longestCond = L.name;
+        }
         else if (L.type == "via")       { minViaH  = std::min(minViaH,  h); if (L.name.size() > longestVia.size())  longestVia  = L.name; }
     }
     if (!std::isfinite(minDielH)) minDielH = 14.0;
@@ -652,8 +675,13 @@ void SubstrateView::drawSubstrate()
 
         double layerWidth = dielWidth;
         double xOffset    = 0.0;
-        if (layer.type == "conductor") { layerWidth = metalWidth; xOffset = (dielWidth - layerWidth)/2.0; }
-        else if (layer.type == "via")  { layerWidth = viaWidth;  xOffset = (dielWidth - layerWidth)/2.0; }
+        if (layer.type == "conductor" || layer.type == "embedded_dielectric") {
+            layerWidth = metalWidth;
+            xOffset = (dielWidth - layerWidth)/2.0;
+        } else if (layer.type == "via") {
+            layerWidth = viaWidth;
+            xOffset = (dielWidth - layerWidth)/2.0;
+        }
 
         QRectF frontRect(QPointF(xOffset, zStart), QPointF(xOffset + layerWidth, zStop));
         auto* frontFace = m_scene->addRect(frontRect, QPen(Qt::black), QBrush(layer.color));
@@ -691,8 +719,8 @@ void SubstrateView::drawSubstrate()
         tagStackItem(m_scene->addPolygon(leftFace, QPen(Qt::black), QBrush(layer.color)),
                      layer.name, layer.type, tip);
 
-        if (layer.type=="conductor" || layer.type=="via") {
-            QFont f = (layer.type=="conductor")?condFont:viaFont;
+        if (layer.type=="conductor" || layer.type=="via" || layer.type=="embedded_dielectric") {
+            QFont f = (layer.type=="via") ? viaFont : condFont;
             QGraphicsSimpleTextItem* label = m_scene->addSimpleText(layer.name);
             label->setFont(f);
             label->setBrush(Qt::black);

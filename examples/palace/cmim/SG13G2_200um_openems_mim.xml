@@ -1,13 +1,9 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <Stackup schemaVersion="2.0">
-  <!-- Palace SG13G2 200 um stackup from Volker gds2palace_ihp_sg13g2
-       (workflow/SG13G2_200um.xml). MIM gap = MIM.zmin - Metal5.zmax ≈ 24.3 nm
-       filled by background SiO2 (no openEMS-style 150 nm / epsr=26.8 brick).
-       See also SG13G2_200um_openems_mim.xml for the previous equivalent-MIM stack. -->
-  <!-- Created/modified using the XML Stackup Editor in setupEM -->
-  <!-- ============================================================ -->
-  <!-- File description: Model for use with gds2palace S-Parameter simulation:
-IHP SG13G2 with 200 um final chip height (including BEOL). Resistors not included. -->
+  <!-- SG13G2 200 um for small CMIM Palace example (palace_rfcmim base).
+       - No SUBGND / BACKSIDEGND / LBE (Metal1 feed ports).
+       - MIM dielectric gap enlarged to 0.15 um (was ~24 nm, unmeshable) with
+         GDS layer 360 MIM_Diel eps chosen so C≈8.37 fF for 2.3x2.3 um plate. -->
   <Materials>
     <Material Name="Activ" Type="Conductor" Conductivity="357141.0" Color="00ff00" />
     <Material Name="Metal1" Type="Conductor" Conductivity="21640000.0" Color="39bfff" />
@@ -31,7 +27,7 @@ IHP SG13G2 with 200 um final chip height (including BEOL). Resistors not include
     <Material Name="AIR" Type="Dielectric" Permittivity="1.0" DielectricLossTangent="0.0" Color="d0d0d0" />
     <Material Name="Vmim" Type="Conductor" Conductivity="2191000.0" Color="ffe6bf" />
     <Material Name="MIM" Type="Conductor" Conductivity="500000.0" Color="e6ffbf" />
-    <Material Name="LOWLOSS" Type="Conductor" Conductivity="1E10" Color="ff0000" />
+    <Material Name="MIM_Diel" Type="Dielectric" Permittivity="26.8" DielectricLossTangent="0.0" Color="ffe0ff" />
   </Materials>
   <ELayers LengthUnit="um">
     <Dielectrics>
@@ -49,6 +45,10 @@ IHP SG13G2 with 200 um final chip height (including BEOL). Resistors not include
       <Layer Name="Metal3" Type="conductor" Zmin="3.0300" Zmax="3.5200" Material="Metal3" Layer="30" />
       <Layer Name="Metal4" Type="conductor" Zmin="4.0600" Zmax="4.5500" Material="Metal4" Layer="50" />
       <Layer Name="Metal5" Type="conductor" Zmin="5.0900" Zmax="5.5800" Material="Metal5" Layer="67" />
+      <!-- Meshable MIM gap 0.15 um (GDS layer 360 = MIM_Diel brick) -->
+      <Layer Name="MIM_Diel" Type="dielectric" Zmin="5.5800" Zmax="5.7300" Material="MIM_Diel" Layer="360" />
+      <Layer Name="MIM" Type="conductor" Zmin="5.7300" Zmax="5.8800" Material="MIM" Layer="36" />
+      <Layer Name="Vmim" Type="via" Zmin="5.8800" Zmax="6.4303" Material="Vmim" Layer="129" />
       <Layer Name="TopMetal1" Type="conductor" Zmin="6.4303" Zmax="8.4303" Material="TopMetal1" Layer="126" />
       <Layer Name="TopMetal2" Type="conductor" Zmin="11.2303" Zmax="14.2303" Material="TopMetal2" Layer="134" />
       <Layer Name="TopVia2" Type="via" Zmin="8.4303" Zmax="11.2303" Material="TopVia2" Layer="133" />
@@ -58,11 +58,6 @@ IHP SG13G2 with 200 um final chip height (including BEOL). Resistors not include
       <Layer Name="Via2" Type="via" Zmin="2.4900" Zmax="3.0300" Material="Via2" Layer="29" />
       <Layer Name="Via1" Type="via" Zmin="1.4600" Zmax="2.0000" Material="Via1" Layer="19" />
       <Layer Name="Cont" Type="via" Zmin="0.4000" Zmax="1.0400" Material="Cont" Layer="6" />
-      <Layer Name="SUBGND" Type="conductor" Zmin="-3.75" Zmax="0" Material="LOWLOSS" Layer="250" />
-      <Layer Name="BACKSIDEGND" Type="conductor" Zmin="-190" Zmax="-183.75" Material="LOWLOSS" Layer="251" />
-      <Layer Name="MIM" Type="conductor" Zmin="5.6043" Zmax="5.7540" Material="MIM" Layer="36" />
-      <Layer Name="Vmim" Type="via" Zmin="5.7540" Zmax="6.4303" Material="Vmim" Layer="129" />
-      <Layer Name="LBE" Type="dielectric" Zmin="-183.75" Zmax="0" Material="AIR" Layer="157" />
     </Layers>
   </ELayers>
 </Stackup>

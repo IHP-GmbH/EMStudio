@@ -97,8 +97,7 @@ def build(dst: Path, tm1_size: float):
     c.add(gdspy.Rectangle((-0.5, y1 + 0.5), (1.8, y1 + 3), layer=8))
     c.add(gdspy.Rectangle((-0.5, y0 - 3), (1.8, y0 - 0.5), layer=8))
 
-    # MIM dielectric brick (layer 360)
-    c.add(gdspy.Rectangle((-0.335, 0.610), (1.965, 2.910), layer=360))
+    # No MIM_Diel GDS brick: Palace stackup uses ~24 nm gap with SiO2 background.
 
     # Zero-width vertical line ports at lead ends
     c.add(gdspy.Rectangle((tm1_x_end, y0), (tm1_x_end, y1), layer=201))

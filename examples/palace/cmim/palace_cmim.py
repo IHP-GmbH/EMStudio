@@ -57,8 +57,8 @@ os.chdir(modelDir)
 settings = {}
 
 settings['unit'] = 1e-06
-settings['margin'] = 50
-settings['air_around'] = 50
+settings['margin'] = 20
+settings['air_around'] = 20
 
 settings['fstart'] = 1000000000
 settings['fstop'] = 100000000000

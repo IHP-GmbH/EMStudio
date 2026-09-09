@@ -37,8 +37,8 @@ run_command = ['./run_sim']
 # ===================== input files and path settings =======================
 
 gds_cellname = "TOP"
-gds_filename = "/mnt/c/Users/anton/Documents/EMStudio/examples/palace/cmim/cmim_2u3_tm1fix.gds"
-XML_filename = "/mnt/c/Users/anton/Documents/EMStudio/examples/palace/cmim/SG13G2_200um.xml"
+gds_filename = "cmim_2u3_tm1fix.gds"
+XML_filename = "SG13G2_200um.xml"
 variable_overrides = {}
 
 preprocess_gds = True
@@ -57,8 +57,8 @@ os.chdir(modelDir)
 settings = {}
 
 settings['unit'] = 1e-06
-settings['margin'] = 50
-settings['air_around'] = 50
+settings['margin'] = 20
+settings['air_around'] = 20
 
 settings['fstart'] = 1000000000
 settings['fstop'] = 100000000000

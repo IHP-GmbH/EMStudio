@@ -371,11 +371,13 @@ void MainWindow::onTopCellChanged(const QString &text)
  * \brief Connects Window menu actions with dock widgets and keeps their visibility in sync.
  *
  * Binds checkable actions from the "Window" menu to their corresponding QDockWidget
- * instances (Run Control and Log). The action state reflects the current dock visibility,
- * and toggling the action shows or hides the dock. Closing a dock via its title bar
- * button also updates the associated menu action.
+ * instances (Run Control and Log). The menu reflects whether a dock is closed
+ * (\c QWidget::isHidden), not momentary \c isVisible — tabbed docks and window
+ * minimize emit \c visibilityChanged(false) without closing the dock.
  *
- * This ensures that dock widgets can always be restored after being closed.
+ * Bidirectional sync without a signal blocker is unsafe: \c setChecked(false) would
+ * emit \c toggled(false) → \c setVisible(false) and permanently close a dock that
+ * was only temporarily invisible.
  **********************************************************************************************************************/
 void MainWindow::setupWindowMenuDocks()
 {
@@ -383,11 +385,17 @@ void MainWindow::setupWindowMenuDocks()
     {
         if (!act || !dock) return;
 
-        act->setChecked(dock->isVisible());
-        QObject::connect(act, &QAction::toggled,
-                         dock, &QDockWidget::setVisible);
-        QObject::connect(dock, &QDockWidget::visibilityChanged,
-                         act, &QAction::setChecked);
+        act->setChecked(!dock->isHidden());
+
+        QObject::connect(act, &QAction::toggled, dock, [dock](bool on) {
+            dock->setVisible(on);
+        });
+
+        QObject::connect(dock, &QDockWidget::visibilityChanged, act,
+                         [act, dock](bool) {
+                             QSignalBlocker blocker(act);
+                             act->setChecked(!dock->isHidden());
+                         });
     };
 
     bind(m_ui->actionRun_Control, m_ui->dockRunControl);
@@ -910,7 +918,8 @@ void MainWindow::loadSettings()
     }
 
     if (m_ui && m_ui->dockRunControl && m_ui->dockLog) {
-        if (!m_ui->dockRunControl->isVisible() && !m_ui->dockLog->isVisible()) {
+        // Use isHidden(): tabbed docks can report !isVisible() while still open.
+        if (m_ui->dockRunControl->isHidden() && m_ui->dockLog->isHidden()) {
             m_ui->dockRunControl->show();
             m_ui->dockLog->show();
         }

@@ -10,6 +10,7 @@ Each subfolder is a self-contained run: Python model + GDS + stackup XML.
 | `line_viaport` | Simple line with via port |
 | `inductor_500pH` | 500 pH inductor, 2-port |
 | `resistors_rsil` | RSIL resistors + derived layers (schema 3.1) |
+| `cmim` | Small CMIM 2.3 µm (IHP#493 geometry), 0–100 GHz |
 
 ## Run in EMStudio
 

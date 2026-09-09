@@ -581,27 +581,26 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
                 if (!runDir.isEmpty())
                     m_resultsViewer->setTargetDirectory(runDir);
 
-                // Palace/Elmer launcher often already ran combine_snp → .sNp present.
-                // Skip a redundant host-side CSV→Touchstone pass in that case.
-                if (m_resultsViewer->hasTouchstoneFiles()) {
+                // Always (re)build Touchstone from the latest Palace/Elmer CSV.
+                // Skipping when .sNp already exists left stale Touchstone after re-runs.
+                QString convertLog;
+                if (m_resultsViewer->tryConvertPalaceCsv(&convertLog)) {
                     appendToSimulationLog(
-                        QByteArray("\n[CSV → Touchstone skipped: Touchstone (.sNp) already present]\n"));
+                        QStringLiteral("\n[CSV → Touchstone via combine_extend_snp.py]\n%1\n")
+                            .arg(convertLog.isEmpty() ? QStringLiteral("(ok)") : convertLog)
+                            .toUtf8());
                     m_resultsViewer->refresh();
-                } else {
-                    QString convertLog;
-                    if (m_resultsViewer->tryConvertPalaceCsv(&convertLog)) {
-                        appendToSimulationLog(
-                            QStringLiteral("\n[CSV → Touchstone via combine_extend_snp.py]\n%1\n")
-                                .arg(convertLog.isEmpty() ? QStringLiteral("(ok)") : convertLog)
-                                .toUtf8());
-                        m_resultsViewer->refresh();
-                    } else if (!convertLog.isEmpty()) {
-                        appendToSimulationLog(
-                            QStringLiteral("\n[CSV → Touchstone skipped/failed: %1]\n")
-                                .arg(convertLog)
-                                .toUtf8());
-                        m_resultsViewer->refresh();
-                    }
+                } else if (!convertLog.isEmpty()) {
+                    appendToSimulationLog(
+                        QStringLiteral("\n[CSV → Touchstone skipped/failed: %1]\n")
+                            .arg(convertLog)
+                            .toUtf8());
+                    m_resultsViewer->refresh();
+                } else if (m_resultsViewer->hasTouchstoneFiles()) {
+                    // No CSV to convert, but Touchstone from a prior step is fine.
+                    appendToSimulationLog(
+                        QByteArray("\n[CSV → Touchstone] using existing Touchstone (.sNp)\n"));
+                    m_resultsViewer->refresh();
                 }
             }
         }

@@ -22,7 +22,7 @@ It provides an integrated workflow for:
 
 - Loading GDS layout data  
 - Choosing substrate stacks (dielectrics, metals, layers, thermal tables)  
-- Visualizing a 2.5D cross-section  
+- Visualizing a 2.5D stack cross-section and GDS layout top-view (linked highlight)  
 - Configuring simulation parameters  
 - Generating configuration files for solvers (**OpenEMS**, **Palace**, **Elmer EM**, **Elmer Thermal**)  
 - Editing Python driver scripts with syntax highlighting  
@@ -35,7 +35,7 @@ It provides an integrated workflow for:
 - Cross-platform Qt GUI (Linux & Windows)  
 - GDS reader (`gdsreader.cpp`)  
 - Substrate & material model (including thermal conductivity / tables)  
-- 2.5D stack visualization (`substrateview`)  
+- 2.5D stack visualization with GDS layout preview and click cross-reference (`substrateview` / `layoutview`)  
 - Python script editor with syntax highlighting & autocompletion  
 - Python/Palace parser with JSON configuration  
 - QtPropertyBrowser-based parameter editor  
@@ -319,11 +319,11 @@ Before leaving any tab, save your changes using File > Save or Ctrl+S
 
 ## Substrate
 
-The substrate tab is where you select the XML stackup file to be used for simulation. EMStudio shows a cross section of the substrate file, and in the background, it prepares the Ports configuration tab using the layer names found in the stackup.
+The substrate tab is where you select the XML stackup file to be used for simulation. EMStudio shows a **2.5D stack cross-section** next to a **GDS layout top-view**. Click a metal, via, or dielectric in either pane to highlight the matching layer in the other (cross-reference). Unmapped GDS layers such as port markers are still shown. The same stackup also prepares the Ports configuration tab using layer names from the XML.
 
-Before leaving any tab, save your changes using File > Save or Ctrl+S 
+Before leaving any tab, save your changes using File > Save or Ctrl+S
 
-<img src="./doc/png/substrate1.png" alt="substrate" width="700">
+<img src="./doc/png/crossref.png" alt="Substrate stack and layout cross-reference" width="700">
 
 ## Python
 

@@ -16,6 +16,7 @@
 
 #include <QPen>
 #include <QBrush>
+#include <QSet>
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QResizeEvent>
@@ -171,10 +172,12 @@ void LayoutView::clearHighlight()
 }
 
 /*!*******************************************************************************************************************
- * \brief Applies or removes the orange highlight pen for items with the given name.
+ * \brief Applies or removes a high-contrast highlight (pen + fill) for the named layer.
+ *
+ * Outline alone blends into polygon edges; fill is also brightened so the pick is obvious.
  *
  * \param name Layer name role on scene items.
- * \param on   True to highlight; false to restore the default pen.
+ * \param on   True to highlight; false to restore the default pen and fill.
  **********************************************************************************************************************/
 void LayoutView::setLayerHighlightVisual(const QString &name, bool on)
 {
@@ -182,17 +185,36 @@ void LayoutView::setLayerHighlightVisual(const QString &name, bool on)
         return;
 
     const QPen normal(QColor(20, 20, 20), 0);
-    QPen hiPen(QColor(255, 140, 0));
+    // Bright yellow-orange, thick cosmetic stroke — readable on any metal color.
+    QPen hiPen(QColor(255, 220, 0));
     hiPen.setCosmetic(true);
-    hiPen.setWidth(2);
+    hiPen.setWidth(4);
 
     for (QGraphicsItem *item : m_scene->items()) {
         if (item->data(kRoleName).toString() != name)
             continue;
         if (auto *shape = qgraphicsitem_cast<QAbstractGraphicsShapeItem *>(item)) {
-            shape->setPen(on ? hiPen : normal);
-            if (on)
+            if (on) {
+                if (!item->data(kRoleBrush).isValid())
+                    item->setData(kRoleBrush, shape->brush().color());
+                const QColor base = item->data(kRoleBrush).value<QColor>();
+                // Mix layer color with hot yellow so fill pops without hiding the layer hue.
+                QColor fill(qMin(255, int(0.35 * base.red()   + 0.65 * 255)),
+                            qMin(255, int(0.35 * base.green() + 0.65 * 210)),
+                            qMin(255, int(0.35 * base.blue()  + 0.65 * 0)));
+                fill.setAlpha(230);
+                shape->setPen(hiPen);
+                shape->setBrush(fill);
                 shape->setZValue(shape->zValue() + 0.5);
+            } else {
+                shape->setPen(normal);
+                if (item->data(kRoleBrush).isValid()) {
+                    QColor orig = item->data(kRoleBrush).value<QColor>();
+                    orig.setAlpha(150);
+                    shape->setBrush(orig);
+                    item->setData(kRoleBrush, QVariant());
+                }
+            }
         }
     }
     viewport()->update();
@@ -280,22 +302,39 @@ void LayoutView::resizeEvent(QResizeEvent *event)
 /*!*******************************************************************************************************************
  * \brief Highlights the clicked polygon and emits \c layerClicked.
  *
+ * Collects named layers under the cursor in top-to-bottom stacking order. The first
+ * click selects the topmost; further clicks cycle to the next layer below (wrapping).
+ *
  * \param event Mouse event; only the left button triggers selection.
  **********************************************************************************************************************/
 void LayoutView::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton) {
         setFocus(Qt::MouseFocusReason);
-        if (QGraphicsItem *hit = itemAt(event->pos())) {
-            for (QGraphicsItem *it = hit; it; it = it->parentItem()) {
-                const QString name = it->data(kRoleName).toString();
-                if (name.isEmpty())
-                    continue;
-                const QString kind = it->data(kRoleKind).toString();
-                setHighlightedLayer(name);
-                emit layerClicked(name, kind);
-                break;
+
+        // items(pos) is topmost-first stacking order.
+        struct Hit { QString name; QString kind; };
+        QVector<Hit> stack;
+        QSet<QString> seen;
+        for (QGraphicsItem *it : items(event->pos())) {
+            const QString name = it->data(kRoleName).toString();
+            if (name.isEmpty() || seen.contains(name))
+                continue;
+            seen.insert(name);
+            stack.append({name, it->data(kRoleKind).toString()});
+        }
+
+        if (!stack.isEmpty()) {
+            int idx = 0;
+            for (int i = 0; i < stack.size(); ++i) {
+                if (stack.at(i).name == m_highlightedName) {
+                    idx = (i + 1) % stack.size();
+                    break;
+                }
             }
+            const Hit &pick = stack.at(idx);
+            setHighlightedLayer(pick.name);
+            emit layerClicked(pick.name, pick.kind);
         }
     }
     QGraphicsView::mousePressEvent(event);

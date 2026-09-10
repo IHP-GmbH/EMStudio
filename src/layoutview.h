@@ -34,6 +34,8 @@
  *
  * Interaction mirrors SubstrateView:
  * - Left-click a polygon to highlight it and emit \c layerClicked.
+ *   Repeated clicks at the same spot cycle through overlapping layers under the cursor
+ *   (top → next below → … → top).
  * - Escape clears the highlight and emits \c highlightCleared.
  * - Mouse wheel zooms; F / Home fits the view; pan via scroll-hand drag.
  *
@@ -95,6 +97,7 @@ private:
 
     static constexpr int        kRoleName = 0;
     static constexpr int        kRoleKind = 1;
+    static constexpr int        kRoleBrush = 2; // original fill QColor before highlight
 };
 
 #endif // QT_VERSION

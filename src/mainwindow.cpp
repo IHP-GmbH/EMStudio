@@ -59,6 +59,9 @@
 #include "preferences.h"
 #include "ui_mainwindow.h"
 #include "substrateview.h"
+#include "layoutview.h"
+#include "gdslayout.h"
+#include "substrate.h"
 #include "stackupeditor.h"
 #include "resultsviewer.h"
 #include "pythonparser.h"
@@ -205,6 +208,35 @@ MainWindow::MainWindow(QWidget *parent)
     if (m_ui->substrateView) {
         connect(m_ui->substrateView, &SubstrateView::layerClicked,
                 this, &MainWindow::onSubstrateLayerClicked);
+    }
+    if (m_ui->layoutView) {
+        connect(m_ui->layoutView, &LayoutView::layerClicked,
+                this, &MainWindow::onLayoutLayerClicked);
+        connect(m_ui->layoutView, &LayoutView::layerClicked,
+                this, [this](const QString &name, const QString &) {
+                    if (m_ui->substrateView)
+                        m_ui->substrateView->setHighlightedLayer(name);
+                });
+        connect(m_ui->substrateView, &SubstrateView::layerClicked,
+                this, [this](const QString &name, const QString &) {
+                    if (m_ui->layoutView)
+                        m_ui->layoutView->setHighlightedLayer(name);
+                });
+        connect(m_ui->substrateView, &SubstrateView::highlightCleared,
+                this, [this]() {
+                    if (m_ui->layoutView)
+                        m_ui->layoutView->clearHighlight();
+                });
+        connect(m_ui->layoutView, &LayoutView::highlightCleared,
+                this, [this]() {
+                    if (m_ui->substrateView)
+                        m_ui->substrateView->clearHighlight();
+                });
+    }
+
+    if (m_ui->splitterStackLayout) {
+        m_ui->splitterStackLayout->setStretchFactor(0, 1);
+        m_ui->splitterStackLayout->setStretchFactor(1, 1);
     }
 
     connect(m_ui->editRunPythonScript, &QTextEdit::textChanged,
@@ -356,6 +388,7 @@ void MainWindow::onTopCellChanged(const QString &text)
     QString script = m_ui->editRunPythonScript->toPlainText();
     if (script.trimmed().isEmpty()) {
         setStateChanged();
+        refreshLayoutPreview();
         return;
     }
 
@@ -365,6 +398,7 @@ void MainWindow::onTopCellChanged(const QString &text)
     setEditorScriptPreservingState(script);
 
     setStateChanged();
+    refreshLayoutPreview();
 }
 
 /*!*******************************************************************************************************************
@@ -1518,6 +1552,7 @@ void MainWindow::updateGdsUserInfo()
     }
 
     updateSubLayerNamesCheckboxState();
+    refreshLayoutPreview();
 }
 
 /*!*******************************************************************************************************************
@@ -1998,6 +2033,9 @@ void MainWindow::drawSubstrate(const QString &filePath)
     } else {
         error("SubstrateView is not initialized", false);
     }
+
+    rebuildLayerMapping();
+    refreshLayoutPreview();
 }
 
 void MainWindow::on_btnEditStackup_clicked()
@@ -2031,6 +2069,8 @@ void MainWindow::on_btnEditStackup_clicked()
     connect(editor, &StackupEditor::clearStackHighlightRequested, this, [this]() {
         if (m_ui->substrateView)
             m_ui->substrateView->clearHighlight();
+        if (m_ui->layoutView)
+            m_ui->layoutView->clearHighlight();
     });
     if (m_ui->substrateView) {
         connect(m_ui->substrateView, &SubstrateView::highlightCleared,
@@ -2057,6 +2097,88 @@ void MainWindow::onSubstrateLayerClicked(const QString &name, const QString &kin
 {
     if (m_stackupEditor)
         m_stackupEditor->selectStackItem(name, kind);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Handles a layer click from the Layout preview (same path as SubstrateView).
+ *
+ * Forwards to \c onSubstrateLayerClicked so an open StackupEditor selects the item.
+ *
+ * \param name Stack / layer name from the clicked polygon.
+ * \param kind Layer kind string (conductor, via, port, …).
+ **********************************************************************************************************************/
+void MainWindow::onLayoutLayerClicked(const QString &name, const QString &kind)
+{
+    onSubstrateLayerClicked(name, kind);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Rebuilds the Substrate-tab Layout preview from the current GDS and stackup.
+ *
+ * Flattens the selected top cell via GdsLayout::flattenTopCell, builds per-layer
+ * colors/names from the substrate XML (and \c m_gdsToSubName fallback), then calls
+ * LayoutView::setPolygons. Clears the view when GDS/top cell is missing or flatten fails.
+ **********************************************************************************************************************/
+void MainWindow::refreshLayoutPreview()
+{
+    if (!m_ui || !m_ui->layoutView)
+        return;
+
+    const QString gdsPath = m_ui->txtGdsFile->text().trimmed();
+    const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
+    if (gdsPath.isEmpty() || !QFileInfo::exists(gdsPath) || topCell.isEmpty()) {
+        m_ui->layoutView->clear();
+        return;
+    }
+
+    QVector<GdsFlatPolygon> polys;
+    QString err;
+    if (!GdsLayout::flattenTopCell(gdsPath, topCell, &polys, &err)) {
+        m_ui->layoutView->clear();
+        if (!err.isEmpty())
+            info(err);
+        return;
+    }
+
+    // Keep stack metals + any unmapped layers (ports 201/202, etc.).
+    // (No filter: LayoutView styles known layers; unmapped get a port color.)
+
+    QHash<int, LayoutView::LayerStyle> styles;
+
+    const QString subXml = m_ui->txtSubstrate->text().trimmed();
+    Substrate substrate;
+    if (!subXml.isEmpty() && QFileInfo::exists(subXml) && substrate.parseXmlFile(subXml)) {
+        QString resolveErr;
+        substrate.resolve(currentStackupOverrides(), &resolveErr);
+
+        QHash<QString, QColor> matColor;
+        for (const Material &m : substrate.materials())
+            matColor.insert(m.name(), m.color());
+
+        for (const Layer &L : substrate.layers()) {
+            const int gds = L.layerNumber();
+            if (gds < 0)
+                continue;
+            LayoutView::LayerStyle st;
+            st.name = L.name();
+            st.kind = L.type().isEmpty() ? QStringLiteral("conductor") : L.type();
+            st.color = matColor.value(L.material(), QColor(120, 120, 140));
+            // Draw lower metals first using zmin
+            st.order = int(L.zmin() * 1000.0);
+            styles.insert(gds, st);
+        }
+    } else {
+        for (auto it = m_gdsToSubName.cbegin(); it != m_gdsToSubName.cend(); ++it) {
+            LayoutView::LayerStyle st;
+            st.name = it.value();
+            st.kind = QStringLiteral("conductor");
+            st.color = QColor(100, 140, 200);
+            st.order = it.key();
+            styles.insert(it.key(), st);
+        }
+    }
+
+    m_ui->layoutView->setPolygons(polys, styles);
 }
 
 QHash<QString, QVariant> MainWindow::currentStackupOverrides() const

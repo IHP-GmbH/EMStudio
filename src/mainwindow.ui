@@ -194,7 +194,78 @@
               </item>
              </layout>
             </widget>
-            <widget class="SubstrateView" name="substrateView"/>
+            <widget class="QSplitter" name="splitterStackLayout">
+             <property name="orientation">
+              <enum>Qt::Horizontal</enum>
+             </property>
+             <property name="childrenCollapsible">
+              <bool>false</bool>
+             </property>
+             <widget class="QWidget" name="wdgStackPane" native="true">
+              <layout class="QVBoxLayout" name="verticalLayoutStackPane">
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <property name="spacing">
+                <number>2</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="lblStackTitle">
+                 <property name="text">
+                  <string>Stack</string>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">font-weight: bold;</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="SubstrateView" name="substrateView"/>
+               </item>
+              </layout>
+             </widget>
+             <widget class="QWidget" name="wdgLayoutPane" native="true">
+              <layout class="QVBoxLayout" name="verticalLayoutLayoutPane">
+               <property name="leftMargin">
+                <number>0</number>
+               </property>
+               <property name="topMargin">
+                <number>0</number>
+               </property>
+               <property name="rightMargin">
+                <number>0</number>
+               </property>
+               <property name="bottomMargin">
+                <number>0</number>
+               </property>
+               <property name="spacing">
+                <number>2</number>
+               </property>
+               <item>
+                <widget class="QLabel" name="lblLayoutTitle">
+                 <property name="text">
+                  <string>Layout</string>
+                 </property>
+                 <property name="styleSheet">
+                  <string notr="true">font-weight: bold;</string>
+                 </property>
+                </widget>
+               </item>
+               <item>
+                <widget class="LayoutView" name="layoutView"/>
+               </item>
+              </layout>
+             </widget>
+            </widget>
            </widget>
           </item>
          </layout>
@@ -620,6 +691,11 @@
    <class>SubstrateView</class>
    <extends>QGraphicsView</extends>
    <header>substrateview.h</header>
+  </customwidget>
+  <customwidget>
+   <class>LayoutView</class>
+   <extends>QGraphicsView</extends>
+   <header>layoutview.h</header>
   </customwidget>
   <customwidget>
    <class>PythonEditor</class>

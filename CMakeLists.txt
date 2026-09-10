@@ -124,6 +124,8 @@ set(SOURCES
 
     src/finddialog.cpp
     src/gdsreader.cpp
+    src/gdslayout.cpp
+    src/layoutview.cpp
     src/layer.cpp
     src/mainwindow.cpp
     src/elmerThermalUi.cpp
@@ -183,6 +185,8 @@ set(HEADERS
     src/pythonsyntaxhighlighter.h
     src/substrate.h
     src/substrateview.h
+    src/gdslayout.h
+    src/layoutview.h
     src/stackupexpr.h
     src/stackupeditor.h
     src/touchstone.h

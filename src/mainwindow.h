@@ -288,6 +288,8 @@ private slots:
     void                            on_cbShowStackupOverrides_toggled(bool checked);
     void                            onStackupEditorSaved(const QString &path);
     void                            onSubstrateLayerClicked(const QString &name, const QString &kind);
+    /*! Slot: layout-preview polygon click → stack selection (same as substrate click). */
+    void                            onLayoutLayerClicked(const QString &name, const QString &kind);
     void                            on_txtSubstrate_textEdited(const QString &arg1);
     void                            on_txtSubstrate_textChanged(const QString &arg1);
 
@@ -413,6 +415,8 @@ private:
 
     void                            updateSubLayerNamesCheckboxState();
     void                            rebuildLayerMapping();
+    /*! Reload LayoutView from current GDS path, top cell, and substrate styles. */
+    void                            refreshLayoutPreview();
 
     bool                            applyPythonScriptFromEditor();
     void                            applySubLayerNamesToPorts(bool toNames);

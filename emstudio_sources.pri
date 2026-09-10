@@ -30,6 +30,8 @@ SOURCES += \
     $$TOP/extension/variantmanager.cpp \
     $$TOP/src/finddialog.cpp \
     $$TOP/src/gdsreader.cpp \
+    $$TOP/src/gdslayout.cpp \
+    $$TOP/src/layoutview.cpp \
     $$TOP/src/layer.cpp \
     $$TOP/src/mainwindow.cpp \
     $$TOP/src/elmerThermalUi.cpp \
@@ -82,6 +84,8 @@ HEADERS += \
     $$TOP/src/pythonsyntaxhighlighter.h \
     $$TOP/src/substrate.h \
     $$TOP/src/substrateview.h \
+    $$TOP/src/gdslayout.h \
+    $$TOP/src/layoutview.h \
     $$TOP/src/stackupexpr.h \
     $$TOP/src/stackupeditor.h \
     $$TOP/src/touchstone.h \

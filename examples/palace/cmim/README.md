@@ -7,25 +7,29 @@ Ports like Volker
 [`palace_rfcmim.py`](https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/blob/main/workflow/palace_rfcmim.py).
 Stackup is the **Palace** file
 [`SG13G2_200um.xml`](https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/blob/main/workflow/SG13G2_200um.xml)
-(MIM gap ≈ **24.3 nm**, background SiO2). The older openEMS-style equivalent
-(150 nm / εᵣ=26.8) is kept as `SG13G2_200um_openems_mim.xml` for comparison.
+(MIM gap ≈ **24.3 nm**, background SiO2). For openEMS comparison use
+`SG13G2_200um_openems.xml` (Volker: 0.1 µm / εᵣ=16.87 → 1.5 fF/µm²).
 
 | File | Role |
 |------|------|
 | `cmim_orig.gds` | Source (hierarchical PCell instance) |
-| `cmim_2u3_flat.gds` | Flattened DUT + feeds + ports; TM1 landing **1.26 µm** (TM1.a fail) |
+| `cmim_2u3_flat.gds` | Flattened DUT + **short ~2 µm** stubs + ports; TM1 **1.26 µm** |
 | `cmim_2u3_tm1fix.gds` | Same, TM1 landing **1.64 µm** ([#493](https://github.com/IHP-GmbH/IHP-Open-PDK/issues/493) workaround) |
+| `cmim_2u3_open.gds` | Same pads/feeders/frame as flat, **no MIM (36) / Vmim (129)** — open fixture |
+| `cmim_2u3_open_tm1fix.gds` | Open fixture matching **TM1 1.64 µm** (`tm1fix`) |
 | `SG13G2_200um.xml` | Palace stackup (~24 nm MIM gap) |
-| `SG13G2_200um_openems_mim.xml` | Previous equivalent-MIM stack (150 nm / εᵣ=26.8) |
+| `SG13G2_200um_openems.xml` | openEMS equivalent MIM (0.1 µm / εᵣ=16.87) |
 | `palace_cmim.py` | Baseline model (1.26 µm TM1) |
 | `palace_cmim_tm1fix.py` | Same ports/settings; uses `cmim_2u3_tm1fix.gds` |
-| `_build_leads_gds.py` | Regenerates both GDS variants from `cmim_orig.gds` |
+| `palace_cmim_open.py` | Open fixture model (`cmim_2u3_open.gds`) for Y-de-embed |
+| `palace_cmim_open_tm1fix.py` | Open fixture for TM1 1.64 (`cmim_2u3_open_tm1fix.gds`) |
+| `_build_leads_gds.py` | Regenerates flat / tm1fix / open GDS from `cmim_orig.gds` |
 
 ## Device
 
 - MIM plate: 2.3 × 2.3 µm (unchanged in both GDS variants)
 - Model C label: ~8.37 fF
-- Metal1 leads (rfcmim-style reference)
+- Metal1 reference frame + **short ~2 µm** stubs (not long rfcmim leads)
 - **A/B:** enlarge only TopMetal1 to ≥1.64 µm
 
 ## Ports (palace_rfcmim)
@@ -36,6 +40,23 @@ Stackup is the **Palace** file
 | 2 | Metal1 → Metal5 | 202 |
 
 Zero-width vertical line footprints on the Metal1/TM1 and Metal1/M5 leads.
+
+**De-embed (port L / feeder TL):** `scripts/combine_extend_snp.py` cascades:
+1. negative **port L** (via height from `port_information.json`);
+2. optional negative **feeder TL** when each port has `feeder_length` (µm), plus
+   `feeder_er` / `feeder_z0` (see `_port_feeders.py`, written by `palace_cmim*.py`).
+
+**De-embed (open fixture):** run `palace_cmim.py` and `palace_cmim_open.py` with the
+same mesh/settings, then:
+
+```bash
+python scripts/y_open_deembed.py \
+  examples/palace/cmim/palace_model/palace_cmim_data/output/palace_cmim/palace_cmim.s2p \
+  examples/palace/cmim/palace_model/palace_cmim_open_data/output/palace_cmim_open/palace_cmim_open.s2p
+```
+
+That subtracts Y-parameters: `Y_DUT = Y_meas − Y_open` (pads/feeders/frame parasitics
+removed). Short stubs alone do not remove pad fringe; open de-embed does.
 
 ## Frequencies
 
@@ -59,8 +80,11 @@ settings['no_gui'] = True
 EMStudio may rewrite paths to absolute when you open the file; that is fine locally.
 Do not commit machine-specific absolute paths.
 
-To compare against the old equivalent MIM, point `XML_filename` at
-`SG13G2_200um_openems_mim.xml`.
+`refined_cellsize=0.15` is the default mesh for this example. Finer values (0.05 / 0.03)
+cost a lot for little change in low-frequency C when lead shunt C dominates the PDK offset.
+
+To compare against the openEMS equivalent MIM, point `XML_filename` at
+`SG13G2_200um_openems.xml`.
 
 ## Run in EMStudio
 
@@ -71,5 +95,5 @@ To compare against the old equivalent MIM, point `XML_filename` at
 2. Open `palace_cmim.py` (or `palace_cmim_tm1fix.py`).
 3. Simulate → Run.
 
-**Note:** the ~24 nm MIM gap is thin; if meshing fails, fall back to
-`SG13G2_200um_openems_mim.xml` or refine `refined_cellsize`.
+**Note:** if meshing fails or memory blows up with a finer mesh, stay on `0.15` or use
+`SG13G2_200um_openems.xml`.

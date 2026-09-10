@@ -20,13 +20,15 @@
 #
 # Same as palace_cmim.py, but GDS has TopMetal1 landing widened to 1.64 um
 # (IHP-Open-PDK#493 workaround). MIM / Metal5 / Vmim unchanged - expect C ~same.
-# Compare results vs palace_cmim (baseline 1.26 um TM1).
+# Compare results vs palace_cmim (baseline 1.26 um TM1). Short ~2 um stubs.
+# De-embed: port L + feeder TL - see _port_feeders.py / combine_extend_snp.py.
 
 import os
 import sys
 import subprocess
 
 from gds2palace import *
+from _port_feeders import annotate_port_feeders
 
 
 # ======================== workflow settings ================================
@@ -95,6 +97,12 @@ settings['model_basename'] = model_basename
 
 excite_ports = simulation_ports.all_active_excitations()
 config_name, data_dir = simulation_setup.create_palace(excite_ports, settings)
+
+# Short stubs - must match _build_leads_gds.py LEAD_UM.
+annotate_port_feeders(sim_path, {
+    1: 2.0,
+    2: 2.0,
+}, feeder_er=2.5)
 
 utilities.create_run_script(sim_path)
 

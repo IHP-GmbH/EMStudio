@@ -5,7 +5,8 @@
 # updated 19-Oct-2025 Mue: support more than 9 ports
 # updated 08-Nov-2025 Mue: added evaluation for optional port impedance file port_information.json that is created by new gds2palace code
 # updated 13-Nov-2025 Mue: added simple de-embedding of parasitic port inductance (flat ribbon calculation)
-# updated 26-Nov-2025 Mue: also read Elmer FEM files 
+# updated 26-Nov-2025 Mue: also read Elmer FEM files
+# updated 10-Sep-2026: optional feeder de-embed via negative TL (feeder_length in port_information.json)
 
 import os,re, json, math
 import skrf as rf
@@ -244,12 +245,28 @@ def flat_strip_inductance(length, width, thickness, unit):
 
 
 def port_deembedding (snp_filename, port_info_available, port_info_data):
+    """De-embed lumped port parasitics and optional feeders.
+
+    Always (when geometry is present): cascade negative series L from the vertical
+    port sheet size (via height × width) — existing gds2palace behaviour.
+
+    Optional per-port fields in port_information.json:
+      feeder_length  — lead length in the same unit as port_information["unit"]
+                       (µm when unit=1e-6), from port footprint to DUT edge
+      feeder_z0      — TL impedance for the lead (default: port Z0)
+      feeder_er      — effective permittivity for phase velocity (default: 1.0);
+                       electrical length = physical * sqrt(feeder_er)
+
+    Feeders are removed after port L (outer via first, then move the reference
+    plane along the lead toward the DUT).
+    """
     if port_info_available:
         print('Port de-embedding based on port geometry data')
         unit = port_info_data.get("unit", 1e-6) # default dimension is micron 
 
         # calculate parasitic port inductance for all ports
         Lport = {}
+        feeder_by_port = {}
         portlist = port_info_data["ports"]
         for port in portlist:
             portnum = port.get("portnumber", None)    
@@ -260,6 +277,13 @@ def port_deembedding (snp_filename, port_info_available, port_info_data):
                 L = flat_strip_inductance(length, width, thickness, unit)
                 # store into dict for this port number, just in case the port numbers in the file are in wrong sorting order
                 Lport[str(portnum)]=L
+
+            if portnum is not None and port.get("feeder_length") is not None:
+                feeder_by_port[str(portnum)] = {
+                    "length": float(port["feeder_length"]),
+                    "z0": float(port.get("feeder_z0", port.get("Z0", 50))),
+                    "er": float(port.get("feeder_er", 1.0)),
+                }
 
         # convert the dict with port L into a list, to have the final values in correct order
         L_values = []
@@ -282,11 +306,31 @@ def port_deembedding (snp_filename, port_info_available, port_info_data):
             # after iterating over all ports we have the correct order again
             ntwk = connect(inductor, 0, ntwk, 0)
 
+        # Optional: cascade negative TL for each feeder (reference plane → DUT).
+        # Port order follows the JSON "ports" list / Lport key order used above.
+        if feeder_by_port:
+            # Match the same key iteration order as L_values
+            for n, key in enumerate(Lport.keys()):
+                if key not in feeder_by_port:
+                    continue
+                fd = feeder_by_port[key]
+                phys_m = fd["length"] * unit
+                er = max(fd["er"], 1e-6)
+                elec_m = phys_m * math.sqrt(er)
+                z0 = fd["z0"] if fd["z0"] > 0 else 50.0
+                media_f = rf.media.DefinedGammaZ0(frequency=freq, z0=z0)
+                print(f'Cascading feeder line L={fd["length"]:.3f} (unit) '
+                      f'er_eff={er:.3f} elec={elec_m*1e6:.2f} um, Z0={z0:g} Ohm at port {n+1}')
+                line = media_f.line(d=-elec_m, unit='m')
+                ntwk = connect(line, 0, ntwk, 0)
 
         filename, file_extension = os.path.splitext(snp_filename)
         out_filename = filename + '_deembedded' # without extension
-        ntwk.write_touchstone(out_filename, skrf_comment='De-embedded by adding negative series L at ports', form='db', write_noise=True)
-        print('Created file with de-embedding (cascaded negative port L): ', out_filename,'\n')
+        comment = 'De-embedded: negative port L'
+        if feeder_by_port:
+            comment += ' + negative feeder TL'
+        ntwk.write_touchstone(out_filename, skrf_comment=comment, form='db', write_noise=True)
+        print('Created file with de-embedding: ', out_filename,'\n')
     else:
         print('Skipping port de-embedding, not port geometry information available')    
 

@@ -16,12 +16,12 @@
 #
 ########################################################################
 
-# MODEL FOR GMSH WITH PALACE - IHP SG13G2 CMIM (2.3 um x 2.3 um)
+# OPEN FIXTURE for CMIM Y-de-embed (same pads/ports/frame, no MIM / Vmim)
 #
-# DUT: small cmim from IHP-Open-PDK#493.
-# Short ~2 um stubs (see _build_leads_gds.py LEAD_UM) to limit feeder shunt C.
-# De-embed: scripts/combine_extend_snp.py - negative port L (via) + optional
-# negative feeder TL when port_information.json has feeder_length (um).
+# After Palace finishes, de-embed DUT with:
+#   python scripts/y_open_deembed.py \
+#     .../palace_cmim_data/output/palace_cmim/palace_cmim.s2p \
+#     .../palace_cmim_open_data/output/palace_cmim_open/palace_cmim_open.s2p
 
 import os
 import sys
@@ -39,7 +39,7 @@ run_command = ['./run_sim']
 # ===================== input files and path settings =======================
 
 gds_cellname = "TOP"
-gds_filename = "cmim_2u3_flat.gds"
+gds_filename = "cmim_2u3_open.gds"
 XML_filename = "SG13G2_200um.xml"
 variable_overrides = {}
 
@@ -75,7 +75,7 @@ settings['adaptive_mesh_iterations'] = 0
 
 settings['no_gui'] = True
 
-# ======================== ports (palace_rfcmim) ================================
+# ======================== ports (same as palace_cmim) ========================
 
 simulation_ports = simulation_setup.all_simulation_ports()
 simulation_ports.add_port(simulation_setup.simulation_port(portnumber=1, voltage=1, port_Z0=50, source_layernum=201, from_layername='Metal1', to_layername='TopMetal1', direction='z'))
@@ -98,7 +98,6 @@ settings['model_basename'] = model_basename
 excite_ports = simulation_ports.all_active_excitations()
 config_name, data_dir = simulation_setup.create_palace(excite_ports, settings)
 
-# Feeder lengths (um): short stubs - must match _build_leads_gds.py LEAD_UM.
 annotate_port_feeders(sim_path, {
     1: 2.0,
     2: 2.0,

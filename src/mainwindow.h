@@ -290,6 +290,7 @@ private slots:
     void                            onSubstrateLayerClicked(const QString &name, const QString &kind);
     /*! Slot: layout-preview polygon click → stack selection (same as substrate click). */
     void                            onLayoutLayerClicked(const QString &name, const QString &kind);
+    void                            onPortsTableSelectionChanged();
     void                            on_txtSubstrate_textEdited(const QString &arg1);
     void                            on_txtSubstrate_textChanged(const QString &arg1);
 
@@ -417,6 +418,7 @@ private:
     void                            rebuildLayerMapping();
     /*! Reload LayoutView from current GDS path, top cell, and substrate styles. */
     void                            refreshLayoutPreview();
+    void                            setupLayoutLayerPanel();
 
     bool                            applyPythonScriptFromEditor();
     void                            applySubLayerNamesToPorts(bool toNames);
@@ -564,9 +566,11 @@ private:
     QPointer<class StackupEditor>   m_stackupEditor;
     ResultsViewer                  *m_resultsViewer = nullptr;
     QTableWidget                   *m_tblThermalObjects = nullptr;
+    class LayoutLayerPanel         *m_layoutLayerPanel = nullptr;
 
     bool                            m_headless = false;
     bool                            m_blockPortChanges;
+    bool                            m_blockPortSelectSync = false;
 
     QProcess                        *m_simProcess = nullptr;
 

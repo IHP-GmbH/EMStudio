@@ -488,6 +488,19 @@ void MainWindow::syncGuiSettingsToPythonEditor()
     applyGdsAndXmlPaths(script, simKey);
     applyVariableOverridesToScript(script);
     applyBoundaries(script, simKey == QLatin1String("openems"));
+
+    // Ports / thermal must follow the GUI table on Save (Ctrl+S), otherwise
+    // applyPythonScriptFromEditor() reloads stale direction/layers from the script.
+    if (isElmerThermalKey(simKey)) {
+        const QString thermalCode = buildThermalCodeFromGuiTable();
+        if (!thermalCode.isEmpty())
+            replaceOrInsertThermalSection(script, thermalCode);
+    } else {
+        const QString portCode = buildPortCodeFromGuiTable();
+        if (!portCode.isEmpty())
+            replaceOrInsertPortSection(script, portCode);
+    }
+
     setEditorScriptPreservingState(script);
 }
 

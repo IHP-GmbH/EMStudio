@@ -46,6 +46,11 @@
 #include <QFontInfo>
 #include <QDir>
 #include <QDirIterator>
+#include <QSplitter>
+#include <QLabel>
+#include <QVBoxLayout>
+#include <QSet>
+#include <algorithm>
 
 #include "extension/variantmanager.h"
 #include "extension/variantfactory.h"
@@ -60,6 +65,7 @@
 #include "ui_mainwindow.h"
 #include "substrateview.h"
 #include "layoutview.h"
+#include "layoutlayerpanel.h"
 #include "gdslayout.h"
 #include "substrate.h"
 #include "stackupeditor.h"
@@ -204,6 +210,8 @@ MainWindow::MainWindow(QWidget *parent)
             [this](QTableWidgetItem*){
                 if (!m_blockPortChanges) setStateChanged();
             });
+    connect(m_ui->tblPorts, &QTableWidget::itemSelectionChanged,
+            this, &MainWindow::onPortsTableSelectionChanged);
 
     if (m_ui->substrateView) {
         connect(m_ui->substrateView, &SubstrateView::layerClicked,
@@ -226,13 +234,29 @@ MainWindow::MainWindow(QWidget *parent)
                 this, [this]() {
                     if (m_ui->layoutView)
                         m_ui->layoutView->clearHighlight();
+                    if (m_layoutLayerPanel)
+                        m_layoutLayerPanel->clearHighlight();
                 });
         connect(m_ui->layoutView, &LayoutView::highlightCleared,
                 this, [this]() {
                     if (m_ui->substrateView)
                         m_ui->substrateView->clearHighlight();
+                    if (m_layoutLayerPanel)
+                        m_layoutLayerPanel->clearHighlight();
+                });
+        connect(m_ui->layoutView, &LayoutView::layerClicked,
+                this, [this](const QString &name, const QString &) {
+                    if (m_layoutLayerPanel)
+                        m_layoutLayerPanel->setHighlightedName(name);
+                });
+        connect(m_ui->substrateView, &SubstrateView::layerClicked,
+                this, [this](const QString &name, const QString &) {
+                    if (m_layoutLayerPanel)
+                        m_layoutLayerPanel->setHighlightedName(name);
                 });
     }
+
+    setupLayoutLayerPanel();
 
     if (m_ui->splitterStackLayout) {
         m_ui->splitterStackLayout->setStretchFactor(0, 1);
@@ -922,6 +946,13 @@ void MainWindow::saveSettings()
         settings.setValue(it.key(), it.value());
     }
     settings.endGroup();
+
+    if (m_layoutLayerPanel) {
+        settings.beginGroup(QStringLiteral("LayoutPreview"));
+        settings.setValue(QStringLiteral("usedLayersOnly"), m_layoutLayerPanel->usedLayersOnly());
+        settings.setValue(QStringLiteral("showCoordinates"), m_layoutLayerPanel->showCoordinates());
+        settings.endGroup();
+    }
 }
 
 /*!*******************************************************************************************************************
@@ -991,6 +1022,17 @@ void MainWindow::loadSettings()
 #else
     exportWslDistroToEnv(m_preferences);
 #endif
+
+    if (m_layoutLayerPanel) {
+        settings.beginGroup(QStringLiteral("LayoutPreview"));
+        const bool usedOnly = settings.value(QStringLiteral("usedLayersOnly"), true).toBool();
+        const bool showCoords = settings.value(QStringLiteral("showCoordinates"), true).toBool();
+        settings.endGroup();
+        m_layoutLayerPanel->setUsedLayersOnly(usedOnly);
+        m_layoutLayerPanel->setShowCoordinates(showCoords);
+        if (m_ui && m_ui->layoutView)
+            m_ui->layoutView->setShowCoordinates(showCoords);
+    }
 }
 
 /*!*******************************************************************************************************************
@@ -1352,116 +1394,17 @@ void MainWindow::updateSimulationSettings()
     }
     updateEditStackupButtonState();
 
-    m_ui->tblPorts->setRowCount(0);
-
-    if (m_simSettings.contains("Ports")) {
-
+    // Rebuild ports from the Python editor text (GUI→script is synced on Save).
+    // Do not use m_simSettings["Ports"] — it is not kept up to date with the table.
+    if (!isElmerThermalKey(currentSimToolKey().toLower())) {
         m_ui->tblPorts->setRowCount(0);
-
         rebuildLayerMapping();
-
-        QList<int> gdsNums;
-        gdsNums.reserve(m_layers.size());
-        for (const auto& layer : m_layers)
-            gdsNums.push_back(layer.first);
-        std::sort(gdsNums.begin(), gdsNums.end());
-
-        QStringList subNames = m_subLayers;
-        subNames.removeDuplicates();
-        std::sort(subNames.begin(), subNames.end(),
-                  [](const QString& a, const QString& b){
-                      return QString::localeAwareCompare(a, b) < 0;
-                  });
-
-        const bool namesMode = m_ui->cbSubLayerNames->isChecked();
-
-        const QVariant portsVar = m_simSettings["Ports"];
-        if (portsVar.canConvert<QVariantList>()) {
-            const QVariantList portsList = portsVar.toList();
-
-            auto setCurrentSafe = [](QComboBox* box, const QString& value){
-                if (!box || value.isEmpty()) return;
-                QSignalBlocker blocker(box);
-                if (box->findText(value) < 0)
-                    box->addItem(value);
-                box->setCurrentText(value);
-            };
-
-            m_blockPortChanges = true;
-
-            for (const QVariant& v : portsList) {
-                const QVariantMap portMap = v.toMap();
-
-                const int row = m_ui->tblPorts->rowCount();
-                m_ui->tblPorts->insertRow(row);
-
-                m_ui->tblPorts->setItem(row, 0, new QTableWidgetItem(portMap.value("Num").toString()));
-                m_ui->tblPorts->setItem(row, 1, new QTableWidgetItem(portMap.value("Voltage").toString()));
-                m_ui->tblPorts->setItem(row, 2, new QTableWidgetItem(portMap.value("Z0").toString()));
-
-                auto* sourceLayerBox = new QComboBox();
-                auto* fromLayerBox   = new QComboBox();
-                auto* toLayerBox     = new QComboBox();
-                auto* directionBox   = new QComboBox();
-
-                sourceLayerBox->addItem(QString());
-                fromLayerBox->addItem(QString());
-                toLayerBox->addItem(QString());
-
-                for (int n : gdsNums) {
-                    const QString s = QString::number(n);
-                    sourceLayerBox->addItem(s);
-                    fromLayerBox->addItem(s);
-                    toLayerBox->addItem(s);
-                }
-                for (const QString& nm : subNames) {
-                    sourceLayerBox->addItem(nm);
-                    fromLayerBox->addItem(nm);
-                    toLayerBox->addItem(nm);
-                }
-
-                directionBox->addItems(QStringList() << "x" << "y" << "z" << "-x" << "-y" << "-z");
-
-                const QString src  = portMap.value("Source Layer").toString().trimmed();
-                const QString from = portMap.value("From Layer").toString().trimmed();
-                const QString to   = portMap.value("To Layer").toString().trimmed();
-                QString dir        = portMap.value("Direction").toString().trimmed();
-                if (dir.isEmpty()) dir = "z";
-
-                dir = dir.toLower();
-
-                setCurrentSafe(sourceLayerBox, src);
-                setCurrentSafe(fromLayerBox,   from);
-                setCurrentSafe(toLayerBox,     to);
-                {
-                    QSignalBlocker b(directionBox);
-                    directionBox->setCurrentText(dir);
-                }
-
-                // Place widgets
-                m_ui->tblPorts->setCellWidget(row, 3, sourceLayerBox);
-                m_ui->tblPorts->setCellWidget(row, 4, fromLayerBox);
-                m_ui->tblPorts->setCellWidget(row, 5, toLayerBox);
-                m_ui->tblPorts->setCellWidget(row, 6, directionBox);
-
-                // Rebuild combos with mapping
-                rebuildComboWithMapping(sourceLayerBox, m_gdsToSubName, m_subNameToGds, namesMode);
-                rebuildComboWithMapping(fromLayerBox,   m_gdsToSubName, m_subNameToGds, namesMode);
-                rebuildComboWithMapping(toLayerBox,     m_gdsToSubName, m_subNameToGds, namesMode);
-
-                // Hooks
-                hookPortCombo(sourceLayerBox);
-                hookPortCombo(fromLayerBox);
-                hookPortCombo(toLayerBox);
-                hookPortCombo(directionBox);
-            }
-
-            m_blockPortChanges = false;
-        }
+        const auto parsed = parsePortsFromScript(m_ui->editRunPythonScript->toPlainText());
+        if (!parsed.isEmpty())
+            appendParsedPortsToTable(parsed);
+        if (m_ui->cbSubLayerNames->isEnabled() && m_ui->cbSubLayerNames->isChecked())
+            applySubLayerNamesToPorts(true);
     }
-
-    if (m_ui->cbSubLayerNames->isEnabled() && m_ui->cbSubLayerNames->isChecked())
-        applySubLayerNamesToPorts(true);
 }
 
 
@@ -2110,6 +2053,48 @@ void MainWindow::onSubstrateLayerClicked(const QString &name, const QString &kin
 void MainWindow::onLayoutLayerClicked(const QString &name, const QString &kind)
 {
     onSubstrateLayerClicked(name, kind);
+
+    if (!m_ui->tblPorts || kind != QLatin1String("port"))
+        return;
+    if (!name.startsWith(QLatin1Char('P')))
+        return;
+    bool ok = false;
+    const int num = name.mid(1).toInt(&ok);
+    if (!ok || num <= 0)
+        return;
+
+    m_blockPortSelectSync = true;
+    for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
+        auto *it = m_ui->tblPorts->item(r, 0);
+        if (!it)
+            continue;
+        if (it->text().trimmed().toInt() == num) {
+            m_ui->tblPorts->setCurrentCell(r, 0);
+            m_ui->tblPorts->selectRow(r);
+            break;
+        }
+    }
+    m_blockPortSelectSync = false;
+}
+
+void MainWindow::onPortsTableSelectionChanged()
+{
+    if (m_blockPortSelectSync || !m_ui || !m_ui->layoutView || !m_ui->tblPorts)
+        return;
+    const int row = m_ui->tblPorts->currentRow();
+    if (row < 0)
+        return;
+    auto *it = m_ui->tblPorts->item(row, 0);
+    if (!it)
+        return;
+    bool ok = false;
+    const int num = it->text().trimmed().toInt(&ok);
+    if (!ok || num <= 0)
+        return;
+    const QString pname = QStringLiteral("P%1").arg(num);
+    m_ui->layoutView->setHighlightedLayer(pname);
+    if (m_layoutLayerPanel)
+        m_layoutLayerPanel->setHighlightedName(pname);
 }
 
 /*!*******************************************************************************************************************
@@ -2128,6 +2113,8 @@ void MainWindow::refreshLayoutPreview()
     const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
     if (gdsPath.isEmpty() || !QFileInfo::exists(gdsPath) || topCell.isEmpty()) {
         m_ui->layoutView->clear();
+        if (m_layoutLayerPanel)
+            m_layoutLayerPanel->clear();
         return;
     }
 
@@ -2135,6 +2122,8 @@ void MainWindow::refreshLayoutPreview()
     QString err;
     if (!GdsLayout::flattenTopCell(gdsPath, topCell, &polys, &err)) {
         m_ui->layoutView->clear();
+        if (m_layoutLayerPanel)
+            m_layoutLayerPanel->clear();
         if (!err.isEmpty())
             info(err);
         return;
@@ -2178,7 +2167,165 @@ void MainWindow::refreshLayoutPreview()
         }
     }
 
-    m_ui->layoutView->setPolygons(polys, styles);
+    QHash<int, QString> portDirections;
+    if (m_ui->tblPorts) {
+        for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
+            auto *srcBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 3));
+            auto *dirBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 6));
+            if (!srcBox || !dirBox)
+                continue;
+            const QString src = srcBox->currentText().trimmed();
+            if (src.isEmpty())
+                continue;
+            bool ok = false;
+            int gds = src.toInt(&ok);
+            if (!ok)
+                gds = m_subNameToGds.value(src, -1);
+            if (gds < 0)
+                continue;
+            portDirections.insert(gds, dirBox->currentText().trimmed().toLower());
+        }
+    }
+
+    m_ui->layoutView->setPolygons(polys, styles, portDirections);
+
+    if (m_layoutLayerPanel) {
+        QSet<int> usedGds;
+        for (const GdsFlatPolygon &p : polys)
+            usedGds.insert(p.layer);
+
+        QVector<LayoutLayerPanel::Entry> entries;
+        QSet<int> listed;
+
+        auto addEntry = [&](int gds, const LayoutView::LayerStyle &st, bool used) {
+            if (listed.contains(gds))
+                return;
+            listed.insert(gds);
+            LayoutLayerPanel::Entry e;
+            e.gdsLayer = gds;
+            e.name = st.name;
+            e.kind = st.kind;
+            e.color = st.color;
+            e.used = used;
+            e.visible = m_ui->layoutView->isLayerVisible(gds);
+            e.opacity = m_ui->layoutView->layerOpacity(gds);
+            entries.append(e);
+        };
+
+        // Stable order: by draw order then name
+        QList<int> keys = styles.keys();
+        std::sort(keys.begin(), keys.end(), [&](int a, int b) {
+            const auto &sa = styles.value(a);
+            const auto &sb = styles.value(b);
+            if (sa.order != sb.order)
+                return sa.order < sb.order;
+            return sa.name < sb.name;
+        });
+        for (int gds : keys)
+            addEntry(gds, styles.value(gds), usedGds.contains(gds));
+
+        for (int gds : usedGds) {
+            if (listed.contains(gds))
+                continue;
+            LayoutView::LayerStyle st;
+            const int portIdx = gds - 200;
+            st.name = (portIdx >= 1 && portIdx <= 99)
+                    ? QStringLiteral("P%1").arg(portIdx)
+                    : QStringLiteral("L%1").arg(gds);
+            st.kind = QStringLiteral("port");
+            st.color = QColor(220, 40, 180);
+            st.order = 10000 + gds;
+            addEntry(gds, st, true);
+        }
+
+        m_layoutLayerPanel->setLayers(entries);
+    }
+}
+
+void MainWindow::setupLayoutLayerPanel()
+{
+    if (!m_ui || !m_ui->layoutView || !m_ui->verticalLayoutLayoutPane || !m_ui->wdgLayoutPane)
+        return;
+    if (m_layoutLayerPanel)
+        return;
+
+    auto *split = new QSplitter(Qt::Horizontal, m_ui->wdgLayoutPane);
+    split->setObjectName(QStringLiteral("splitterLayoutLayers"));
+    split->setChildrenCollapsible(false);
+
+    // Pull Layout title + view out of the pane layout; rebuild as two titled columns
+    // so "Layout" and "Layers" sit on one baseline (like Stack | Layout).
+    if (m_ui->lblLayoutTitle)
+        m_ui->verticalLayoutLayoutPane->removeWidget(m_ui->lblLayoutTitle);
+    m_ui->verticalLayoutLayoutPane->removeWidget(m_ui->layoutView);
+
+    auto *left = new QWidget(split);
+    auto *leftLay = new QVBoxLayout(left);
+    leftLay->setContentsMargins(0, 0, 0, 0);
+    leftLay->setSpacing(2);
+    if (m_ui->lblLayoutTitle) {
+        m_ui->lblLayoutTitle->setParent(left);
+        leftLay->addWidget(m_ui->lblLayoutTitle);
+    }
+    m_ui->layoutView->setParent(left);
+    leftLay->addWidget(m_ui->layoutView, 1);
+
+    auto *right = new QWidget(split);
+    auto *rightLay = new QVBoxLayout(right);
+    rightLay->setContentsMargins(0, 0, 0, 0);
+    rightLay->setSpacing(2);
+    auto *lblLayers = new QLabel(tr("Layers"), right);
+    lblLayers->setObjectName(QStringLiteral("lblLayersTitle"));
+    lblLayers->setStyleSheet(QStringLiteral("font-weight: bold;"));
+    rightLay->addWidget(lblLayers);
+
+    m_layoutLayerPanel = new LayoutLayerPanel(right);
+    m_layoutLayerPanel->setTitleVisible(false);
+    rightLay->addWidget(m_layoutLayerPanel, 1);
+
+    split->addWidget(left);
+    split->addWidget(right);
+    split->setStretchFactor(0, 5);
+    split->setStretchFactor(1, 1);
+    split->setSizes({700, 200});
+    m_ui->verticalLayoutLayoutPane->addWidget(split, /*stretch*/ 1);
+
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::visibilityChanged,
+            this, [this](int gds, bool vis) {
+                if (m_ui->layoutView)
+                    m_ui->layoutView->setLayerVisible(gds, vis);
+            });
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::opacityChanged,
+            this, [this](int gds, qreal op) {
+                if (m_ui->layoutView)
+                    m_ui->layoutView->setLayerOpacity(gds, op);
+            });
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::layerActivated,
+            this, [this](const QString &name, const QString &kind) {
+                if (m_ui->layoutView)
+                    m_ui->layoutView->setHighlightedLayer(name);
+                if (m_ui->substrateView)
+                    m_ui->substrateView->setHighlightedLayer(name);
+                onSubstrateLayerClicked(name, kind);
+            });
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::showCoordinatesToggled,
+            this, [this](bool on) {
+                if (m_ui->layoutView)
+                    m_ui->layoutView->setShowCoordinates(on);
+                QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+                settings.beginGroup(QStringLiteral("LayoutPreview"));
+                settings.setValue(QStringLiteral("showCoordinates"), on);
+                settings.endGroup();
+            });
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::usedLayersOnlyToggled,
+            this, [](bool on) {
+                QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+                settings.beginGroup(QStringLiteral("LayoutPreview"));
+                settings.setValue(QStringLiteral("usedLayersOnly"), on);
+                settings.endGroup();
+            });
+    if (m_ui->layoutView)
+        m_ui->layoutView->setShowCoordinates(m_layoutLayerPanel->showCoordinates());
 }
 
 QHash<QString, QVariant> MainWindow::currentStackupOverrides() const
@@ -3256,9 +3403,17 @@ void MainWindow::hookPortCombo(QComboBox* box)
 {
     if (!box) return;
     connect(box, qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this](int){ if (!m_blockPortChanges) setStateChanged(); });
+            [this](int){
+                if (m_blockPortChanges) return;
+                setStateChanged();
+                refreshLayoutPreview();
+            });
     connect(box, &QComboBox::editTextChanged, this,
-            [this](const QString&){ if (!m_blockPortChanges) setStateChanged(); });
+            [this](const QString&){
+                if (m_blockPortChanges) return;
+                setStateChanged();
+                refreshLayoutPreview();
+            });
 }
 
 /*!*******************************************************************************************************************

@@ -126,6 +126,7 @@ set(SOURCES
     src/gdsreader.cpp
     src/gdslayout.cpp
     src/layoutview.cpp
+    src/layoutlayerpanel.cpp
     src/layer.cpp
     src/mainwindow.cpp
     src/elmerThermalUi.cpp
@@ -187,6 +188,7 @@ set(HEADERS
     src/substrateview.h
     src/gdslayout.h
     src/layoutview.h
+    src/layoutlayerpanel.h
     src/stackupexpr.h
     src/stackupeditor.h
     src/touchstone.h

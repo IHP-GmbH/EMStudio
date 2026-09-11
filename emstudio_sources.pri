@@ -32,6 +32,7 @@ SOURCES += \
     $$TOP/src/gdsreader.cpp \
     $$TOP/src/gdslayout.cpp \
     $$TOP/src/layoutview.cpp \
+    $$TOP/src/layoutlayerpanel.cpp \
     $$TOP/src/layer.cpp \
     $$TOP/src/mainwindow.cpp \
     $$TOP/src/elmerThermalUi.cpp \

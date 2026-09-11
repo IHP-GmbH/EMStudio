@@ -87,6 +87,7 @@ HEADERS += \
     $$TOP/src/substrateview.h \
     $$TOP/src/gdslayout.h \
     $$TOP/src/layoutview.h \
+    $$TOP/src/layoutlayerpanel.h \
     $$TOP/src/stackupexpr.h \
     $$TOP/src/stackupeditor.h \
     $$TOP/src/touchstone.h \

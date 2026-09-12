@@ -72,6 +72,7 @@
 #include "resultsviewer.h"
 #include "pythonparser.h"
 #include "keywordseditor.h"
+#include "sanitycheck.h"
 
 
 /*!*******************************************************************************************************************
@@ -878,7 +879,7 @@ QString MainWindow::resolveResultsDirectory() const
     return QDir::cleanPath(modelDir.absolutePath());
 }
 
-void MainWindow::updateResultsViewerFromModel()
+void MainWindow::updateResultsViewerFromModel(bool force)
 {
     if (!m_resultsViewer)
         return;
@@ -886,14 +887,19 @@ void MainWindow::updateResultsViewerFromModel()
     syncResultsViewerHostPython();
 
     const QString dir = resolveResultsDirectory();
-    if (dir.isEmpty())
+    if (dir.isEmpty()) {
+        if (force)
+            m_resultsViewer->setTargetDirectory(QString());
         return;
+    }
 
-    // Don't clobber a folder the user already browsed to unless it's empty/unset
-    // or still pointing at a previous auto-resolved path under the old model dir.
-    if (m_resultsViewer->targetDirectory().isEmpty()
+    // On model load always follow the new model. Otherwise don't clobber a folder
+    // the user already browsed to unless it's empty/unset or still under this model.
+    if (force
+        || m_resultsViewer->targetDirectory().isEmpty()
         || QDir(m_resultsViewer->targetDirectory()) == QDir(dir)
-        || m_resultsViewer->targetDirectory().startsWith(QFileInfo(currentPythonScriptPath()).absolutePath())) {
+        || m_resultsViewer->targetDirectory().startsWith(
+               QFileInfo(currentPythonScriptPath()).absolutePath())) {
         m_resultsViewer->setTargetDirectory(dir);
     } else {
         m_resultsViewer->rescan();
@@ -2614,6 +2620,14 @@ void MainWindow::on_btnRun_clicked()
         return;
     }
 
+#ifndef EMSTUDIO_TESTING
+    {
+        const QVector<SanityFinding> findings = collectSanityFindings();
+        if (!showSanityCheckDialog(this, findings))
+            return;
+    }
+#endif
+
     m_ui->txtLog->clear();
 
     if (key == QLatin1String("openems")) {
@@ -2623,6 +2637,183 @@ void MainWindow::on_btnRun_clicked()
     } else {
         error(QString("Unsupported simulation tool: %1").arg(key));
     }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Collects pre-run sanity findings (empty top cell, ports, margin, unmapped GDS layers, …).
+ **********************************************************************************************************************/
+QVector<SanityFinding> MainWindow::collectSanityFindings() const
+{
+    QVector<SanityFinding> out;
+    if (!m_ui)
+        return out;
+
+    const QString simKey = currentSimToolKey().toLower();
+    const bool thermal = isElmerThermalKey(simKey);
+
+    // --- Top cell ---
+    const QString top = bestTopCellName().trimmed();
+    if (top.isEmpty()) {
+        SanityFinding f;
+        f.severity = SanityFinding::Error;
+        f.code = QStringLiteral("empty_topcell");
+        f.message = tr("Top cell is empty. Select a GDS top cell before running.");
+        out.append(f);
+    }
+
+    // --- GDS ---
+    const QString gdsPath = m_ui->txtGdsFile ? m_ui->txtGdsFile->text().trimmed() : QString();
+    if (gdsPath.isEmpty()) {
+        SanityFinding f;
+        f.severity = SanityFinding::Error;
+        f.code = QStringLiteral("missing_gds");
+        f.message = tr("GDS file path is empty.");
+        out.append(f);
+    } else if (!QFileInfo::exists(gdsPath)) {
+        SanityFinding f;
+        f.severity = SanityFinding::Error;
+        f.code = QStringLiteral("gds_not_found");
+        f.message = tr("GDS file does not exist:\n%1").arg(gdsPath);
+        out.append(f);
+    }
+
+    // --- Substrate ---
+    const QString subPath = m_ui->txtSubstrate ? m_ui->txtSubstrate->text().trimmed() : QString();
+    if (subPath.isEmpty()) {
+        SanityFinding f;
+        f.severity = SanityFinding::Warning;
+        f.code = QStringLiteral("missing_substrate");
+        f.message = tr("Substrate XML path is empty. Stackup materials may be incomplete.");
+        out.append(f);
+    } else if (!QFileInfo::exists(subPath)) {
+        SanityFinding f;
+        f.severity = SanityFinding::Warning;
+        f.code = QStringLiteral("substrate_not_found");
+        f.message = tr("Substrate XML does not exist:\n%1").arg(subPath);
+        out.append(f);
+    }
+
+    // GDS layer numbers present in file (layer only, ignore datatype for matching)
+    QSet<int> gdsLayerNums;
+    for (const auto &pair : m_layers)
+        gdsLayerNums.insert(pair.first);
+
+    if (!thermal) {
+        // --- Ports ---
+        if (!m_ui->tblPorts || m_ui->tblPorts->rowCount() == 0) {
+            SanityFinding f;
+            f.severity = SanityFinding::Error;
+            f.code = QStringLiteral("no_ports");
+            f.message = tr("No ports defined. Add ports or import them from the Python model.");
+            out.append(f);
+        } else {
+            for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
+                auto *numItem = m_ui->tblPorts->item(r, 0);
+                bool okNum = false;
+                const int portNum = numItem ? numItem->text().trimmed().toInt(&okNum) : (r + 1);
+                const int displayNum = okNum ? portNum : (r + 1);
+
+                auto *srcBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 3));
+                auto *fromBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 4));
+                auto *toBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 5));
+                auto *dirBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 6));
+
+                const QString src = srcBox ? srcBox->currentText().trimmed() : QString();
+                const QString from = fromBox ? fromBox->currentText().trimmed() : QString();
+                const QString to = toBox ? toBox->currentText().trimmed() : QString();
+                const QString dir = dirBox ? dirBox->currentText().trimmed() : QString();
+
+                appendPortDirectionFindings(out, displayNum, dir, from, to);
+
+                if (src.isEmpty()) {
+                    SanityFinding f;
+                    f.severity = SanityFinding::Error;
+                    f.code = QStringLiteral("port_no_source");
+                    f.message = tr("Port %1: Source Layer is empty.").arg(displayNum);
+                    out.append(f);
+                } else if (!gdsPath.isEmpty() && QFileInfo::exists(gdsPath) && !gdsLayerNums.isEmpty()) {
+                    bool ok = false;
+                    int gds = src.toInt(&ok);
+                    if (!ok)
+                        gds = m_subNameToGds.value(src, -1);
+                    if (gds < 0) {
+                        SanityFinding f;
+                        f.severity = SanityFinding::Error;
+                        f.code = QStringLiteral("port_source_unresolved");
+                        f.message = tr("Port %1: cannot resolve Source Layer '%2' to a GDS number.")
+                                        .arg(displayNum)
+                                        .arg(src);
+                        out.append(f);
+                    } else if (!gdsLayerNums.contains(gds)) {
+                        SanityFinding f;
+                        f.severity = SanityFinding::Error;
+                        f.code = QStringLiteral("port_source_not_in_gds");
+                        f.message = tr("Port %1: Source Layer %2 (GDS %3) is not present in the GDS file.")
+                                        .arg(displayNum)
+                                        .arg(src)
+                                        .arg(gds);
+                        out.append(f);
+                    }
+                }
+            }
+        }
+
+        // --- Unmapped GDS layers (skip port markers 201–299) ---
+        if (!m_gdsToSubName.isEmpty() && !gdsLayerNums.isEmpty()) {
+            QStringList unmapped;
+            for (int gds : gdsLayerNums) {
+                if (gds >= 201 && gds <= 299)
+                    continue;
+                if (!m_gdsToSubName.contains(gds))
+                    unmapped.append(QString::number(gds));
+            }
+            if (!unmapped.isEmpty()) {
+                SanityFinding f;
+                f.severity = SanityFinding::Warning;
+                f.code = QStringLiteral("unmapped_gds_layers");
+                if (unmapped.size() > 12) {
+                    f.message = tr("GDS layers without stackup mapping: %1 … (%2 total)")
+                                    .arg(unmapped.mid(0, 12).join(QLatin1String(", ")))
+                                    .arg(unmapped.size());
+                } else {
+                    f.message = tr("GDS layers without stackup mapping: %1")
+                                    .arg(unmapped.join(QLatin1String(", ")));
+                }
+                out.append(f);
+            }
+        }
+
+        // --- margin ---
+        if (!m_simSettings.contains(QStringLiteral("margin"))) {
+            SanityFinding f;
+            f.severity = SanityFinding::Warning;
+            f.code = QStringLiteral("margin_missing");
+            f.message = tr("Simulation setting 'margin' is not set.");
+            out.append(f);
+        } else {
+            bool ok = false;
+            const qreal margin = m_simSettings.value(QStringLiteral("margin")).toDouble(&ok);
+            if (ok && margin < 10.0) {
+                SanityFinding f;
+                f.severity = SanityFinding::Warning;
+                f.code = QStringLiteral("margin_small");
+                f.message = tr("margin = %1 µm is small (< 10 µm); fields may be truncated.")
+                                .arg(margin, 0, 'g', 4);
+                out.append(f);
+            }
+        }
+    } else {
+        // Thermal: expect at least one thermal object row
+        if (!m_tblThermalObjects || m_tblThermalObjects->rowCount() == 0) {
+            SanityFinding f;
+            f.severity = SanityFinding::Warning;
+            f.code = QStringLiteral("no_thermal_objects");
+            f.message = tr("Thermal table is empty. Add heat sources or boundary conditions.");
+            out.append(f);
+        }
+    }
+
+    return out;
 }
 
 /*!*******************************************************************************************************************
@@ -3621,6 +3812,9 @@ void MainWindow::loadPythonModel(const QString &fileName)
     }
 
     setStateSaved();
+
+    // Results tab must follow the newly loaded model (not keep the previous run folder).
+    updateResultsViewerFromModel(true);
 }
 
 /*!*******************************************************************************************************************

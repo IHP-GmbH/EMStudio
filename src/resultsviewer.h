@@ -72,6 +72,9 @@ public slots:
     void refresh();
     void convertPalaceCsv();
     void launchModelFit();
+    void compareFile();
+    void compareFolder();
+    void clearCompare();
 
 signals:
     void logMessage(const QString &text);
@@ -83,7 +86,7 @@ private slots:
     void onFilterChanged();
 
 private:
-    enum class DisplayMode { Phase, Smith, Zoom };
+    enum class DisplayMode { Db, Phase, Smith, Zoom };
 
     struct CachedNetwork {
         qint64 mtimeMs = -1;
@@ -104,6 +107,9 @@ private:
     QStringList filteredFiles(const QStringList &files) const;
     QString relPathFor(const QString &path) const;
     QString legendLabelFor(const QString &path) const;
+    bool isComparePath(const QString &path) const;
+    void appendComparePaths(const QStringList &paths);
+    void rebuildCompareTreeGroup();
     QTreeWidgetItem *makeFileItem(const QString &path);
     void refreshGroupCheckState(QTreeWidgetItem *groupItem);
     const TouchstoneNetwork *loadNetworkCached(const QString &path);
@@ -115,7 +121,9 @@ private:
     void clearPlotArea();
     void showEmptyMessage(const QString &text);
     void drawDbPhase(const QVector<PlottedTrace> &plotted,
-                     const QVector<std::pair<int, int>> &params);
+                     const QVector<std::pair<int, int>> &params,
+                     bool showDb,
+                     bool showPhase);
     void drawSmith(const QVector<PlottedTrace> &plotted,
                    const QVector<std::pair<int, int>> &reflectionParams,
                    bool zoomed);
@@ -133,11 +141,12 @@ private:
     QString m_targetDir;
     QString m_preferredPythonPrefKey;
     QStringList m_masterFiles;
+    QStringList m_extraComparePaths; // absolute paths outside / in addition to target dir
     QSet<QString> m_checkedPaths;
     QSet<QPair<int, int>> m_checkedParams; // 1-based (m,k) like Volker
     QHash<QString, CachedNetwork> m_networkCache;
     int m_lastN = -1;
-    DisplayMode m_mode = DisplayMode::Phase;
+    DisplayMode m_mode = DisplayMode::Db;
     bool m_updatingChecks = false;
 
     QLineEdit *m_pathEdit = nullptr;
@@ -145,6 +154,7 @@ private:
     QCheckBox *m_includeDeembeddedCb = nullptr;
     QTreeWidget *m_fileList = nullptr;
     QGridLayout *m_paramGrid = nullptr;
+    QRadioButton *m_dbRadio = nullptr;
     QRadioButton *m_phaseRadio = nullptr;
     QRadioButton *m_smithRadio = nullptr;
     QRadioButton *m_zoomRadio = nullptr;
@@ -152,6 +162,8 @@ private:
     QLabel *m_legendLabel = nullptr;
     QPushButton *m_convertBtn = nullptr;
     QPushButton *m_modelFitBtn = nullptr;
+    QPushButton *m_compareBtn = nullptr;
+    QPushButton *m_clearCompareBtn = nullptr;
     QWidget *m_plotHost = nullptr;
     QVBoxLayout *m_plotHostLayout = nullptr;
 };

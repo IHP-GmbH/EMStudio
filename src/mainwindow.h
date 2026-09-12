@@ -30,6 +30,7 @@
 #include <QMainWindow>
 
 #include "pythonparser.h"
+#include "sanitycheck.h"
 
 class QProcess;
 class QProcessEnvironment;
@@ -322,7 +323,7 @@ private:
     void                            updateGdsUserInfo();
     void                            setupSettingsPanel();
     void                            showTab(int indexToShow);
-    void                            updateResultsViewerFromModel();
+    void                            updateResultsViewerFromModel(bool force = false);
     void                            syncResultsViewerHostPython();
     QString                         resolveResultsDirectory() const;
     void                            updateSimulationSettings();
@@ -419,6 +420,7 @@ private:
     /*! Reload LayoutView from current GDS path, top cell, and substrate styles. */
     void                            refreshLayoutPreview();
     void                            setupLayoutLayerPanel();
+    QVector<SanityFinding>          collectSanityFindings() const;
 
     bool                            applyPythonScriptFromEditor();
     void                            applySubLayerNamesToPorts(bool toNames);

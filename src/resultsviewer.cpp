@@ -38,6 +38,7 @@
 #include <QLineEdit>
 #include <QMap>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPainter>
 #include <QProcess>
 #include <QPushButton>
@@ -141,9 +142,24 @@ ResultsViewer::ResultsViewer(QWidget *parent)
 
 void ResultsViewer::setTargetDirectory(const QString &dir)
 {
-    m_targetDir = QDir::cleanPath(dir);
+    const QString cleaned = dir.isEmpty() ? QString() : QDir::cleanPath(dir);
+    const bool changed = (cleaned != m_targetDir);
+    m_targetDir = cleaned;
     if (m_pathEdit && m_pathEdit->text() != m_targetDir)
         m_pathEdit->setText(m_targetDir);
+
+    // Drop primary-file selection/cache when switching models/folders so old
+    // Touchstone overlays don't linger. Compare overlays are kept intentionally.
+    if (changed) {
+        QSet<QString> keep;
+        for (const QString &p : m_extraComparePaths) {
+            if (m_checkedPaths.contains(p))
+                keep.insert(p);
+        }
+        m_checkedPaths = keep;
+        m_networkCache.clear();
+        m_lastN = -1;
+    }
     rescanFiles();
 }
 
@@ -226,6 +242,21 @@ void ResultsViewer::buildUi()
                                  "(lumped-element netlist extraction)."));
     connect(m_modelFitBtn, &QPushButton::clicked, this, &ResultsViewer::launchModelFit);
     fileBtnRow->addWidget(m_modelFitBtn);
+
+    m_compareBtn = new QPushButton(tr("Compare…"), filesGroup);
+    m_compareBtn->setToolTip(tr("Overlay Touchstone from another file or run folder on the same charts."));
+    auto *compareMenu = new QMenu(m_compareBtn);
+    compareMenu->addAction(tr("Touchstone file…"), this, &ResultsViewer::compareFile);
+    compareMenu->addAction(tr("Run folder…"), this, &ResultsViewer::compareFolder);
+    m_compareBtn->setMenu(compareMenu);
+    fileBtnRow->addWidget(m_compareBtn);
+
+    m_clearCompareBtn = new QPushButton(tr("Clear compare"), filesGroup);
+    m_clearCompareBtn->setToolTip(tr("Remove all Compare overlays."));
+    m_clearCompareBtn->setEnabled(false);
+    connect(m_clearCompareBtn, &QPushButton::clicked, this, &ResultsViewer::clearCompare);
+    fileBtnRow->addWidget(m_clearCompareBtn);
+
     fileBtnRow->addStretch();
     filesLayout->addLayout(fileBtnRow);
 
@@ -236,17 +267,21 @@ void ResultsViewer::buildUi()
     // --- Display ---
     auto *displayGroup = new QGroupBox(tr("Display"), hSplit);
     auto *displayLayout = new QVBoxLayout(displayGroup);
-    m_phaseRadio = new QRadioButton(tr("dB + Phase"), displayGroup);
+    m_dbRadio = new QRadioButton(tr("dB"), displayGroup);
+    m_phaseRadio = new QRadioButton(tr("Phase"), displayGroup);
     m_smithRadio = new QRadioButton(tr("Smith chart"), displayGroup);
     m_zoomRadio = new QRadioButton(tr("Smith chart (zoomed)"), displayGroup);
-    m_phaseRadio->setChecked(true);
+    m_dbRadio->setChecked(true);
     auto *modeGroup = new QButtonGroup(this);
+    modeGroup->addButton(m_dbRadio);
     modeGroup->addButton(m_phaseRadio);
     modeGroup->addButton(m_smithRadio);
     modeGroup->addButton(m_zoomRadio);
+    displayLayout->addWidget(m_dbRadio);
     displayLayout->addWidget(m_phaseRadio);
     displayLayout->addWidget(m_smithRadio);
     displayLayout->addWidget(m_zoomRadio);
+    connect(m_dbRadio, &QRadioButton::toggled, this, &ResultsViewer::onModeChanged);
     connect(m_phaseRadio, &QRadioButton::toggled, this, &ResultsViewer::onModeChanged);
     connect(m_smithRadio, &QRadioButton::toggled, this, &ResultsViewer::onModeChanged);
     connect(m_zoomRadio, &QRadioButton::toggled, this, &ResultsViewer::onModeChanged);
@@ -342,10 +377,27 @@ QString ResultsViewer::relPathFor(const QString &path) const
 
 QString ResultsViewer::legendLabelFor(const QString &path) const
 {
+    if (isComparePath(path)) {
+        const QString name = QFileInfo(path).fileName();
+        const QString label = QStringLiteral("cmp: %1").arg(name);
+        if (label.size() <= 28)
+            return label;
+        return QStringLiteral("cmp: %1..%2").arg(name.left(8), name.right(12));
+    }
     QString rel = relPathFor(path);
     if (rel.size() <= 17)
         return rel;
     return rel.left(10) + QLatin1String("..") + rel.right(20);
+}
+
+bool ResultsViewer::isComparePath(const QString &path) const
+{
+    const QString clean = QDir::cleanPath(path);
+    for (const QString &p : m_extraComparePaths) {
+        if (QDir::cleanPath(p) == clean)
+            return true;
+    }
+    return false;
 }
 
 void ResultsViewer::onFilterChanged()
@@ -364,12 +416,24 @@ void ResultsViewer::rescanFiles()
             tr("No Target Directory set.")});
         item->setFlags(Qt::NoItemFlags);
         m_fileList->addTopLevelItem(item);
+        QSet<QString> keep;
+        for (const QString &p : m_extraComparePaths) {
+            if (m_checkedPaths.contains(p))
+                keep.insert(p);
+        }
+        m_checkedPaths = keep;
     } else if (!QDir(m_targetDir).exists()) {
         m_masterFiles.clear();
         auto *item = new QTreeWidgetItem(QStringList{
             tr("Target Directory does not exist: %1").arg(m_targetDir)});
         item->setFlags(Qt::NoItemFlags);
         m_fileList->addTopLevelItem(item);
+        QSet<QString> keep;
+        for (const QString &p : m_extraComparePaths) {
+            if (m_checkedPaths.contains(p))
+                keep.insert(p);
+        }
+        m_checkedPaths = keep;
     } else {
         const QStringList allFiles = findTouchstoneFiles(m_targetDir);
         m_masterFiles = filteredFiles(allFiles);
@@ -388,10 +452,21 @@ void ResultsViewer::rescanFiles()
             auto *item = new QTreeWidgetItem(QStringList{message});
             item->setFlags(Qt::NoItemFlags);
             m_fileList->addTopLevelItem(item);
+            // Keep Compare checks only; drop stale primary paths
+            QSet<QString> keep;
+            for (const QString &p : m_extraComparePaths) {
+                if (m_checkedPaths.contains(p))
+                    keep.insert(p);
+            }
+            m_checkedPaths = keep;
         } else {
-            // Drop stale checks
+            // Drop stale checks (keep Compare overlays)
             QSet<QString> still;
             for (const QString &p : m_masterFiles) {
+                if (m_checkedPaths.contains(p))
+                    still.insert(p);
+            }
+            for (const QString &p : m_extraComparePaths) {
                 if (m_checkedPaths.contains(p))
                     still.insert(p);
             }
@@ -437,11 +512,15 @@ void ResultsViewer::rescanFiles()
         }
     }
 
+    rebuildCompareTreeGroup();
+
     m_fileList->blockSignals(false);
     if (m_convertBtn)
         m_convertBtn->setEnabled(!m_targetDir.isEmpty() && QDir(m_targetDir).exists());
     if (m_modelFitBtn)
         m_modelFitBtn->setEnabled(!m_targetDir.isEmpty() && QDir(m_targetDir).exists());
+    if (m_clearCompareBtn)
+        m_clearCompareBtn->setEnabled(!m_extraComparePaths.isEmpty());
     onControlChanged();
 }
 
@@ -744,6 +823,89 @@ void ResultsViewer::launchModelFit()
                              QDir::toNativeSeparators(python)));
 }
 
+void ResultsViewer::appendComparePaths(const QStringList &paths)
+{
+    bool added = false;
+    for (const QString &raw : paths) {
+        const QString path = QDir::cleanPath(raw);
+        if (path.isEmpty() || !QFileInfo::exists(path))
+            continue;
+        if (m_extraComparePaths.contains(path))
+            continue;
+        m_extraComparePaths.append(path);
+        m_checkedPaths.insert(path);
+        added = true;
+    }
+    if (!added)
+        return;
+    rescanFiles();
+}
+
+void ResultsViewer::rebuildCompareTreeGroup()
+{
+    if (m_extraComparePaths.isEmpty())
+        return;
+
+    auto *groupItem = new QTreeWidgetItem(QStringList{tr("Compare")});
+    groupItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+    groupItem->setCheckState(0, Qt::Unchecked);
+    m_fileList->addTopLevelItem(groupItem);
+    for (const QString &path : m_extraComparePaths)
+        groupItem->addChild(makeFileItem(path));
+    refreshGroupCheckState(groupItem);
+    groupItem->setExpanded(true);
+}
+
+void ResultsViewer::compareFile()
+{
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        tr("Compare Touchstone file"),
+        m_targetDir.isEmpty() ? QDir::homePath() : m_targetDir,
+        tr("Touchstone (*.s*p *.S*P);;All files (*)"));
+    if (path.isEmpty())
+        return;
+    if (!kTouchstoneRe.match(QFileInfo(path).fileName()).hasMatch()) {
+        QMessageBox::warning(this, tr("Compare"),
+                             tr("Selected file does not look like a Touchstone .sNp name."));
+        return;
+    }
+    appendComparePaths({path});
+    emit logMessage(tr("\n[Compare] Added file: %1\n").arg(QDir::toNativeSeparators(path)));
+}
+
+void ResultsViewer::compareFolder()
+{
+    const QString dir = QFileDialog::getExistingDirectory(
+        this,
+        tr("Compare run folder"),
+        m_targetDir.isEmpty() ? QDir::homePath() : m_targetDir);
+    if (dir.isEmpty())
+        return;
+
+    const QStringList found = filteredFiles(findTouchstoneFiles(dir));
+    if (found.isEmpty()) {
+        QMessageBox::warning(this, tr("Compare"),
+                             tr("No Touchstone (.sNp) files found under:\n%1").arg(dir));
+        return;
+    }
+    appendComparePaths(found);
+    emit logMessage(tr("\n[Compare] Added %1 file(s) from %2\n")
+                        .arg(found.size())
+                        .arg(QDir::toNativeSeparators(dir)));
+}
+
+void ResultsViewer::clearCompare()
+{
+    if (m_extraComparePaths.isEmpty())
+        return;
+    for (const QString &p : m_extraComparePaths)
+        m_checkedPaths.remove(p);
+    m_extraComparePaths.clear();
+    rescanFiles();
+    emit logMessage(tr("\n[Compare] Cleared overlay files.\n"));
+}
+
 void ResultsViewer::convertPalaceCsv()
 {
     QString log;
@@ -913,6 +1075,10 @@ QVector<ResultsViewer::PlottedTrace> ResultsViewer::getCheckedPlotted()
         if (m_checkedPaths.contains(path))
             checkedInOrder.append(path);
     }
+    for (const QString &path : m_extraComparePaths) {
+        if (m_checkedPaths.contains(path) && !checkedInOrder.contains(path))
+            checkedInOrder.append(path);
+    }
 
     // Warm the cache first so pointers taken below stay valid (no rehash mid-loop).
     for (const QString &path : checkedInOrder)
@@ -1008,12 +1174,14 @@ void ResultsViewer::onModeChanged(bool checked)
 {
     if (!checked)
         return;
-    if (m_smithRadio->isChecked())
+    if (m_dbRadio->isChecked())
+        m_mode = DisplayMode::Db;
+    else if (m_phaseRadio->isChecked())
+        m_mode = DisplayMode::Phase;
+    else if (m_smithRadio->isChecked())
         m_mode = DisplayMode::Smith;
     else if (m_zoomRadio->isChecked())
         m_mode = DisplayMode::Zoom;
-    else
-        m_mode = DisplayMode::Phase;
     redrawPlot();
 }
 
@@ -1101,15 +1269,21 @@ void ResultsViewer::redrawPlot()
         }
         drawSmith(plotted, reflection, m_mode == DisplayMode::Zoom);
     } else {
-        drawDbPhase(plotted, params);
+        drawDbPhase(plotted, params,
+                    m_mode == DisplayMode::Db,
+                    m_mode == DisplayMode::Phase);
     }
     setLegend(plotted);
 }
 
 void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
-                                const QVector<std::pair<int, int>> &params)
+                                const QVector<std::pair<int, int>> &params,
+                                bool showDb,
+                                bool showPhase)
 {
     clearPlotArea();
+    if (!showDb && !showPhase)
+        return;
 
     auto *row = new QWidget(m_plotHost);
     auto *rowLayout = new QHBoxLayout(row);
@@ -1123,47 +1297,62 @@ void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
         auto *colLayout = new QVBoxLayout(col);
         colLayout->setContentsMargins(2, 2, 2, 2);
 
-        auto *dbChart = new QChart();
-        dbChart->legend()->hide();
-        dbChart->setTitle(QStringLiteral("dB S%1%2").arg(m).arg(n));
-        auto *phChart = new QChart();
-        phChart->legend()->hide();
-        phChart->setTitle(QStringLiteral("phase S%1%2").arg(m).arg(n));
+        QChart *dbChart = nullptr;
+        QChart *phChart = nullptr;
+        if (showDb) {
+            dbChart = new QChart();
+            dbChart->legend()->hide();
+            dbChart->setTitle(QStringLiteral("dB S%1%2").arg(m).arg(n));
+        }
+        if (showPhase) {
+            phChart = new QChart();
+            phChart->legend()->hide();
+            phChart->setTitle(QStringLiteral("phase S%1%2").arg(m).arg(n));
+        }
 
         for (const PlottedTrace &t : plotted) {
             const auto svals = t.network->sParam(m - 1, n - 1);
             const auto freqs = t.network->frequencyHz();
             QVector<QPointF> dbPts;
             QVector<QPointF> phPts;
-            dbPts.reserve(freqs.size());
-            phPts.reserve(freqs.size());
+            if (showDb)
+                dbPts.reserve(freqs.size());
+            if (showPhase)
+                phPts.reserve(freqs.size());
             for (int i = 0; i < freqs.size(); ++i) {
                 const double ghz = freqs.at(i) / 1e9;
-                dbPts.append(QPointF(ghz, toDb(svals.at(i))));
-                phPts.append(QPointF(ghz, toPhaseDeg(svals.at(i))));
+                if (showDb)
+                    dbPts.append(QPointF(ghz, toDb(svals.at(i))));
+                if (showPhase)
+                    phPts.append(QPointF(ghz, toPhaseDeg(svals.at(i))));
             }
             const bool single = freqs.size() == 1;
-            addSeriesToChart(dbChart, dbPts, t.color, t.style, t.label, single);
-            addSeriesToChart(phChart, phPts, t.color, t.style, t.label, single);
+            if (dbChart)
+                addSeriesToChart(dbChart, dbPts, t.color, t.style, t.label, single);
+            if (phChart)
+                addSeriesToChart(phChart, phPts, t.color, t.style, t.label, single);
         }
 
-        dbChart->createDefaultAxes();
-        phChart->createDefaultAxes();
-        if (auto *axX = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Horizontal).value(0)))
-            configureFreqAxis(axX);
-        if (auto *axX = qobject_cast<QValueAxis *>(phChart->axes(Qt::Horizontal).value(0)))
-            configureFreqAxis(axX);
-        if (auto *axY = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Vertical).value(0)))
-            axY->setTitleText(QStringLiteral("dB"));
-        if (auto *axY = qobject_cast<QValueAxis *>(phChart->axes(Qt::Vertical).value(0))) {
-            axY->setTitleText(QStringLiteral("°"));
-            axY->setRange(-180.0, 180.0);
-            axY->setTickCount(5); // -180,-90,0,90,180 — readable in narrow panes
-            axY->setLabelFormat(QStringLiteral("%.0f"));
+        if (dbChart) {
+            dbChart->createDefaultAxes();
+            if (auto *axX = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Horizontal).value(0)))
+                configureFreqAxis(axX);
+            if (auto *axY = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Vertical).value(0)))
+                axY->setTitleText(QStringLiteral("dB"));
+            colLayout->addWidget(makeChartView(dbChart), 1);
         }
-
-        colLayout->addWidget(makeChartView(dbChart), 1);
-        colLayout->addWidget(makeChartView(phChart), 1);
+        if (phChart) {
+            phChart->createDefaultAxes();
+            if (auto *axX = qobject_cast<QValueAxis *>(phChart->axes(Qt::Horizontal).value(0)))
+                configureFreqAxis(axX);
+            if (auto *axY = qobject_cast<QValueAxis *>(phChart->axes(Qt::Vertical).value(0))) {
+                axY->setTitleText(QStringLiteral("°"));
+                axY->setRange(-180.0, 180.0);
+                axY->setTickCount(5); // -180,-90,0,90,180 — readable in narrow panes
+                axY->setLabelFormat(QStringLiteral("%.0f"));
+            }
+            colLayout->addWidget(makeChartView(phChart), 1);
+        }
         rowLayout->addWidget(col, 1);
     }
 

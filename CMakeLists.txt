@@ -127,6 +127,7 @@ set(SOURCES
     src/gdslayout.cpp
     src/layoutview.cpp
     src/layoutlayerpanel.cpp
+    src/sanitycheck.cpp
     src/layer.cpp
     src/mainwindow.cpp
     src/elmerThermalUi.cpp
@@ -189,6 +190,7 @@ set(HEADERS
     src/gdslayout.h
     src/layoutview.h
     src/layoutlayerpanel.h
+    src/sanitycheck.h
     src/stackupexpr.h
     src/stackupeditor.h
     src/touchstone.h

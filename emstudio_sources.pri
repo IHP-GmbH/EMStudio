@@ -33,6 +33,7 @@ SOURCES += \
     $$TOP/src/gdslayout.cpp \
     $$TOP/src/layoutview.cpp \
     $$TOP/src/layoutlayerpanel.cpp \
+    $$TOP/src/sanitycheck.cpp \
     $$TOP/src/layer.cpp \
     $$TOP/src/mainwindow.cpp \
     $$TOP/src/elmerThermalUi.cpp \
@@ -88,6 +89,7 @@ HEADERS += \
     $$TOP/src/gdslayout.h \
     $$TOP/src/layoutview.h \
     $$TOP/src/layoutlayerpanel.h \
+    $$TOP/src/sanitycheck.h \
     $$TOP/src/stackupexpr.h \
     $$TOP/src/stackupeditor.h \
     $$TOP/src/touchstone.h \

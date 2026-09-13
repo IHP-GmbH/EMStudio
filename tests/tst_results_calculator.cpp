@@ -183,3 +183,75 @@ void ResultsCalculatorTest::resultsCalculatorIcon_isValid()
     QVERIFY(!ic.isNull());
     QVERIFY(!ic.pixmap(22, 22).isNull());
 }
+
+void ResultsCalculatorTest::errorPaths_s1p_andBadArgs()
+{
+    const QString s1p = QFINDTESTDATA("testdata/sample.s1p");
+    const QString s2p = QFINDTESTDATA("testdata/sample.s2p");
+    QVERIFY(!s1p.isEmpty());
+    QVERIFY(!s2p.isEmpty());
+
+    TouchstoneNetwork net1;
+    TouchstoneNetwork net2;
+    QVERIFY(net1.load(s1p));
+    QVERIFY(net2.load(s2p));
+
+    ResultsCalculatorPanel panel;
+    panel.setAttribute(Qt::WA_DontShowOnScreen, true);
+    panel.show();
+
+    auto *expr = panel.findChild<QLineEdit *>();
+    auto *out = panel.findChild<QPlainTextEdit *>();
+    auto *eval = findEvaluate(&panel);
+    QVERIFY(expr);
+    QVERIFY(out);
+    QVERIFY(eval);
+
+    // 1-port: cser/delay/db out of range should error.
+    setSelectedTrace(&panel, &net1, QStringLiteral("s1p"));
+    const QStringList bad = {
+        QStringLiteral("cser($1)"),
+        QStringLiteral("lser($1)"),
+        QStringLiteral("delay($1)"),
+        QStringLiteral("db(S21,$1)"),
+        QStringLiteral("ph(S33,$1)"),
+        QStringLiteral("not_a_func($1)"),
+        QStringLiteral("cser("),
+    };
+    for (const QString &e : bad) {
+        expr->setText(e);
+        eval->click();
+        QVERIFY2(out->toPlainText().contains(QStringLiteral("Error"), Qt::CaseInsensitive)
+                     || out->toPlainText().contains(QStringLiteral("Need"), Qt::CaseInsensitive)
+                     || out->toPlainText().contains(QStringLiteral("out of range"), Qt::CaseInsensitive)
+                     || out->toPlainText().contains(QStringLiteral("Unknown"), Qt::CaseInsensitive)
+                     || out->toPlainText().contains(QStringLiteral("Parse"), Qt::CaseInsensitive),
+                 qPrintable(e + " → " + out->toPlainText()));
+    }
+
+    // Two traces: ydiff_lser path + clear trailing action by typing.
+    ResultsCalculatorPanel::TraceRef a;
+    a.label = QStringLiteral("a");
+    a.path = QStringLiteral("a");
+    a.network = &net2;
+    a.selected = true;
+    ResultsCalculatorPanel::TraceRef b = a;
+    b.label = QStringLiteral("b");
+    b.path = QStringLiteral("b");
+    panel.setTraces({a, b}, true);
+
+    expr->setText(QStringLiteral("ydiff_lser($1,$2)"));
+    eval->click();
+    // May succeed or report singular; either way exercises the branch.
+    QVERIFY(!out->toPlainText().isEmpty());
+
+    expr->setText(QStringLiteral("ydiff_cser($1,$2)"));
+    eval->click();
+    QVERIFY(!out->toPlainText().contains(QStringLiteral("Click"), Qt::CaseInsensitive));
+
+    expr->setText(QStringLiteral("qser($1)"));
+    eval->click();
+
+    expr->clear();
+    QVERIFY(expr->text().isEmpty());
+}

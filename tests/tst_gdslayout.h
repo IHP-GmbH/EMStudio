@@ -5,21 +5,18 @@
  *  Copyright (C) 2023–2026 IHP Authors
  ************************************************************************/
 
-#ifndef TST_RESULTS_CALCULATOR_H
-#define TST_RESULTS_CALCULATOR_H
+#ifndef TST_GDSLAYOUT_H
+#define TST_GDSLAYOUT_H
 
 #include <QObject>
 
-class ResultsCalculatorTest : public QObject
+class GdsLayoutTest : public QObject
 {
     Q_OBJECT
 
 private slots:
-    void evaluates_cap_ind_delay_onSampleS2p();
-    void comboInsert_andEmptyExpression();
-    void ydiff_needsTwoSelectedTraces();
-    void resultsCalculatorIcon_isValid();
-    void errorPaths_s1p_andBadArgs();
+    void flattenTopCell_goldenGds_returnsPolygons();
+    void flattenTopCell_missingFileOrCell_fails();
 };
 
-#endif // TST_RESULTS_CALCULATOR_H
+#endif // TST_GDSLAYOUT_H

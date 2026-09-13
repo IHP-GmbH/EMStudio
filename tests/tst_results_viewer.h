@@ -23,6 +23,7 @@ private slots:
     void hasTouchstoneFiles_skipsNeedForConvert();
     void preferredPython_ordersPalaceBeforeOpenems();
     void calculatorToggle_andParamSettingsPersist();
+    void chartKeysWheel_panZoomResetAndEsc();
 };
 
 #endif // TST_RESULTS_VIEWER_H

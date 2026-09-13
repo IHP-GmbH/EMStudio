@@ -29,6 +29,9 @@
 #include "tst_results_viewer.h"
 #include "tst_results_calculator.h"
 #include "tst_sanitycheck.h"
+#include "tst_layout_view.h"
+#include "tst_layout_layer_panel.h"
+#include "tst_gdslayout.h"
 #include "tst_substrate_view.h"
 #include "tst_tips.h"
 
@@ -149,6 +152,9 @@ int main(int argc, char **argv)
         ADD_TEST(ResultsViewerTest),
         ADD_TEST(ResultsCalculatorTest),
         ADD_TEST(SanityCheckTest),
+        ADD_TEST(LayoutViewTest),
+        ADD_TEST(LayoutLayerPanelTest),
+        ADD_TEST(GdsLayoutTest),
         ADD_TEST(SubstrateViewTest),
         ADD_TEST(TipsTest),
         ADD_TEST(AboutDialogTest),

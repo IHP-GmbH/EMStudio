@@ -1,7 +1,12 @@
-#include "tst_mainwindow_ports.h"
+﻿#include "tst_mainwindow_ports.h"
 
 #include <QtTest/QtTest>
 #include <QFile>
+#include <QGraphicsView>
+#include <QKeyEvent>
+#include <QListWidget>
+#include <QSlider>
+#include <QWheelEvent>
 
 #include "mainwindow.h"
 
@@ -503,7 +508,7 @@ void MainWindowPortsTest::collectSanityFindings_reportsMissingInputs()
     MainWindow w;
     w.setAttribute(Qt::WA_DontShowOnScreen, true);
 
-    // Fresh window: empty GDS / topcell / no ports → several findings.
+    // Fresh window: empty GDS / topcell / no ports â†’ several findings.
     const auto emptyFindings = w.testCollectSanityFindings();
     QVERIFY(emptyFindings.size() >= 2);
     QStringList codes;
@@ -568,5 +573,75 @@ void MainWindowPortsTest::collectSanityFindings_reportsMissingInputs()
         findings = w.testCollectSanityFindings();
         // Path exercised; findings depend on whether GDS layers loaded into the window.
         Q_UNUSED(findings);
+    }
+}
+
+void MainWindowPortsTest::layoutPreview_withGoldenGds_populatesLayerPanel()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.resize(1200, 800);
+    w.show();
+    QTest::qWait(30);
+
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY2(!gdsPath.isEmpty(), "Golden GDS missing");
+    QVERIFY2(!xmlPath.isEmpty(), "Golden XML missing");
+
+    w.setGdsFile(gdsPath);
+    w.setTopCell(QStringLiteral("t1"));
+    w.setSubstrateFile(xmlPath);
+    w.testRefreshLayoutPreview();
+    QTest::qWait(40);
+
+    auto *layoutView = w.findChild<QWidget *>(QStringLiteral("layoutView"));
+    QVERIFY(layoutView);
+
+    // Layer panel is created in MainWindow ctor setup.
+    auto *list = w.findChild<QListWidget *>();
+    // May be the ports or layers list â€” prefer one that looks like layers (checkable items).
+    QListWidget *layerList = nullptr;
+    for (QListWidget *lw : w.findChildren<QListWidget *>()) {
+        if (lw->count() > 0 && (lw->item(0)->flags() & Qt::ItemIsUserCheckable)) {
+            layerList = lw;
+            break;
+        }
+    }
+    QVERIFY2(layerList, "LayoutLayerPanel list not found");
+    QVERIFY(layerList->count() >= 1);
+
+    QListWidgetItem *item = layerList->item(0);
+    layerList->setCurrentItem(item);
+    item->setCheckState(Qt::Unchecked);
+    item->setCheckState(Qt::Checked);
+
+    if (auto *slider = w.findChild<QSlider *>()) {
+        if (slider->isEnabled())
+            slider->setValue(70);
+    }
+
+    // Empty / bad paths clear the preview.
+    w.setTopCell(QString());
+    w.testRefreshLayoutPreview();
+    w.setTopCell(QStringLiteral("t1"));
+    w.setGdsFile(QStringLiteral("C:/no/such/layout.gds"));
+    w.testRefreshLayoutPreview();
+    w.setGdsFile(gdsPath);
+    w.setTopCell(QStringLiteral("t1"));
+    w.testRefreshLayoutPreview();
+
+    // Interact with layout preview widgets if present.
+    for (QGraphicsView *gv : w.findChildren<QGraphicsView *>()) {
+        if (!gv->objectName().contains(QStringLiteral("layout"), Qt::CaseInsensitive)
+            && gv->objectName() != QStringLiteral("layoutView")) {
+            // Still exercise the first graphics view on substrate tab.
+        }
+        QKeyEvent fKey(QEvent::KeyPress, Qt::Key_F, Qt::NoModifier);
+        QApplication::sendEvent(gv, &fKey);
+        QWheelEvent wheel(QPointF(50, 50), QPointF(50, 50), QPoint(0, 0), QPoint(0, 120),
+                          Qt::NoButton, Qt::NoModifier, Qt::ScrollPhase::NoScrollPhase, false);
+        QApplication::sendEvent(gv->viewport(), &wheel);
+        break;
     }
 }

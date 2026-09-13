@@ -37,6 +37,9 @@ set(TEST_SOURCES
     tst_results_viewer.cpp
     tst_results_calculator.cpp
     tst_sanitycheck.cpp
+    tst_layout_view.cpp
+    tst_layout_layer_panel.cpp
+    tst_gdslayout.cpp
     tst_substrate_view.cpp
     tst_tips.cpp
     tst_preferences_dialog.cpp

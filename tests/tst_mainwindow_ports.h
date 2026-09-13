@@ -19,6 +19,7 @@ private slots:
     void boundaryOptions_updateOnToolChange_withoutCrash();
     void saveAction_writesScriptToFile_and_updatesState();
     void collectSanityFindings_reportsMissingInputs();
+    void layoutPreview_withGoldenGds_populatesLayerPanel();
 };
 
 #endif // TST_MAINWINDOW_PORTS_H

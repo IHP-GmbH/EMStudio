@@ -27,6 +27,9 @@ SOURCES += \
     tst_results_viewer.cpp \
     tst_results_calculator.cpp \
     tst_sanitycheck.cpp \
+    tst_layout_view.cpp \
+    tst_layout_layer_panel.cpp \
+    tst_gdslayout.cpp \
     tst_substrate_view.cpp \
     tst_tips.cpp \
     tst_preferences_dialog.cpp \
@@ -52,6 +55,9 @@ HEADERS += \
     tst_results_viewer.h \
     tst_results_calculator.h \
     tst_sanitycheck.h \
+    tst_layout_view.h \
+    tst_layout_layer_panel.h \
+    tst_gdslayout.h \
     tst_substrate_view.h \
     tst_tips.h \
     tst_preferences_dialog.h \

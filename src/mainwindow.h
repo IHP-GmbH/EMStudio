@@ -176,6 +176,7 @@ public:
                                                            int timeoutMs) const;
     void                            testImportPortsFromEditor();
     QVector<SanityFinding>          testCollectSanityFindings() const { return collectSanityFindings(); }
+    void                            testRefreshLayoutPreview() { refreshLayoutPreview(); }
     QString                         testPortCellText(int row, int col) const;
     QString                         testPortComboText(int row, int col) const;
     void                            testClickAddPort();

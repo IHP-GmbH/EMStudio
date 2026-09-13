@@ -21,6 +21,12 @@
 
 #include <QSettings>
 #include <QIODevice>
+#include <QtCharts/QChartView>
+#include <QKeyEvent>
+#include <QWheelEvent>
+#include <QMouseEvent>
+
+QT_CHARTS_USE_NAMESPACE
 
 namespace {
 
@@ -391,4 +397,71 @@ void ResultsViewerTest::calculatorToggle_andParamSettingsPersist()
     v.clearCalcSelection();
     v.onCalcTraceClicked(dir.filePath(QStringLiteral("plot.s2p")));
     v.clearCalcSelection();
+}
+
+void ResultsViewerTest::chartKeysWheel_panZoomResetAndEsc()
+{
+    const QString s2p = QFINDTESTDATA("testdata/sample.s2p");
+    QVERIFY(!s2p.isEmpty());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    copyFixture(s2p, dir.filePath(QStringLiteral("plot.s2p")));
+
+    ResultsViewer v;
+    v.setAttribute(Qt::WA_DontShowOnScreen, true);
+    v.resize(1000, 700);
+    v.show();
+    v.setTargetDirectory(dir.path());
+    v.rescan();
+    QTest::qWait(40);
+
+    auto *tree = v.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    QTreeWidgetItem *fileItem = firstCheckableFileItem(tree);
+    QVERIFY(fileItem);
+    fileItem->setCheckState(0, Qt::Checked);
+    QTest::qWait(80);
+
+    for (QPushButton *btn : v.findChildren<QPushButton *>()) {
+        if (btn->text() == QStringLiteral("S21") && btn->isCheckable()) {
+            btn->setChecked(true);
+            break;
+        }
+    }
+    QTest::qWait(60);
+
+    auto charts = v.findChildren<QChartView *>();
+    QVERIFY(!charts.isEmpty());
+    QChartView *cv = charts.first();
+    cv->setFocus(Qt::OtherFocusReason);
+
+    auto sendKey = [cv](int key) {
+        QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier);
+        QApplication::sendEvent(cv, &press);
+    };
+    sendKey(Qt::Key_Left);
+    sendKey(Qt::Key_Right);
+    sendKey(Qt::Key_Up);
+    sendKey(Qt::Key_Down);
+    sendKey(Qt::Key_F);
+
+    v.onCalcTraceClicked(dir.filePath(QStringLiteral("plot.s2p")));
+    sendKey(Qt::Key_Escape);
+
+    QWheelEvent wheelIn(QPointF(200, 200), QPointF(200, 200), QPoint(0, 0), QPoint(0, 120),
+                        Qt::NoButton, Qt::NoModifier, Qt::ScrollPhase::NoScrollPhase, false);
+    QApplication::sendEvent(cv->viewport(), &wheelIn);
+    QWheelEvent wheelOut(QPointF(200, 200), QPointF(200, 200), QPoint(0, 0), QPoint(0, -120),
+                         Qt::NoButton, Qt::NoModifier, Qt::ScrollPhase::NoScrollPhase, false);
+    QApplication::sendEvent(cv->viewport(), &wheelOut);
+
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(180, 180), Qt::LeftButton, Qt::LeftButton,
+                      Qt::ControlModifier);
+    QApplication::sendEvent(cv->viewport(), &press);
+    QMouseEvent release(QEvent::MouseButtonRelease, QPointF(260, 260), Qt::LeftButton, Qt::LeftButton,
+                        Qt::ControlModifier);
+    QApplication::sendEvent(cv->viewport(), &release);
+
+    sendKey(Qt::Key_F);
 }

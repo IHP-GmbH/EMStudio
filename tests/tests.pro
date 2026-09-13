@@ -21,9 +21,12 @@ SOURCES += \
     tst_touchstone.cpp \
     tst_smithchart.cpp \
     tst_stackupexpr.cpp \
+    tst_exprparser.cpp \
     tst_substrate.cpp \
     tst_stackup_editor.cpp \
     tst_results_viewer.cpp \
+    tst_results_calculator.cpp \
+    tst_sanitycheck.cpp \
     tst_substrate_view.cpp \
     tst_tips.cpp \
     tst_preferences_dialog.cpp \
@@ -43,9 +46,12 @@ HEADERS += \
     tst_touchstone.h \
     tst_smithchart.h \
     tst_stackupexpr.h \
+    tst_exprparser.h \
     tst_substrate.h \
     tst_stackup_editor.h \
     tst_results_viewer.h \
+    tst_results_calculator.h \
+    tst_sanitycheck.h \
     tst_substrate_view.h \
     tst_tips.h \
     tst_preferences_dialog.h \

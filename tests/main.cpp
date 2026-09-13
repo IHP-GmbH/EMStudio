@@ -23,9 +23,12 @@
 #include "tst_touchstone.h"
 #include "tst_smithchart.h"
 #include "tst_stackupexpr.h"
+#include "tst_exprparser.h"
 #include "tst_substrate.h"
 #include "tst_stackup_editor.h"
 #include "tst_results_viewer.h"
+#include "tst_results_calculator.h"
+#include "tst_sanitycheck.h"
 #include "tst_substrate_view.h"
 #include "tst_tips.h"
 
@@ -140,9 +143,12 @@ int main(int argc, char **argv)
         ADD_TEST(TouchstoneTest),
         ADD_TEST(SmithChartTest),
         ADD_TEST(StackupExprTest),
+        ADD_TEST(ExprParserTest),
         ADD_TEST(SubstrateTest),
         ADD_TEST(StackupEditorTest),
         ADD_TEST(ResultsViewerTest),
+        ADD_TEST(ResultsCalculatorTest),
+        ADD_TEST(SanityCheckTest),
         ADD_TEST(SubstrateViewTest),
         ADD_TEST(TipsTest),
         ADD_TEST(AboutDialogTest),

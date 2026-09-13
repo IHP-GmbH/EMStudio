@@ -27,13 +27,15 @@
 /*!*******************************************************************************************************************
  * \brief Constructs a parser for \a text using \a defaultFGhz when a call omits frequency.
  **********************************************************************************************************************/
-ExprParser::ExprParser(QString text, double defaultFGhz, CapFn cap, YdiffFn ydiff, DbPhFn dbph)
+ExprParser::ExprParser(QString text, double defaultFGhz,
+                       CapFn cap, YdiffFn ydiff, DbPhFn dbph, IndFn ind)
     : m_s(std::move(text))
     , m_i(0)
     , m_defaultF(defaultFGhz)
     , m_cap(std::move(cap))
     , m_ydiff(std::move(ydiff))
     , m_dbph(std::move(dbph))
+    , m_ind(std::move(ind))
 {
     m_s.replace(QLatin1Char('\n'), QLatin1Char(' '));
     m_s.replace(QStringLiteral("−"), QStringLiteral("-")); // unicode minus
@@ -429,6 +431,58 @@ bool ExprParser::parseCall(double *out, QString *err)
         if (!expectClose())
             return false;
         return m_dbph(wantDb, m, n, t, f, out, err);
+    }
+
+    IndKind indKind = IndKind::Lser;
+    bool isInd = false;
+    bool isYdiffInd = false;
+    if (name == QLatin1String("lser")) {
+        isInd = true;
+        indKind = IndKind::Lser;
+    } else if (name == QLatin1String("rser")) {
+        isInd = true;
+        indKind = IndKind::Rser;
+    } else if (name == QLatin1String("q") || name == QLatin1String("qser")) {
+        isInd = true;
+        indKind = IndKind::Q;
+    } else if (name == QLatin1String("delay") || name == QLatin1String("tdelay")) {
+        isInd = true;
+        indKind = IndKind::Delay;
+    } else if (name == QLatin1String("ydiff_lser") || name == QLatin1String("ylser")) {
+        isYdiffInd = true;
+        indKind = IndKind::Lser;
+    }
+
+    if (isInd) {
+        int t = 0;
+        if (!parseTraceRef(&t, err))
+            return false;
+        double f = m_defaultF;
+        if (!parseOptionalFreq(&f, err))
+            return false;
+        if (!expectClose())
+            return false;
+        return m_ind(indKind, t, 0, f, out, err);
+    }
+    if (isYdiffInd) {
+        int a = 0, b = 0;
+        if (!parseTraceRef(&a, err))
+            return false;
+        skip();
+        if (m_i >= m_s.size() || m_s.at(m_i) != QLatin1Char(',')) {
+            if (err)
+                *err = QObject::tr("%1 needs two traces: %1($1,$2)").arg(name);
+            return false;
+        }
+        ++m_i;
+        if (!parseTraceRef(&b, err))
+            return false;
+        double f = m_defaultF;
+        if (!parseOptionalFreq(&f, err))
+            return false;
+        if (!expectClose())
+            return false;
+        return m_ind(indKind, a, b, f, out, err);
     }
 
     if (err)

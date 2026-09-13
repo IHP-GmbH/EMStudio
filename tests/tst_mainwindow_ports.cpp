@@ -497,3 +497,76 @@ void MainWindowPortsTest::saveAction_writesScriptToFile_and_updatesState()
 
     QFile::remove(savePath);
 }
+
+void MainWindowPortsTest::collectSanityFindings_reportsMissingInputs()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+
+    // Fresh window: empty GDS / topcell / no ports → several findings.
+    const auto emptyFindings = w.testCollectSanityFindings();
+    QVERIFY(emptyFindings.size() >= 2);
+    QStringList codes;
+    for (const SanityFinding &f : emptyFindings)
+        codes << f.code;
+    QVERIFY(codes.contains(QStringLiteral("missing_gds"))
+            || codes.contains(QStringLiteral("empty_topcell"))
+            || codes.contains(QStringLiteral("no_ports")));
+
+    // Load a model with ports that have inconsistent direction layers.
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QVERIFY(w.testInitDefaultPalaceModel());
+    w.testSetEditorText(
+        QStringLiteral(
+            "simulation_ports.add_port(simulation_setup.simulation_port(\n"
+            "    portnumber=1, voltage=1.0, port_Z0=50,\n"
+            "    source_layernum=1, from_layername='', to_layername='',\n"
+            "    direction='x'\n"
+            "))\n"));
+    w.testImportPortsFromEditor();
+
+    w.setGdsFile(QStringLiteral("C:/definitely/missing/file.gds"));
+    w.setTopCell(QString());
+    w.setSubstrateFile(QStringLiteral("C:/definitely/missing/stack.xml"));
+    w.testSetSimSetting(QStringLiteral("margin"), 5.0);
+
+    auto findings = w.testCollectSanityFindings();
+    QVERIFY(findings.size() >= 3);
+    codes.clear();
+    for (const SanityFinding &f : findings)
+        codes << f.code;
+    QVERIFY(codes.contains(QStringLiteral("gds_not_found")));
+    QVERIFY(codes.contains(QStringLiteral("empty_topcell")));
+    QVERIFY(codes.contains(QStringLiteral("substrate_not_found"))
+            || codes.contains(QStringLiteral("port_xy_needs_target"))
+            || codes.contains(QStringLiteral("no_ports"))
+            || codes.contains(QStringLiteral("port_xy_has_from_and_to"))
+            || codes.contains(QStringLiteral("port_no_source")));
+    QVERIFY(codes.contains(QStringLiteral("margin_small"))
+            || codes.contains(QStringLiteral("margin_missing")));
+
+    // Thermal path: empty thermal table warning.
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("elmer_thermal"), &err), qPrintable(err));
+    findings = w.testCollectSanityFindings();
+    codes.clear();
+    for (const SanityFinding &f : findings)
+        codes << f.code;
+    QVERIFY(codes.contains(QStringLiteral("no_thermal_objects"))
+            || codes.contains(QStringLiteral("missing_gds"))
+            || codes.contains(QStringLiteral("gds_not_found")));
+
+    // Real golden GDS + stackup: exercise layer / mapping checks.
+    const QString gdsPath = QFINDTESTDATA("golden/SG13G2_200um.gds");
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    if (!gdsPath.isEmpty() && !xmlPath.isEmpty()) {
+        QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+        w.setGdsFile(gdsPath);
+        w.setSubstrateFile(xmlPath);
+        w.setTopCell(QStringLiteral("TOP"));
+        w.testSetSimSetting(QStringLiteral("margin"), 50.0);
+        findings = w.testCollectSanityFindings();
+        // Path exercised; findings depend on whether GDS layers loaded into the window.
+        Q_UNUSED(findings);
+    }
+}

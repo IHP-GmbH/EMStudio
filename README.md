@@ -389,8 +389,11 @@ Examples:
 
 ```text
 cser($1)                 # series C from Y at default f (fF)
+lser($1) / rser($1) / q($1)  # series L (nH), R (Ω), Q from −1/Y12
+delay($1)                # −arg(S21)/ω phase delay (ps; wraps with phase)
 cser($1)-cser($2)        # raw C difference of two curves
 ydiff_cser($1,$2)        # C from Ya−Yb (open-fixture de-embed)
+ydiff_lser($1,$2)        # L from Ya−Yb
 csh1($1) / csh2($1)      # shunt capacitances
 db(S21,$1)               # |S21| in dB
 ph(S21,$1)               # phase in degrees

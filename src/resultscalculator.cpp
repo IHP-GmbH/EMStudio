@@ -266,11 +266,16 @@ ResultsCalculatorPanel::ResultsCalculatorPanel(QWidget *parent)
             "Pick a function from the combo, edit, Evaluate.\n"
             "Default f is used when frequency is omitted.\n"
             "\n"
-            "Formulas (2-port, S → Y):\n"
+            "Formulas (2-port, S → Y / S21):\n"
             "  cser($N)             −Im(Y12)/ω              [fF]\n"
             "  csh1($N)             (Im(Y11)+Im(Y12))/ω     [fF]\n"
             "  csh2($N)             (Im(Y22)+Im(Y12))/ω     [fF]\n"
             "  ydiff_cser($1,$2)    Cser of (Y1−Y2)         [fF]\n"
+            "  lser($N)             Im(−1/Y12)/ω            [nH]\n"
+            "  rser($N)             Re(−1/Y12)              [Ω]\n"
+            "  q($N)                Im(Zser)/Re(Zser)       [—]\n"
+            "  ydiff_lser($1,$2)    Lser of (Y1−Y2)         [nH]\n"
+            "  delay($N)            −arg(S21)/ω             [ps]\n"
             "  db(S21,$N)           20·log10|S|             [dB]\n"
             "  ph(S21,$N)           arg(S)                  [°]\n"
             "\n"
@@ -318,10 +323,15 @@ void ResultsCalculatorPanel::rebuildFunctionCombo()
     add(QStringLiteral("cser($1)"), QStringLiteral("cser($1)"), 1);
     add(QStringLiteral("csh1($1)"), QStringLiteral("csh1($1)"), 1);
     add(QStringLiteral("csh2($1)"), QStringLiteral("csh2($1)"), 1);
+    add(QStringLiteral("lser($1)"), QStringLiteral("lser($1)"), 1);
+    add(QStringLiteral("rser($1)"), QStringLiteral("rser($1)"), 1);
+    add(QStringLiteral("q($1)"), QStringLiteral("q($1)"), 1);
+    add(QStringLiteral("delay($1)"), QStringLiteral("delay($1)"), 1);
     add(QStringLiteral("db(S21,$1)"), QStringLiteral("db(S21,$1)"), 1);
     add(QStringLiteral("ph(S21,$1)"), QStringLiteral("ph(S21,$1)"), 1);
     add(QStringLiteral("cser($1)-cser($2)"), QStringLiteral("cser($1)-cser($2)"), 2);
     add(QStringLiteral("ydiff_cser($1,$2)"), QStringLiteral("ydiff_cser($1,$2)"), 2);
+    add(QStringLiteral("ydiff_lser($1,$2)"), QStringLiteral("ydiff_lser($1,$2)"), 2);
 
     m_funcCombo->setCurrentIndex(0);
     m_funcCombo->setEnabled(n >= 1);
@@ -482,6 +492,30 @@ double ResultsCalculatorPanel::cFromY(CapKind q, std::complex<double> y11,
 }
 
 /*!*******************************************************************************************************************
+ * \brief Series L [nH], R [Ω], or Q from Zser = −1/Y12 at frequency \a fHz.
+ **********************************************************************************************************************/
+double ResultsCalculatorPanel::indFromY(IndKind kind, std::complex<double> y12, double fHz)
+{
+    const double w = 2.0 * std::acos(-1.0) * fHz;
+    if (!(w > 0.0) || std::abs(y12) < 1e-30)
+        return std::numeric_limits<double>::quiet_NaN();
+    const std::complex<double> zser = -1.0 / y12;
+    switch (kind) {
+    case IndKind::Lser:
+        return zser.imag() / w * 1e9; // nH
+    case IndKind::Rser:
+        return zser.real(); // Ω
+    case IndKind::Q:
+        if (std::abs(zser.real()) < 1e-18)
+            return std::numeric_limits<double>::quiet_NaN();
+        return zser.imag() / zser.real();
+    case IndKind::Delay:
+        break;
+    }
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
+/*!*******************************************************************************************************************
  * \brief Evaluates \c cser/\c csh1/\c csh2 for one selected trace at \a fGHz.
  **********************************************************************************************************************/
 bool ResultsCalculatorPanel::evalCap(CapKind kind, const TraceRef &trace, double fGHz,
@@ -532,6 +566,113 @@ bool ResultsCalculatorPanel::evalYdiffCap(CapKind kind, const TraceRef &a, const
         return false;
     const double fUsed = a.network->frequencyHz().at(fiA);
     *out = cFromY(kind, a11 - b11, a12 - b12, a22 - b22, fUsed);
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Evaluates \c lser/\c rser/\c q for one selected trace at \a fGHz.
+ **********************************************************************************************************************/
+bool ResultsCalculatorPanel::evalInd(IndKind kind, const TraceRef &trace, double fGHz,
+                                     double *out, QString *error) const
+{
+    if (kind == IndKind::Delay)
+        return evalDelay(trace, fGHz, out, error);
+
+    if (!trace.network || !trace.network->isValid()) {
+        if (error)
+            *error = tr("Bad network for %1").arg(trace.label);
+        return false;
+    }
+    const double fHz = fGHz * 1e9;
+    const int fi = nearestFreqIndex(*trace.network, fHz);
+    if (fi < 0) {
+        if (error)
+            *error = tr("No frequency points in %1").arg(trace.label);
+        return false;
+    }
+    std::complex<double> y11, y12, y21, y22;
+    if (!sToY2(*trace.network, fi, y11, y12, y21, y22, error))
+        return false;
+    *out = indFromY(kind, y12, trace.network->frequencyHz().at(fi));
+    if (!std::isfinite(*out)) {
+        if (error)
+            *error = tr("Could not extract inductance/Q (singular Y12 or R≈0)");
+        return false;
+    }
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Inductance from open-style de-embed: L(Ya − Yb) at \a fGHz.
+ **********************************************************************************************************************/
+bool ResultsCalculatorPanel::evalYdiffInd(IndKind kind, const TraceRef &a, const TraceRef &b,
+                                          double fGHz, double *out, QString *error) const
+{
+    if (kind == IndKind::Delay) {
+        if (error)
+            *error = tr("delay() does not support Y-diff");
+        return false;
+    }
+    if (!a.network || !b.network) {
+        if (error)
+            *error = tr("Need two valid traces for Y-diff");
+        return false;
+    }
+    const double fHz = fGHz * 1e9;
+    const int fiA = nearestFreqIndex(*a.network, fHz);
+    const int fiB = nearestFreqIndex(*b.network, fHz);
+    if (fiA < 0 || fiB < 0) {
+        if (error)
+            *error = tr("Missing frequency points for Y-diff");
+        return false;
+    }
+    std::complex<double> a11, a12, a21, a22, b11, b12, b21, b22;
+    if (!sToY2(*a.network, fiA, a11, a12, a21, a22, error))
+        return false;
+    if (!sToY2(*b.network, fiB, b11, b12, b21, b22, error))
+        return false;
+    const double fUsed = a.network->frequencyHz().at(fiA);
+    *out = indFromY(kind, a12 - b12, fUsed);
+    if (!std::isfinite(*out)) {
+        if (error)
+            *error = tr("Could not extract L from Ya−Yb");
+        return false;
+    }
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Phase delay from S21: −arg(S21)/ω in picoseconds (principal phase).
+ **********************************************************************************************************************/
+bool ResultsCalculatorPanel::evalDelay(const TraceRef &trace, double fGHz,
+                                       double *out, QString *error) const
+{
+    if (!trace.network || !trace.network->isValid()) {
+        if (error)
+            *error = tr("Bad network for %1").arg(trace.label);
+        return false;
+    }
+    if (trace.network->nports() < 2) {
+        if (error)
+            *error = tr("delay() needs a ≥2-port network");
+        return false;
+    }
+    const double fHzReq = fGHz * 1e9;
+    const int fi = nearestFreqIndex(*trace.network, fHzReq);
+    if (fi < 0) {
+        if (error)
+            *error = tr("No frequency points");
+        return false;
+    }
+    const double fHz = trace.network->frequencyHz().at(fi);
+    const double w = 2.0 * std::acos(-1.0) * fHz;
+    if (!(w > 0.0)) {
+        if (error)
+            *error = tr("Invalid frequency for delay");
+        return false;
+    }
+    const auto s21 = trace.network->s(fi, 1, 0); // S21
+    *out = -std::arg(s21) / w * 1e12; // ps
     return true;
 }
 
@@ -607,6 +748,18 @@ bool ResultsCalculatorPanel::evalExpression(const QString &expr, double *out, QS
             if (!resolve(t, &ref, err))
                 return false;
             return evalDbPh(wantDb, m, n, ref, f, v, err);
+        },
+        [&](IndKind kind, int t1, int t2, double f, double *v, QString *err) {
+            if (t2 > 0) {
+                TraceRef ta, tb;
+                if (!resolve(t1, &ta, err) || !resolve(t2, &tb, err))
+                    return false;
+                return evalYdiffInd(kind, ta, tb, f, v, err);
+            }
+            TraceRef ref;
+            if (!resolve(t1, &ref, err))
+                return false;
+            return evalInd(kind, ref, f, v, err);
         });
 
     return parser.parse(out, error);
@@ -650,10 +803,18 @@ void ResultsCalculatorPanel::evaluate()
 
     // Unit hint from leading function name
     QString unit;
-    const QString head = expr.left(12).toLower();
+    const QString head = expr.left(16).toLower();
     if (head.contains(QLatin1String("cser")) || head.contains(QLatin1String("csh"))
-        || head.contains(QLatin1String("ydiff")))
+        || (head.contains(QLatin1String("ydiff")) && !head.contains(QLatin1String("lser"))))
         unit = QStringLiteral("fF");
+    else if (head.contains(QLatin1String("lser")))
+        unit = QStringLiteral("nH");
+    else if (head.contains(QLatin1String("rser")))
+        unit = QStringLiteral("Ω");
+    else if (head.startsWith(QLatin1String("q(")) || head.startsWith(QLatin1String("qser")))
+        unit = QString();
+    else if (head.contains(QLatin1String("delay")))
+        unit = QStringLiteral("ps");
     else if (head.startsWith(QLatin1String("db")))
         unit = QStringLiteral("dB");
     else if (head.startsWith(QLatin1String("ph")))

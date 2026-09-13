@@ -22,6 +22,7 @@ private slots:
     void nestedDirs_groupItemsAndConvertWithoutCsv();
     void hasTouchstoneFiles_skipsNeedForConvert();
     void preferredPython_ordersPalaceBeforeOpenems();
+    void calculatorToggle_andParamSettingsPersist();
 };
 
 #endif // TST_RESULTS_VIEWER_H

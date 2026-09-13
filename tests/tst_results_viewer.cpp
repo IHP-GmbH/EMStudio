@@ -13,6 +13,7 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QTemporaryDir>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 
@@ -322,4 +323,72 @@ void ResultsViewerTest::preferredPython_ordersPalaceBeforeOpenems()
     settings.setValue(QStringLiteral("ELMER_PYTHON"), oldElmer);
     settings.endGroup();
     settings.sync();
+}
+
+void ResultsViewerTest::calculatorToggle_andParamSettingsPersist()
+{
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("Results"));
+    settings.setValue(QStringLiteral("sParameters"), QStringList{QStringLiteral("S21")});
+    settings.setValue(QStringLiteral("calculatorVisible"), true);
+    settings.endGroup();
+    settings.sync();
+
+    const QString s2p = QFINDTESTDATA("testdata/sample.s2p");
+    QVERIFY(!s2p.isEmpty());
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    copyFixture(s2p, dir.filePath(QStringLiteral("plot.s2p")));
+
+    ResultsViewer v;
+    v.setAttribute(Qt::WA_DontShowOnScreen, true);
+    v.resize(1000, 700);
+    v.show();
+    v.setTargetDirectory(dir.path());
+    v.rescan();
+    QTest::qWait(40);
+
+    // Calculator should open from QSettings preference.
+    QToolButton *calcBtn = nullptr;
+    for (QToolButton *b : v.findChildren<QToolButton *>()) {
+        if (b->toolTip().contains(QStringLiteral("calculator"), Qt::CaseInsensitive)
+            || b->isCheckable()) {
+            calcBtn = b;
+            if (b->isCheckable())
+                break;
+        }
+    }
+    QVERIFY(calcBtn);
+    QVERIFY(calcBtn->isCheckable());
+    // Pref may already have checked it in ctor; toggle covers save path either way.
+    calcBtn->setChecked(true);
+    QTest::qWait(30);
+    calcBtn->setChecked(false);
+    QTest::qWait(20);
+    calcBtn->setChecked(true);
+    QTest::qWait(30);
+
+    auto *tree = v.findChild<QTreeWidget *>();
+    QVERIFY(tree);
+    QTreeWidgetItem *fileItem = firstCheckableFileItem(tree);
+    QVERIFY(fileItem);
+    fileItem->setCheckState(0, Qt::Checked);
+    QTest::qWait(80);
+
+    // Preferred S21 should be checked when 2-port file is selected.
+    bool foundS21 = false;
+    for (QPushButton *b : v.findChildren<QPushButton *>()) {
+        if (b->text() == QStringLiteral("S21") && b->isCheckable()) {
+            foundS21 = true;
+            QVERIFY(b->isChecked());
+            b->setChecked(false);
+            b->setChecked(true);
+            break;
+        }
+    }
+    QVERIFY(foundS21);
+
+    v.clearCalcSelection();
+    v.onCalcTraceClicked(dir.filePath(QStringLiteral("plot.s2p")));
+    v.clearCalcSelection();
 }

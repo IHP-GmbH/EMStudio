@@ -175,6 +175,7 @@ public:
                                                            const QString& distro,
                                                            int timeoutMs) const;
     void                            testImportPortsFromEditor();
+    QVector<SanityFinding>          testCollectSanityFindings() const { return collectSanityFindings(); }
     QString                         testPortCellText(int row, int col) const;
     QString                         testPortComboText(int row, int col) const;
     void                            testClickAddPort();

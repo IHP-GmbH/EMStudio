@@ -50,7 +50,9 @@ class QPushButton;
  *
  * Supported building blocks (v1):
  * - Capacitance from Y: \c cser / \c csh1 / \c csh2
- * - Open-style de-embed: \c ydiff_cser($1,$2) ≡ C from (Ya − Yb)
+ * - Inductance / Q from Y: \c lser / \c rser / \c q
+ * - S21 phase delay: \c delay (ps)
+ * - Open-style de-embed: \c ydiff_cser($1,$2), \c ydiff_lser($1,$2)
  * - Magnitude / phase: \c db(S21,$1), \c ph(S21,$1)
  * - Arithmetic: \c + − * / and parentheses
  *
@@ -95,12 +97,21 @@ private:
                                           std::complex<double> y12,
                                           std::complex<double> y22,
                                           double fHz);
+    static double                   indFromY(IndKind kind,
+                                            std::complex<double> y12,
+                                            double fHz);
 
     bool                            evalExpression(const QString &expr, double *out, QString *error) const;
     bool                            evalCap(CapKind kind, const TraceRef &trace, double fGHz,
                                             double *out, QString *error) const;
     bool                            evalYdiffCap(CapKind kind, const TraceRef &a, const TraceRef &b,
                                                  double fGHz, double *out, QString *error) const;
+    bool                            evalInd(IndKind kind, const TraceRef &trace, double fGHz,
+                                            double *out, QString *error) const;
+    bool                            evalYdiffInd(IndKind kind, const TraceRef &a, const TraceRef &b,
+                                                 double fGHz, double *out, QString *error) const;
+    bool                            evalDelay(const TraceRef &trace, double fGHz,
+                                              double *out, QString *error) const;
     bool                            evalDbPh(bool wantDb, int m, int n, const TraceRef &trace,
                                              double fGHz, double *out, QString *error) const;
 

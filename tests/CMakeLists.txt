@@ -31,9 +31,12 @@ set(TEST_SOURCES
     tst_touchstone.cpp
     tst_smithchart.cpp
     tst_stackupexpr.cpp
+    tst_exprparser.cpp
     tst_substrate.cpp
     tst_stackup_editor.cpp
     tst_results_viewer.cpp
+    tst_results_calculator.cpp
+    tst_sanitycheck.cpp
     tst_substrate_view.cpp
     tst_tips.cpp
     tst_preferences_dialog.cpp

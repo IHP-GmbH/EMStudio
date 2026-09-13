@@ -24,6 +24,7 @@
 
 #include <QtCharts>
 
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
 #include <QCoreApplication>
@@ -53,6 +54,7 @@
 #include <QWheelEvent>
 #include <QScrollArea>
 #include <QSettings>
+#include <QShortcut>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QToolButton>
@@ -101,37 +103,84 @@ double toPhaseDeg(const std::complex<double> &v)
     return qRadiansToDegrees(std::arg(v));
 }
 
-QChartView *makeChartView(QChart *chart)
+QChartView *makeChartView(QChart *chart, ResultsViewer *owner)
 {
     // Zoom: rubber-band drag, wheel / trackpad pinch toward cursor; F resets.
     class ZoomableChartView : public QChartView
     {
     public:
-        explicit ZoomableChartView(QChart *c, QWidget *parent = nullptr)
+        explicit ZoomableChartView(QChart *c, ResultsViewer *owner, QWidget *parent = nullptr)
             : QChartView(c, parent)
+            , m_owner(owner)
         {
             setRubberBand(QChartView::RectangleRubberBand);
             setRenderHint(QPainter::Antialiasing);
             setMinimumHeight(160);
             setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-            setFocusPolicy(Qt::ClickFocus);
+            setFocusPolicy(Qt::StrongFocus);
             grabGesture(Qt::PinchGesture);
-            setToolTip(QObject::tr("Drag to zoom · wheel / pinch toward cursor · F to reset"));
+            // Left-click selects curves; rubber-band zoom with Ctrl+drag (avoids eating the first click).
+            setRubberBand(QChartView::NoRubberBand);
+            setToolTip(QObject::tr("Click curve to select · Ctrl+drag zoom · wheel / pinch · arrows pan · Esc clear · F reset"));
         }
 
     protected:
         void mousePressEvent(QMouseEvent *event) override
         {
             setFocus(Qt::MouseFocusReason);
+            if (chart() && (event->modifiers() & Qt::ControlModifier)
+                && event->button() == Qt::LeftButton) {
+                setRubberBand(QChartView::RectangleRubberBand);
+            }
             QChartView::mousePressEvent(event);
+        }
+
+        void mouseReleaseEvent(QMouseEvent *event) override
+        {
+            QChartView::mouseReleaseEvent(event);
+            setRubberBand(QChartView::NoRubberBand);
         }
 
         void keyPressEvent(QKeyEvent *event) override
         {
-            if (event->key() == Qt::Key_F && chart()) {
+            if (!chart()) {
+                QChartView::keyPressEvent(event);
+                return;
+            }
+            if (event->key() == Qt::Key_F) {
                 chart()->zoomReset();
                 event->accept();
                 return;
+            }
+            if (event->key() == Qt::Key_Escape) {
+                if (m_owner)
+                    m_owner->clearCalcSelection();
+                event->accept();
+                return;
+            }
+
+            const QRectF area = chart()->plotArea();
+            const qreal stepX = area.width() * 0.1;
+            const qreal stepY = area.height() * 0.1;
+            switch (event->key()) {
+            case Qt::Key_Left:
+                chart()->scroll(-stepX, 0);
+                event->accept();
+                return;
+            case Qt::Key_Right:
+                chart()->scroll(stepX, 0);
+                event->accept();
+                return;
+            case Qt::Key_Up:
+                chart()->scroll(0, stepY);
+                event->accept();
+                return;
+            case Qt::Key_Down:
+                chart()->scroll(0, -stepY);
+                event->accept();
+                return;
+            default:
+                break;
             }
             QChartView::keyPressEvent(event);
         }
@@ -188,9 +237,11 @@ QChartView *makeChartView(QChart *chart)
             const QPointF delta = newChartPos - chartPos;
             chart()->scroll(delta.x(), delta.y());
         }
+
+        ResultsViewer *m_owner = nullptr;
     };
 
-    return new ZoomableChartView(chart);
+    return new ZoomableChartView(chart, owner);
 }
 
 void configureFreqAxis(QValueAxis *axis)
@@ -212,13 +263,15 @@ void addSeriesToChart(QChart *chart,
     auto *series = new QLineSeries();
     series->setName(name);
     series->setProperty("tracePath", path);
+    series->setProperty("baseColor", color);
     QPen pen(color);
     pen.setStyle(style);
-    pen.setWidthF(selected ? 3.4 : 1.8);
+    pen.setCosmetic(true);
+    pen.setWidthF(selected ? 4.0 : 1.8);
     series->setPen(pen);
     series->setPointsVisible(true);
     if (singlePoint || selected) {
-        pen.setWidthF(selected ? 3.4 : 3.0);
+        pen.setWidthF(selected ? 4.0 : 3.0);
         series->setPen(pen);
     }
     for (const QPointF &pt : pts)
@@ -503,6 +556,10 @@ void ResultsViewer::buildUi()
 
     if (m_calcVisiblePref)
         m_calcToggleBtn->setChecked(true);
+
+    auto *escClear = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    escClear->setContext(Qt::WidgetWithChildrenShortcut);
+    connect(escClear, &QShortcut::activated, this, &ResultsViewer::clearCalcSelection);
 
     showEmptyMessage(tr("Check a file and at least one S-parameter to plot"));
 }
@@ -1422,13 +1479,17 @@ void ResultsViewer::setLegend(const QVector<PlottedTrace> &plotted)
                      + (sel ? QStringLiteral("</b>") : QString()));
     }
     if (m_calcPanel && m_calcPanel->isVisible()) {
-        parts.prepend(tr("<i>Click a curve for Calculator · drag/wheel/pinch to zoom · F reset</i>&nbsp;&nbsp;"));
+        parts.prepend(tr("<i>Click curve · Ctrl+drag zoom · wheel/pinch · arrows · Esc · F</i>&nbsp;&nbsp;"));
     }
     m_legendLabel->setText(parts.join(QLatin1String("&nbsp;&nbsp;&nbsp;")));
 }
 
 void ResultsViewer::redrawPlot()
 {
+    const bool restorePlotFocus = m_plotHost
+        && QApplication::focusWidget()
+        && m_plotHost->isAncestorOf(QApplication::focusWidget());
+
     const QVector<PlottedTrace> plotted = getCheckedPlotted();
     QVector<std::pair<int, int>> params;
     {
@@ -1473,6 +1534,12 @@ void ResultsViewer::redrawPlot()
     }
     setLegend(plotted);
     syncCalculatorTraces();
+
+    // Recreating charts clears focus; put it back so Esc / arrows keep working.
+    if (restorePlotFocus) {
+        if (QChartView *cv = m_plotHost->findChild<QChartView *>())
+            cv->setFocus(Qt::OtherFocusReason);
+    }
 }
 
 void ResultsViewer::toggleCalculator(bool on)
@@ -1506,7 +1573,56 @@ void ResultsViewer::onCalcTraceClicked(const QString &path)
     if (m_calcToggleBtn && !m_calcToggleBtn->isChecked())
         m_calcToggleBtn->setChecked(true);
 
-    redrawPlot();
+    // Do not recreate charts — that steals focus and forces a second click.
+    refreshCalcSelectionUi();
+}
+
+void ResultsViewer::clearCalcSelection()
+{
+    if (m_calcSelectedPaths.isEmpty())
+        return;
+    m_calcSelectedPaths.clear();
+    refreshCalcSelectionUi();
+}
+
+void ResultsViewer::refreshCalcSelectionUi()
+{
+    // Update pens via chart()->series() so selection is visible without recreating charts.
+    if (m_plotHost) {
+        const auto views = m_plotHost->findChildren<QChartView *>();
+        for (QChartView *cv : views) {
+            QChart *ch = cv->chart();
+            if (!ch)
+                continue;
+            for (QAbstractSeries *abs : ch->series()) {
+                auto *series = qobject_cast<QLineSeries *>(abs);
+                if (!series)
+                    continue;
+                const QString path = series->property("tracePath").toString();
+                if (path.isEmpty())
+                    continue;
+                const bool selected = m_calcSelectedPaths.contains(path);
+                QColor color = series->property("baseColor").value<QColor>();
+                if (!color.isValid())
+                    color = series->pen().color();
+
+                QPen pen = series->pen();
+                pen.setColor(selected ? color.darker(125) : color);
+                pen.setCosmetic(true);
+                pen.setWidthF(selected ? 4.0 : (series->count() <= 1 ? 3.0 : 1.8));
+                // Force chart to notice the pen change.
+                series->setVisible(false);
+                series->setPen(pen);
+                series->setVisible(true);
+                series->setPointsVisible(true);
+            }
+            if (cv->viewport())
+                cv->viewport()->update();
+            cv->update();
+        }
+    }
+    setLegend(getCheckedPlotted());
+    syncCalculatorTraces();
 }
 
 void ResultsViewer::syncCalculatorTraces()
@@ -1618,7 +1734,7 @@ void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
                 configureFreqAxis(axX);
             if (auto *axY = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Vertical).value(0)))
                 axY->setTitleText(QStringLiteral("dB"));
-            colLayout->addWidget(makeChartView(dbChart), 1);
+            colLayout->addWidget(makeChartView(dbChart, this), 1);
         }
         if (phChart) {
             phChart->createDefaultAxes();
@@ -1630,7 +1746,7 @@ void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
                 axY->setTickCount(5); // -180,-90,0,90,180 — readable in narrow panes
                 axY->setLabelFormat(QStringLiteral("%.0f"));
             }
-            colLayout->addWidget(makeChartView(phChart), 1);
+            colLayout->addWidget(makeChartView(phChart, this), 1);
         }
         rowLayout->addWidget(col, 1);
     }

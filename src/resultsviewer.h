@@ -80,6 +80,7 @@ public slots:
     void                            compareFolder();
     void                            clearCompare();
     void                            onCalcTraceClicked(const QString &path);
+    void                            clearCalcSelection();
 
 signals:
     void                            logMessage(const QString &text);
@@ -136,6 +137,7 @@ private:
                                               bool zoomed);
     void                            setLegend(const QVector<PlottedTrace> &plotted);
     void                            syncCalculatorTraces();
+    void                            refreshCalcSelectionUi();
     void                            loadResultsSettings();
     void                            saveResultsSettings() const;
     QSet<QPair<int, int>>           preferredParamsForPorts(int n) const;

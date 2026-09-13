@@ -21,22 +21,26 @@
 #include "resultscalculator.h"
 #include "exprparser.h"
 
+#include <QAction>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QPixmap>
-#include <QStyle>
+#include <QScreen>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include <QtMath>
 #include <cmath>
+#include <functional>
 #include <limits>
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
@@ -72,6 +76,117 @@ double toPhaseDeg(const std::complex<double> &v)
     return qRadiansToDegrees(std::arg(v));
 }
 
+qreal iconDevicePixelRatio()
+{
+    if (QScreen *screen = QGuiApplication::primaryScreen())
+        return qMax<qreal>(2.0, screen->devicePixelRatio());
+    return 2.0;
+}
+
+/*! Paint into a HiDPI pixmap using logical [0..logicalSize] coordinates. */
+QPixmap makeHiDpiIconPixmap(int logicalSize, const std::function<void(QPainter &, int)> &paint)
+{
+    const qreal dpr = iconDevicePixelRatio();
+    const int px = qMax(1, qRound(logicalSize * dpr));
+    QPixmap pm(px, px);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    p.scale(qreal(px) / qreal(logicalSize), qreal(px) / qreal(logicalSize));
+    paint(p, logicalSize);
+    p.end();
+    pm.setDevicePixelRatio(dpr);
+    return pm;
+}
+
+QIcon makeMultiResIcon(int logicalSize, const std::function<void(QPainter &, int)> &paint)
+{
+    QIcon icon;
+    // Provide several sizes so Qt picks a sharp pixmap on HiDPI.
+    for (int s : {logicalSize, logicalSize * 2, logicalSize * 3})
+        icon.addPixmap(makeHiDpiIconPixmap(s, paint));
+    return icon;
+}
+
+void paintMonoClear(QPainter &p, int size)
+{
+    const QColor ink(40, 40, 40);
+    p.setPen(QPen(ink, qMax<qreal>(1.25, size / 10.0), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    const qreal m = size * 0.30;
+    p.drawLine(QPointF(m, m), QPointF(size - m, size - m));
+    p.drawLine(QPointF(size - m, m), QPointF(m, size - m));
+}
+
+void paintMonoInfo(QPainter &p, int size)
+{
+    const QColor ink(40, 40, 40);
+    const qreal stroke = qMax<qreal>(1.2, size / 12.0);
+    const qreal m = stroke * 0.9;
+    p.setPen(QPen(ink, stroke));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(QRectF(m, m, size - 2 * m, size - 2 * m));
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(ink);
+    const qreal cx = size * 0.5;
+    const qreal dotR = size * 0.075;
+    p.drawEllipse(QPointF(cx, size * 0.30), dotR, dotR);
+
+    const qreal stemW = size * 0.11;
+    const qreal stemH = size * 0.36;
+    p.drawRoundedRect(QRectF(cx - stemW * 0.5, size * 0.42, stemW, stemH),
+                      stemW * 0.35, stemW * 0.35);
+}
+
+void paintCalculatorGlyph(QPainter &p, int size)
+{
+    const QColor ink(40, 40, 40);
+    const qreal stroke = qMax<qreal>(1.15, size / 16.0);
+    const qreal m = size * 0.12;
+    const QRectF body(m, m, size - 2 * m, size - 2 * m);
+
+    p.setPen(QPen(ink, stroke));
+    p.setBrush(Qt::NoBrush);
+    p.drawRoundedRect(body, size * 0.08, size * 0.08);
+
+    // Display
+    const qreal pad = size * 0.14;
+    const QRectF disp(body.left() + pad,
+                      body.top() + pad,
+                      body.width() - 2 * pad,
+                      body.height() * 0.22);
+    p.setBrush(ink);
+    p.setPen(Qt::NoPen);
+    p.drawRoundedRect(disp, 1.2, 1.2);
+
+    // 2×2 keys
+    const qreal keyTop = disp.bottom() + pad * 0.55;
+    const qreal keyBottom = body.bottom() - pad;
+    const qreal gap = size * 0.06;
+    const qreal keyW = (body.width() - 2 * pad - gap) * 0.5;
+    const qreal keyH = (keyBottom - keyTop - gap) * 0.5;
+    const qreal keyLeft = body.left() + pad;
+    for (int r = 0; r < 2; ++r) {
+        for (int c = 0; c < 2; ++c) {
+            p.drawRoundedRect(QRectF(keyLeft + c * (keyW + gap),
+                                     keyTop + r * (keyH + gap),
+                                     keyW, keyH),
+                              1.0, 1.0);
+        }
+    }
+}
+
+QIcon monoClearIcon(int size)
+{
+    return makeMultiResIcon(size, paintMonoClear);
+}
+
+QIcon monoInfoIcon(int size)
+{
+    return makeMultiResIcon(size, paintMonoInfo);
+}
+
 } // namespace
 
 /*!*******************************************************************************************************************
@@ -80,41 +195,7 @@ double toPhaseDeg(const std::complex<double> &v)
  **********************************************************************************************************************/
 QIcon resultsCalculatorIcon(int size)
 {
-    QPixmap pm(size, size);
-    pm.fill(Qt::transparent);
-    QPainter p(&pm);
-    p.setRenderHint(QPainter::Antialiasing, false);
-
-    // Flat body
-    p.setPen(QPen(QColor(60, 60, 60), 1));
-    p.setBrush(QColor(240, 240, 240));
-    const int m = 2;
-    p.drawRect(m, m, size - 2 * m - 1, size - 2 * m - 1);
-
-    // Flat display strip
-    p.setPen(Qt::NoPen);
-    p.setBrush(QColor(180, 200, 220));
-    const int pad = 4;
-    const int dispH = qMax(3, (size - 2 * m) / 4);
-    p.drawRect(m + pad, m + pad, size - 2 * m - 2 * pad - 1, dispH);
-
-    // Flat 2×2 keys
-    p.setBrush(QColor(120, 120, 120));
-    const int keyTop = m + pad + dispH + 2;
-    const int keyBottom = size - m - pad;
-    const int keyArea = keyBottom - keyTop;
-    const int gap = 2;
-    const int key = (keyArea - gap) / 2;
-    const int keyLeft = m + pad;
-    for (int r = 0; r < 2; ++r) {
-        for (int c = 0; c < 2; ++c) {
-            p.drawRect(keyLeft + c * (key + gap),
-                       keyTop + r * (key + gap),
-                       key, key);
-        }
-    }
-    p.end();
-    return QIcon(pm);
+    return makeMultiResIcon(size, paintCalculatorGlyph);
 }
 
 /*!*******************************************************************************************************************
@@ -159,12 +240,21 @@ ResultsCalculatorPanel::ResultsCalculatorPanel(QWidget *parent)
     exprRow->setSpacing(4);
     m_exprEdit = new QLineEdit(this);
     m_exprEdit->setPlaceholderText(tr("expression…"));
-    m_exprEdit->setClearButtonEnabled(true);
+    // Custom B/W clear icon (built-in clear button is a grey filled disc).
+    {
+        auto *clearAct = m_exprEdit->addAction(monoClearIcon(14), QLineEdit::TrailingPosition);
+        clearAct->setToolTip(tr("Clear expression"));
+        clearAct->setVisible(false);
+        connect(clearAct, &QAction::triggered, m_exprEdit, &QLineEdit::clear);
+        connect(m_exprEdit, &QLineEdit::textChanged, this, [clearAct](const QString &t) {
+            clearAct->setVisible(!t.isEmpty());
+        });
+    }
     connect(m_exprEdit, &QLineEdit::returnPressed, this, &ResultsCalculatorPanel::evaluate);
     exprRow->addWidget(m_exprEdit, 1);
 
     auto *infoBtn = new QToolButton(this);
-    infoBtn->setIcon(style()->standardIcon(QStyle::SP_MessageBoxInformation));
+    infoBtn->setIcon(monoInfoIcon(16));
     infoBtn->setIconSize(QSize(16, 16));
     infoBtn->setAutoRaise(true);
     infoBtn->setFocusPolicy(Qt::NoFocus);
@@ -190,10 +280,13 @@ ResultsCalculatorPanel::ResultsCalculatorPanel(QWidget *parent)
     exprRow->addWidget(infoBtn, 0, Qt::AlignVCenter);
     lay->addLayout(exprRow);
 
+    auto *evalRow = new QHBoxLayout();
+    evalRow->addStretch(1);
     m_evalBtn = new QPushButton(tr("Evaluate"), this);
     m_evalBtn->setDefault(true);
     connect(m_evalBtn, &QPushButton::clicked, this, &ResultsCalculatorPanel::evaluate);
-    lay->addWidget(m_evalBtn);
+    evalRow->addWidget(m_evalBtn, 0, Qt::AlignRight);
+    lay->addLayout(evalRow);
 
     m_output = new QPlainTextEdit(this);
     m_output->setReadOnly(true);
@@ -233,14 +326,6 @@ void ResultsCalculatorPanel::rebuildFunctionCombo()
     m_funcCombo->setCurrentIndex(0);
     m_funcCombo->setEnabled(n >= 1);
     m_funcCombo->blockSignals(false);
-
-    if (m_exprEdit) {
-        const QString cur = m_exprEdit->text().trimmed();
-        if (n >= 2 && (cur.isEmpty() || cur == QLatin1String("cser($1)")))
-            m_exprEdit->setText(QStringLiteral("ydiff_cser($1,$2)"));
-        else if (n == 1 && (cur.isEmpty() || cur.contains(QLatin1String("$2"))))
-            m_exprEdit->setText(QStringLiteral("cser($1)"));
-    }
 }
 
 /*!*******************************************************************************************************************

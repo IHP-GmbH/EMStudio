@@ -371,8 +371,9 @@ CSV outputs can be converted automatically via `scripts/combine_extend_snp.py`.
 
 You can overlay parameters (**S11**, **S21**, …), switch display mode (**dB**, **Phase**, **Smith chart**,
 zoomed Smith), use **Compare…** to overlay another `.sNp` or run folder, and launch **Model Fit…**
-(`snp2le`) when available. On dB/Phase charts: **drag** a rectangle or use the **mouse wheel**
-(zoom toward the cursor); press **F** to reset the view. Selected S-parameters and calculator
+(`snp2le`) when available. On dB/Phase charts: **click** a curve to select for the calculator;
+**Ctrl+drag** a rectangle, or use the **mouse wheel** / trackpad **pinch** (zoom toward the cursor);
+use **arrow keys** to pan; **Esc** clears curve selection; **F** resets the view. Selected S-parameters and calculator
 panel visibility are remembered (QSettings); if a saved parameter is missing in the current run,
 the viewer falls back to **S11** without overwriting that preference.
 

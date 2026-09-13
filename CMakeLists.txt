@@ -128,6 +128,8 @@ set(SOURCES
     src/layoutview.cpp
     src/layoutlayerpanel.cpp
     src/sanitycheck.cpp
+    src/resultscalculator.cpp
+    src/exprparser.cpp
     src/layer.cpp
     src/mainwindow.cpp
     src/elmerThermalUi.cpp
@@ -191,6 +193,8 @@ set(HEADERS
     src/layoutview.h
     src/layoutlayerpanel.h
     src/sanitycheck.h
+    src/resultscalculator.h
+    src/exprparser.h
     src/stackupexpr.h
     src/stackupeditor.h
     src/touchstone.h

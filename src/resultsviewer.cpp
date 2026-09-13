@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include "resultsviewer.h"
+#include "resultscalculator.h"
 #include "smithchartwidget.h"
 
 #include <QtCharts>
@@ -44,10 +45,17 @@
 #include <QPushButton>
 #include <QRadioButton>
 #include <QRegularExpression>
+#include <QGestureEvent>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <QNativeGestureEvent>
+#include <QPinchGesture>
+#include <QWheelEvent>
 #include <QScrollArea>
 #include <QSettings>
 #include <QSplitter>
 #include <QStandardPaths>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
 
@@ -95,11 +103,94 @@ double toPhaseDeg(const std::complex<double> &v)
 
 QChartView *makeChartView(QChart *chart)
 {
-    auto *view = new QChartView(chart);
-    view->setRenderHint(QPainter::Antialiasing);
-    view->setMinimumHeight(160);
-    view->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    return view;
+    // Zoom: rubber-band drag, wheel / trackpad pinch toward cursor; F resets.
+    class ZoomableChartView : public QChartView
+    {
+    public:
+        explicit ZoomableChartView(QChart *c, QWidget *parent = nullptr)
+            : QChartView(c, parent)
+        {
+            setRubberBand(QChartView::RectangleRubberBand);
+            setRenderHint(QPainter::Antialiasing);
+            setMinimumHeight(160);
+            setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+            setFocusPolicy(Qt::ClickFocus);
+            grabGesture(Qt::PinchGesture);
+            setToolTip(QObject::tr("Drag to zoom · wheel / pinch toward cursor · F to reset"));
+        }
+
+    protected:
+        void mousePressEvent(QMouseEvent *event) override
+        {
+            setFocus(Qt::MouseFocusReason);
+            QChartView::mousePressEvent(event);
+        }
+
+        void keyPressEvent(QKeyEvent *event) override
+        {
+            if (event->key() == Qt::Key_F && chart()) {
+                chart()->zoomReset();
+                event->accept();
+                return;
+            }
+            QChartView::keyPressEvent(event);
+        }
+
+        void wheelEvent(QWheelEvent *event) override
+        {
+            qreal dy = event->angleDelta().y();
+            if (dy == 0.0)
+                dy = event->pixelDelta().y();
+            if (!chart() || dy == 0.0) {
+                QChartView::wheelEvent(event);
+                return;
+            }
+            const qreal factor = (dy > 0) ? 1.15 : (1.0 / 1.15);
+            zoomToward(event->position().toPoint(), factor);
+            event->accept();
+        }
+
+        bool viewportEvent(QEvent *event) override
+        {
+            if (event->type() == QEvent::Gesture) {
+                auto *ge = static_cast<QGestureEvent *>(event);
+                if (QPinchGesture *pinch = static_cast<QPinchGesture *>(ge->gesture(Qt::PinchGesture))) {
+                    if (pinch->changeFlags() & QPinchGesture::ScaleFactorChanged) {
+                        // centerPoint is in the receiving widget's coordinates.
+                        zoomToward(pinch->centerPoint(), pinch->scaleFactor());
+                        return true;
+                    }
+                }
+            }
+            if (event->type() == QEvent::NativeGesture) {
+                auto *ne = static_cast<QNativeGestureEvent *>(event);
+                if (ne->gestureType() == Qt::ZoomNativeGesture && chart()) {
+                    // Trackpad pinch (Windows / macOS): value is a magnification delta.
+                    const qreal factor = 1.0 + ne->value();
+                    if (!qFuzzyIsNull(ne->value()) && factor > 0.0) {
+                        zoomToward(ne->localPos(), factor);
+                        return true;
+                    }
+                }
+            }
+            return QChartView::viewportEvent(event);
+        }
+
+    private:
+        void zoomToward(const QPointF &viewPos, qreal factor)
+        {
+            if (!chart() || factor <= 0.0 || qFuzzyCompare(factor, 1.0))
+                return;
+            const QPointF chartPos = chart()->mapFromScene(mapToScene(viewPos.toPoint()));
+            const QPointF valueUnderCursor = chart()->mapToValue(chartPos);
+            chart()->zoom(factor);
+            const QPointF newChartPos = chart()->mapToPosition(valueUnderCursor);
+            const QPointF delta = newChartPos - chartPos;
+            chart()->scroll(delta.x(), delta.y());
+        }
+    };
+
+    return new ZoomableChartView(chart);
 }
 
 void configureFreqAxis(QValueAxis *axis)
@@ -113,22 +204,30 @@ void addSeriesToChart(QChart *chart,
                       const QColor &color,
                       Qt::PenStyle style,
                       const QString &name,
-                      bool singlePoint)
+                      const QString &path,
+                      bool selected,
+                      bool singlePoint,
+                      ResultsViewer *owner)
 {
     auto *series = new QLineSeries();
     series->setName(name);
+    series->setProperty("tracePath", path);
     QPen pen(color);
     pen.setStyle(style);
-    pen.setWidthF(1.8);
+    pen.setWidthF(selected ? 3.4 : 1.8);
     series->setPen(pen);
-    if (singlePoint) {
-        series->setPointsVisible(true);
-        pen.setWidthF(3.0);
+    series->setPointsVisible(true);
+    if (singlePoint || selected) {
+        pen.setWidthF(selected ? 3.4 : 3.0);
         series->setPen(pen);
     }
     for (const QPointF &pt : pts)
         series->append(pt);
     chart->addSeries(series);
+    if (owner && !path.isEmpty()) {
+        QObject::connect(series, &QLineSeries::clicked, owner,
+                         [owner, path](const QPointF &) { owner->onCalcTraceClicked(path); });
+    }
 }
 
 } // namespace
@@ -136,8 +235,65 @@ void addSeriesToChart(QChart *chart,
 ResultsViewer::ResultsViewer(QWidget *parent)
     : QWidget(parent)
 {
-    m_checkedParams.insert(qMakePair(1, 1));
+    loadResultsSettings();
     buildUi();
+}
+
+void ResultsViewer::loadResultsSettings()
+{
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("Results"));
+
+    m_preferredParams.clear();
+    const QRegularExpression re(QStringLiteral("^S?(\\d+)[,xX]?(\\d+)$"),
+                                QRegularExpression::CaseInsensitiveOption);
+    const QStringList tokens = settings.value(QStringLiteral("sParameters")).toStringList();
+    for (QString tok : tokens) {
+        tok = tok.trimmed();
+        if (tok.isEmpty())
+            continue;
+        const QRegularExpressionMatch match = re.match(tok);
+        if (!match.hasMatch())
+            continue;
+        const int m = match.captured(1).toInt();
+        const int k = match.captured(2).toInt();
+        if (m >= 1 && k >= 1)
+            m_preferredParams.insert(qMakePair(m, k));
+    }
+    if (m_preferredParams.isEmpty())
+        m_preferredParams.insert(qMakePair(1, 1));
+
+    m_calcVisiblePref = settings.value(QStringLiteral("calculatorVisible"), false).toBool();
+    settings.endGroup();
+}
+
+void ResultsViewer::saveResultsSettings() const
+{
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("Results"));
+
+    QStringList tokens;
+    QList<QPair<int, int>> sorted = m_preferredParams.values();
+    std::sort(sorted.begin(), sorted.end());
+    for (const auto &pk : sorted)
+        tokens << QStringLiteral("S%1%2").arg(pk.first).arg(pk.second);
+    settings.setValue(QStringLiteral("sParameters"), tokens);
+
+    const bool calcOn = m_calcToggleBtn && m_calcToggleBtn->isChecked();
+    settings.setValue(QStringLiteral("calculatorVisible"), calcOn);
+    settings.endGroup();
+}
+
+QSet<QPair<int, int>> ResultsViewer::preferredParamsForPorts(int n) const
+{
+    QSet<QPair<int, int>> out;
+    if (n < 1)
+        return out;
+    for (const auto &pk : m_preferredParams) {
+        if (pk.first >= 1 && pk.second >= 1 && pk.first <= n && pk.second <= n)
+            out.insert(pk);
+    }
+    return out;
 }
 
 void ResultsViewer::setTargetDirectory(const QString &dir)
@@ -158,6 +314,7 @@ void ResultsViewer::setTargetDirectory(const QString &dir)
         }
         m_checkedPaths = keep;
         m_networkCache.clear();
+        m_calcSelectedPaths.clear();
         m_lastN = -1;
     }
     rescanFiles();
@@ -303,13 +460,24 @@ void ResultsViewer::buildUi()
     m_plotHost = new QWidget(this);
     m_plotHostLayout = new QVBoxLayout(m_plotHost);
     m_plotHostLayout->setContentsMargins(0, 0, 0, 0);
-    auto *scroll = new QScrollArea(vSplit);
+    auto *scroll = new QScrollArea();
     scroll->setWidgetResizable(true);
     scroll->setWidget(m_plotHost);
     scroll->setFrameShape(QFrame::NoFrame);
 
+    m_plotCalcSplit = new QSplitter(Qt::Horizontal, vSplit);
+    m_plotCalcSplit->setChildrenCollapsible(false);
+    m_plotCalcSplit->addWidget(scroll);
+
+    m_calcPanel = new ResultsCalculatorPanel(m_plotCalcSplit);
+    m_calcPanel->setVisible(false);
+    m_plotCalcSplit->addWidget(m_calcPanel);
+    m_plotCalcSplit->setStretchFactor(0, 5);
+    m_plotCalcSplit->setStretchFactor(1, 1);
+    m_plotCalcSplit->setSizes({700, 260});
+
     vSplit->addWidget(hSplit);
-    vSplit->addWidget(scroll);
+    vSplit->addWidget(m_plotCalcSplit);
     vSplit->setStretchFactor(0, 0);
     vSplit->setStretchFactor(1, 1);
     vSplit->setChildrenCollapsible(false);
@@ -317,9 +485,24 @@ void ResultsViewer::buildUi()
 
     mainLayout->addWidget(vSplit, 1);
 
+    auto *bottomRow = new QHBoxLayout();
     m_legendLabel = new QLabel(this);
     m_legendLabel->setWordWrap(true);
-    mainLayout->addWidget(m_legendLabel);
+    bottomRow->addWidget(m_legendLabel, 1);
+
+    m_calcToggleBtn = new QToolButton(this);
+    m_calcToggleBtn->setIcon(resultsCalculatorIcon(22));
+    m_calcToggleBtn->setIconSize(QSize(22, 22));
+    m_calcToggleBtn->setCheckable(true);
+    m_calcToggleBtn->setChecked(false);
+    m_calcToggleBtn->setToolTip(tr("Show / hide RF calculator panel"));
+    m_calcToggleBtn->setAutoRaise(true);
+    connect(m_calcToggleBtn, &QToolButton::toggled, this, &ResultsViewer::toggleCalculator);
+    bottomRow->addWidget(m_calcToggleBtn, 0, Qt::AlignRight | Qt::AlignVCenter);
+    mainLayout->addLayout(bottomRow);
+
+    if (m_calcVisiblePref)
+        m_calcToggleBtn->setChecked(true);
 
     showEmptyMessage(tr("Check a file and at least one S-parameter to plot"));
 }
@@ -1095,6 +1278,7 @@ QVector<ResultsViewer::PlottedTrace> ResultsViewer::getCheckedPlotted()
             continue;
         }
         PlottedTrace t;
+        t.path = path;
         t.network = &it->network;
         t.color = kColors.at(colorIdx % kColors.size());
         t.style = kStyles.at(colorIdx % kStyles.size());
@@ -1127,12 +1311,9 @@ void ResultsViewer::rebuildParameterGrid(int n)
         delete child;
     }
 
-    QSet<QPair<int, int>> kept;
-    for (const auto &pk : m_checkedParams) {
-        if (pk.first <= n && pk.second <= n)
-            kept.insert(pk);
-    }
-    m_checkedParams = kept;
+    // Apply last preferred S-params that exist for this port count; else default S11.
+    // Do not rewrite preferences when falling back — user may reopen a larger network later.
+    m_checkedParams = preferredParamsForPorts(n);
     if (n >= 1 && m_checkedParams.isEmpty())
         m_checkedParams.insert(qMakePair(1, 1));
 
@@ -1143,11 +1324,13 @@ void ResultsViewer::rebuildParameterGrid(int n)
             for (int k = 1; k <= n; ++k) {
                 auto *btn = new QPushButton(QStringLiteral("S%1%2").arg(m).arg(k));
                 btn->setCheckable(true);
-                btn->setChecked(m_checkedParams.contains(qMakePair(m, k)));
                 btn->setFixedWidth(50);
                 btn->setProperty("s_m", m);
                 btn->setProperty("s_k", k);
                 connect(btn, &QPushButton::toggled, this, &ResultsViewer::onParamToggled);
+                btn->blockSignals(true);
+                btn->setChecked(m_checkedParams.contains(qMakePair(m, k)));
+                btn->blockSignals(false);
                 m_paramGrid->addWidget(btn, m - 1, k - 1);
             }
         }
@@ -1167,6 +1350,12 @@ void ResultsViewer::onParamToggled(bool checked)
         m_checkedParams.insert(key);
     else
         m_checkedParams.remove(key);
+    // Only persist an explicit non-empty choice. Fallback S11 when a preferred
+    // param is missing from the current run must not overwrite that preference.
+    if (!m_checkedParams.isEmpty()) {
+        m_preferredParams = m_checkedParams;
+        saveResultsSettings();
+    }
     redrawPlot();
 }
 
@@ -1223,8 +1412,17 @@ void ResultsViewer::setLegend(const QVector<PlottedTrace> &plotted)
     }
     QStringList parts;
     for (const PlottedTrace &t : plotted) {
-        parts.append(QStringLiteral("<span style='color:%1;'>■</span> %2")
-                         .arg(t.color.name(), t.label.toHtmlEscaped()));
+        const bool sel = m_calcSelectedPaths.contains(t.path);
+        const QString mark = sel ? QStringLiteral("●") : QStringLiteral("■");
+        parts.append(QStringLiteral("<span style='color:%1;'>%2</span> %3%4")
+                         .arg(t.color.name(),
+                              mark,
+                              sel ? QStringLiteral("<b>") : QString(),
+                              t.label.toHtmlEscaped())
+                     + (sel ? QStringLiteral("</b>") : QString()));
+    }
+    if (m_calcPanel && m_calcPanel->isVisible()) {
+        parts.prepend(tr("<i>Click a curve for Calculator · drag/wheel/pinch to zoom · F reset</i>&nbsp;&nbsp;"));
     }
     m_legendLabel->setText(parts.join(QLatin1String("&nbsp;&nbsp;&nbsp;")));
 }
@@ -1274,6 +1472,84 @@ void ResultsViewer::redrawPlot()
                     m_mode == DisplayMode::Phase);
     }
     setLegend(plotted);
+    syncCalculatorTraces();
+}
+
+void ResultsViewer::toggleCalculator(bool on)
+{
+    if (!m_calcPanel)
+        return;
+    m_calcPanel->setVisible(on);
+    if (on) {
+        syncCalculatorTraces();
+        if (m_plotCalcSplit) {
+            QList<int> sizes = m_plotCalcSplit->sizes();
+            if (sizes.size() >= 2 && sizes.at(1) < 120) {
+                const int total = sizes.at(0) + sizes.at(1);
+                m_plotCalcSplit->setSizes({qMax(200, total - 260), 260});
+            }
+        }
+    }
+    saveResultsSettings();
+}
+
+void ResultsViewer::onCalcTraceClicked(const QString &path)
+{
+    if (path.isEmpty())
+        return;
+    const int idx = m_calcSelectedPaths.indexOf(path);
+    if (idx >= 0)
+        m_calcSelectedPaths.removeAt(idx);
+    else
+        m_calcSelectedPaths.append(path);
+
+    if (m_calcToggleBtn && !m_calcToggleBtn->isChecked())
+        m_calcToggleBtn->setChecked(true);
+
+    redrawPlot();
+}
+
+void ResultsViewer::syncCalculatorTraces()
+{
+    if (!m_calcPanel || !m_calcPanel->isVisible())
+        return;
+
+    const QVector<PlottedTrace> plotted = getCheckedPlotted();
+
+    // Keep only still-plotted selections
+    {
+        QSet<QString> alive;
+        for (const PlottedTrace &t : plotted)
+            alive.insert(t.path);
+        QStringList kept;
+        for (const QString &p : m_calcSelectedPaths) {
+            if (alive.contains(p))
+                kept.append(p);
+        }
+        m_calcSelectedPaths = kept;
+    }
+
+    QVector<ResultsCalculatorPanel::TraceRef> refs;
+    // Prefer click-selected order; if none selected yet, use all plotted (with hint in UI)
+    QStringList order = m_calcSelectedPaths;
+    if (order.isEmpty()) {
+        for (const PlottedTrace &t : plotted)
+            order.append(t.path);
+    }
+    for (const QString &path : order) {
+        for (const PlottedTrace &t : plotted) {
+            if (t.path != path)
+                continue;
+            ResultsCalculatorPanel::TraceRef r;
+            r.label = t.label;
+            r.path = t.path;
+            r.network = t.network;
+            r.selected = m_calcSelectedPaths.contains(t.path);
+            refs.append(r);
+            break;
+        }
+    }
+    m_calcPanel->setTraces(refs, !m_calcSelectedPaths.isEmpty());
 }
 
 void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
@@ -1327,10 +1603,13 @@ void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
                     phPts.append(QPointF(ghz, toPhaseDeg(svals.at(i))));
             }
             const bool single = freqs.size() == 1;
+            const bool selected = m_calcSelectedPaths.contains(t.path);
             if (dbChart)
-                addSeriesToChart(dbChart, dbPts, t.color, t.style, t.label, single);
+                addSeriesToChart(dbChart, dbPts, t.color, t.style, t.label, t.path,
+                                 selected, single, this);
             if (phChart)
-                addSeriesToChart(phChart, phPts, t.color, t.style, t.label, single);
+                addSeriesToChart(phChart, phPts, t.color, t.style, t.label, t.path,
+                                 selected, single, this);
         }
 
         if (dbChart) {

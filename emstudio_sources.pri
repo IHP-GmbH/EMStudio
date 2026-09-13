@@ -34,6 +34,8 @@ SOURCES += \
     $$TOP/src/layoutview.cpp \
     $$TOP/src/layoutlayerpanel.cpp \
     $$TOP/src/sanitycheck.cpp \
+    $$TOP/src/resultscalculator.cpp \
+    $$TOP/src/exprparser.cpp \
     $$TOP/src/layer.cpp \
     $$TOP/src/mainwindow.cpp \
     $$TOP/src/elmerThermalUi.cpp \
@@ -90,6 +92,8 @@ HEADERS += \
     $$TOP/src/layoutview.h \
     $$TOP/src/layoutlayerpanel.h \
     $$TOP/src/sanitycheck.h \
+    $$TOP/src/resultscalculator.h \
+    $$TOP/src/exprparser.h \
     $$TOP/src/stackupexpr.h \
     $$TOP/src/stackupeditor.h \
     $$TOP/src/touchstone.h \

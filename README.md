@@ -369,8 +369,36 @@ After a successful **OpenEMS**, **Palace**, or **Elmer EM** run, open the **Resu
 EMStudio scans the simulation data directory for Touchstone files (`.sNp`). For Palace / Elmer EM,
 CSV outputs can be converted automatically via `scripts/combine_extend_snp.py`.
 
-You can overlay parameters (**S11**, **S21**, …), switch between **dB + Phase**, **Smith chart**,
-and a zoomed Smith view, and launch **Model Fit…** (`snp2le`) when available.
+You can overlay parameters (**S11**, **S21**, …), switch display mode (**dB**, **Phase**, **Smith chart**,
+zoomed Smith), use **Compare…** to overlay another `.sNp` or run folder, and launch **Model Fit…**
+(`snp2le`) when available. On dB/Phase charts: **drag** a rectangle or use the **mouse wheel**
+(zoom toward the cursor); press **F** to reset the view. Selected S-parameters and calculator
+panel visibility are remembered (QSettings); if a saved parameter is missing in the current run,
+the viewer falls back to **S11** without overwriting that preference.
+
+### Calculator
+
+Toggle the calculator icon (bottom-right of the Results pane) to open a resizable side panel.
+
+1. Check Touchstone file(s) in the tree (and optionally **Compare…** overlays).
+2. **Click a curve** on the plot to select it — selected traces become `$1`, `$2`, … (click again to deselect).
+3. Pick a function from the combo (inserts into the expression line), edit if needed, set **Default f**, then **Evaluate**.
+
+Examples:
+
+```text
+cser($1)                 # series C from Y at default f (fF)
+cser($1)-cser($2)        # raw C difference of two curves
+ydiff_cser($1,$2)        # C from Ya−Yb (open-fixture de-embed)
+csh1($1) / csh2($1)      # shunt capacitances
+db(S21,$1)               # |S21| in dB
+ph(S21,$1)               # phase in degrees
+cser($1,1)               # optional explicit frequency in GHz
+cser($1)+csh1($1)        # arithmetic OK
+```
+
+`ydiff_cser($1,$2)` matches the CMIM open-de-embed flow (`scripts/y_open_deembed.py`):
+select **meas** as `$1` and **open** as `$2` (or evaluate an already written `*_yopen.s2p` with `cser($1)`).
 
 <img src="./doc/png/results1.png" alt="Results viewer S-parameters" width="700">
 

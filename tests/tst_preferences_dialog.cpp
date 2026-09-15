@@ -93,7 +93,7 @@ void PreferencesDialogTest::setupPreferencesPanel_initializesValues_and_runModeS
     prefs["PALACE_RUN_SCRIPT"] = QString("/tmp/palace_launcher.sh");
     prefs["ELMER_SOLVER_PATH"] = QString("/opt/elmer/bin/ElmerSolver");
     prefs["ELMER_PYTHON"] = QString("/usr/bin/python3");
-    prefs["PARAVIEW_EXE"] = QString("/usr/bin/paraview");
+    prefs["FIELD_VIEWER_PYTHON"] = QString("/usr/bin/python3");
 
     Preferences dlg(prefs);
 
@@ -110,7 +110,7 @@ void PreferencesDialogTest::setupPreferencesPanel_initializesValues_and_runModeS
     QtProperty* palaceScriptProp = findPropertyByName(browser, "PALACE_RUN_SCRIPT");
     QtProperty* elmerSolverProp = findPropertyByName(browser, "ELMER_SOLVER_PATH");
     QtProperty* elmerPythonProp = findPropertyByName(browser, "ELMER_PYTHON");
-    QtProperty* paraViewProp = findPropertyByName(browser, "PARAVIEW_EXE");
+    QtProperty* fieldPythonProp = findPropertyByName(browser, "FIELD_VIEWER_PYTHON");
 
     QVERIFY2(pythonPathProp, "Python Path property not found");
     QVERIFY2(palacePythonProp, "PALACE_PYTHON property not found");
@@ -119,7 +119,7 @@ void PreferencesDialogTest::setupPreferencesPanel_initializesValues_and_runModeS
     QVERIFY2(palaceScriptProp, "PALACE_RUN_SCRIPT property not found");
     QVERIFY2(elmerSolverProp, "ELMER_SOLVER_PATH property not found");
     QVERIFY2(elmerPythonProp, "ELMER_PYTHON property not found");
-    QVERIFY2(paraViewProp, "PARAVIEW_EXE property not found");
+    QVERIFY2(fieldPythonProp, "FIELD_VIEWER_PYTHON property not found");
 
     QCOMPARE(manager->value(pythonPathProp).toString(), QString("/usr/bin/python3"));
     QCOMPARE(manager->value(palacePythonProp).toString(), QString("/usr/bin/python3"));
@@ -128,7 +128,7 @@ void PreferencesDialogTest::setupPreferencesPanel_initializesValues_and_runModeS
     QCOMPARE(manager->value(palaceScriptProp).toString(), QString("/tmp/palace_launcher.sh"));
     QCOMPARE(manager->value(elmerSolverProp).toString(), QString("/opt/elmer/bin/ElmerSolver"));
     QCOMPARE(manager->value(elmerPythonProp).toString(), QString("/usr/bin/python3"));
-    QCOMPARE(manager->value(paraViewProp).toString(), QString("/usr/bin/paraview"));
+    QCOMPARE(manager->value(fieldPythonProp).toString(), QString("/usr/bin/python3"));
 
     QVERIFY2(palaceInstallProp->isEnabled(), "PALACE_INSTALL_PATH shall be enabled in Executable mode");
     QVERIFY2(!palaceScriptProp->isEnabled(), "PALACE_RUN_SCRIPT shall be disabled in Executable mode");

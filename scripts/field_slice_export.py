@@ -586,12 +586,49 @@ def _sample_z_grid(pv, data_mesh, scalar_name: str, scale: float, xs, ys, z_um: 
     return grid, mask
 
 
+def _is_thermal_quantity(name: str) -> bool:
+    nl = (name or "").lower()
+    return nl in ("temperature", "temp", "t") or ("temp" in nl)
+
+
 def _frame_from_layout(layout_roi, mxmin, mxmax, mymin, mymax, pad_frac=0.35, max_aspect=2.5):
     """Keep the heatmap framed on the layout (not the full air-box)."""
     return _union_and_frame(
         *layout_roi, mxmin, mxmax, mymin, mymax,
         layout=None, pad_frac=pad_frac, max_aspect=max_aspect,
     )
+
+
+def _choose_xy_frame(scalar_name, layout_roi, mxmin, mxmax, mymin, mymax,
+                     data_mesh, scale, z_clip, roi_pad_frac: float):
+    """Pick XY crop: full mesh for thermal, layout-centered for EM."""
+    if _is_thermal_quantity(scalar_name):
+        # Show the whole simulation domain; layout draws on top as a small inset.
+        return mxmin, mxmax, mymin, mymax
+
+    if layout_roi is not None:
+        lx0, lx1, ly0, ly1 = layout_roi
+        layout_w = max(lx1 - lx0, 1e-9)
+        layout_h = max(ly1 - ly0, 1e-9)
+        mesh_w = max(mxmax - mxmin, 1e-9)
+        mesh_h = max(mymax - mymin, 1e-9)
+        # Tiny DUT in a huge air-box → keep layout frame. Otherwise grow toward mesh.
+        if layout_w * layout_h < 0.08 * mesh_w * mesh_h:
+            return _frame_from_layout(
+                layout_roi, mxmin, mxmax, mymin, mymax, pad_frac=roi_pad_frac
+            )
+        return _frame_from_layout(
+            layout_roi, mxmin, mxmax, mymin, mymax, pad_frac=max(roi_pad_frac, 0.5)
+        )
+
+    active = _field_active_xy_um(
+        data_mesh, scalar_name, scale, z_clip, mxmin, mxmax, mymin, mymax
+    )
+    if active is not None:
+        return _union_and_frame(
+            *active, mxmin, mxmax, mymin, mymax, layout=None, pad_frac=0.12
+        )
+    return mxmin, mxmax, mymin, mymax
 
 
 def export_slice(
@@ -670,26 +707,15 @@ def export_slice(
 
     z_clip = z_um if z_um is not None else 0.5 * (zmin + zmax)
     if auto_z or z_um is None:
-        z_clip = _auto_z_um(data_mesh, scalar_name, scale, zmin, zmax, xmin, xmax, ymin, ymax)
+        # Seed auto-Z with layout ROI when known (hot spot near DUT), then frame XY.
+        seed = layout_roi if layout_roi is not None else (mxmin, mxmax, mymin, mymax)
+        z_clip = _auto_z_um(data_mesh, scalar_name, scale, zmin, zmax, *seed)
     z_clip = min(max(z_clip, zmin), zmax)
 
-    # Prefer layout-centered frame. Full-domain "active field" framing makes EM
-    # air-box heatmaps look wrong next to a small DUT.
-    if layout_roi is not None:
-        xmin, xmax, ymin, ymax = _frame_from_layout(
-            layout_roi, mxmin, mxmax, mymin, mymax, pad_frac=roi_pad_frac
-        )
-    else:
-        active = _field_active_xy_um(
-            data_mesh, scalar_name, scale, z_clip, mxmin, mxmax, mymin, mymax
-        )
-        if active is not None:
-            xmin, xmax, ymin, ymax = _union_and_frame(
-                *active, mxmin, mxmax, mymin, mymax, layout=None, pad_frac=0.12
-            )
-        else:
-            xmin, xmax, ymin, ymax = mxmin, mxmax, mymin, mymax
-
+    xmin, xmax, ymin, ymax = _choose_xy_frame(
+        scalar_name, layout_roi, mxmin, mxmax, mymin, mymax,
+        data_mesh, scale, z_clip, roi_pad_frac,
+    )
     span_x = max(xmax - xmin, 1e-9)
     span_y = max(ymax - ymin, 1e-9)
     base = max(64, int(resolution))

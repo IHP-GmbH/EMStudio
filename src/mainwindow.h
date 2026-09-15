@@ -245,7 +245,7 @@ public:
     QString                         testBuildThermalCodeFromGui() const;
     int                             testThermalRowCount() const;
     QString                         testFindThermalResultsVtu(const QString &runDir) const;
-    QString                         testResolveParaViewExecutable() const;
+    bool                            testIsFieldMode() const;
     void                            testClickAddThermalObject();
     void                            testClickRemoveSelectedThermalObject();
     void                            testRemoveAllThermalObjects();
@@ -256,7 +256,7 @@ public:
     QString                         testForceStartSimulationOff(const QString &script) const;
     QString                         testApplyGdsAndXmlPaths(const QString &script,
                                                            const QString &simKeyLower) const;
-    void                            testOpenThermalResultsInParaView(const QString &runDir);
+    void                            testOpenThermalResultsInFieldView(const QString &runDir);
     QString                         testResolveKeywordsPath(const QString &simKeyLower) const;
     QMap<QString, QString>          testLoadKeywordTipsCsv(const QString &simKeyLower) const;
     void                            testRefreshKeywordTipsForCurrentTool();
@@ -394,17 +394,7 @@ private:
                                                            double value,
                                                            int sourceLayer,
                                                            const QString &targetLayer);
-    QString                         resolveParaViewExecutable() const;
     QString                         findThermalResultsVtu(const QString &runDir) const;
-    /*!*******************************************************************************************************************
-     * \brief Locates the newest field dump under \a runDir (or current results dir).
-     *
-     * Prefers thermal VTU for Elmer/Thermal, then Palace \c .pvd, then OpenEMS/VTK
-     * meshes (\c .vtr/.vtu/.vtk/.vti).
-     *
-     * \param runDir Optional results root; empty → \c resolveResultsDirectory().
-     * \return Absolute path, or empty if none found.
-     **********************************************************************************************************************/
     QString                         findFieldDumpPath(const QString &runDir = QString()) const;
     /*!*******************************************************************************************************************
      * \brief Host Python for \c field_slice_export.py (PyVista/Pillow).
@@ -444,6 +434,10 @@ private:
      **********************************************************************************************************************/
     void                            onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
     /*!*******************************************************************************************************************
+     * \brief Slot: jump to hottest Z (auto-Z / max temperature or |E| in layout ROI).
+     **********************************************************************************************************************/
+    void                            onLayoutFieldHotZRequest();
+    /*!*******************************************************************************************************************
      * \brief Debounces Field exports so rapid UI changes coalesce into one run.
      **********************************************************************************************************************/
     void                            scheduleFieldOverlayRefresh(bool force = false);
@@ -453,7 +447,10 @@ private:
      * Ignores superseded tokens and CrashExit (killed for a newer Z).
      **********************************************************************************************************************/
     void                            onFieldExportFinished(int exitCode, QProcess::ExitStatus status);
-    void                            openThermalResultsInParaView(const QString &runDir);
+    /*!*******************************************************************************************************************
+     * \brief After Elmer Thermal success: switch to Substrate and open Field at max-Z.
+     **********************************************************************************************************************/
+    void                            openThermalResultsInFieldView(const QString &runDir);
     bool                            isElmerFamilyKey(const QString &key) const;
     bool                            isElmerThermalKey(const QString &key) const;
     bool                            isElmerEmKey(const QString &key) const;
@@ -643,6 +640,8 @@ private:
     int                             m_fieldExportToken = 0;
     QString                         m_fieldLastDumpPath;
     QString                         m_fieldExportOutDir;
+    QString                         m_layoutPreviewKey; //!< gds|topcell|xml — reset Field when model changes
+    QString                         m_fieldDumpSearchDir; //!< Prefer this dir after a thermal run
     QProcess                       *m_fieldExportProcess = nullptr;
 
     bool                            m_headless = false;

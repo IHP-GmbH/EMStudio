@@ -125,45 +125,6 @@ void MainWindow::updateExcitationUiForCurrentTool()
     }
 }
 
-QString MainWindow::resolveParaViewExecutable() const
-{
-    const QString configured = m_preferences.value(QStringLiteral("PARAVIEW_EXE")).toString().trimmed();
-    if (!configured.isEmpty() && QFileInfo::exists(configured))
-        return QDir::toNativeSeparators(configured);
-
-    const QString fromPath = QStandardPaths::findExecutable(QStringLiteral("paraview"));
-    if (!fromPath.isEmpty())
-        return QDir::toNativeSeparators(fromPath);
-
-#ifdef Q_OS_WIN
-    const QStringList candidates = {
-        QStringLiteral("C:/Program Files/ParaView/bin/paraview.exe"),
-        QStringLiteral("C:/Program Files (x86)/ParaView/bin/paraview.exe"),
-    };
-    for (const QString &c : candidates) {
-        if (QFileInfo::exists(c))
-            return QDir::toNativeSeparators(c);
-    }
-
-    // Versioned installs: C:\Program Files\ParaView 5.13.0\bin\paraview.exe
-    const QStringList roots = {
-        QStringLiteral("C:/Program Files"),
-        QStringLiteral("C:/Program Files (x86)"),
-    };
-    for (const QString &root : roots) {
-        QDir d(root);
-        const QStringList dirs = d.entryList(QStringList{QStringLiteral("ParaView*")},
-                                             QDir::Dirs | QDir::NoDotAndDotDot);
-        for (const QString &name : dirs) {
-            const QString exe = d.filePath(name + QStringLiteral("/bin/paraview.exe"));
-            if (QFileInfo::exists(exe))
-                return QDir::toNativeSeparators(exe);
-        }
-    }
-#endif
-    return {};
-}
-
 QString MainWindow::findThermalResultsVtu(const QString &runDir) const
 {
     if (runDir.isEmpty())
@@ -200,73 +161,49 @@ QString MainWindow::findThermalResultsVtu(const QString &runDir) const
     return pickBest(found);
 }
 
-void MainWindow::openThermalResultsInParaView(const QString &runDir)
+/*!*******************************************************************************************************************
+ * \brief After a successful Elmer Thermal run: Substrate tab + Field view at hottest Z.
+ *
+ * Uses Layout Field (PyVista slice export) instead of an external viewer.
+ **********************************************************************************************************************/
+void MainWindow::openThermalResultsInFieldView(const QString &runDir)
 {
-    QString dir = runDir;
+    if (m_headless)
+        return;
+
+    QString dir = runDir.trimmed();
     if (dir.isEmpty())
         dir = resolveResultsDirectory();
+
+    m_fieldDumpSearchDir = dir;
+    m_fieldLastDumpPath.clear();
+    m_fieldPreferAutoZ = true;
 
     const QString vtu = findThermalResultsVtu(dir);
     if (vtu.isEmpty()) {
         appendToSimulationLog(
-            QStringLiteral("\n[ParaView] No thermal .vtu found under:\n  %1\n")
+            QStringLiteral("\n[Field] No thermal .vtu found under:\n  %1\n"
+                           "  Expected thermal_results*.vtu after a successful Elmer Thermal run.\n")
                 .arg(dir.isEmpty() ? QStringLiteral("(empty)") : dir)
                 .toUtf8());
-        return;
-    }
-
-    const QString paraView = resolveParaViewExecutable();
-    if (paraView.isEmpty()) {
+    } else {
         appendToSimulationLog(
-            QByteArray("\n[ParaView] Executable not found. Set PARAVIEW_EXE in Preferences,\n"
-                       "then open this file manually:\n  ")
-            + vtu.toUtf8() + '\n');
-        error(tr("ParaView not found. Set PARAVIEW_EXE in Preferences.\n\nResult file:\n%1")
-                  .arg(vtu));
+            QStringLiteral("\n[Field] Opening thermal results in Layout Field view:\n  %1\n")
+                .arg(vtu)
+                .toUtf8());
+    }
+
+    const int subIdx = m_tabMap.value(QStringLiteral("Substrate"), -1);
+    if (subIdx >= 0)
+        showTab(subIdx);
+
+    if (!m_ui || !m_ui->layoutView)
         return;
-    }
 
-    const QString workDir = QFileInfo(vtu).absolutePath();
-    // ParaView opens .vtu into the pipeline but waits for Apply — drive Show via --script.
-    const QString vtuPy = QDir::fromNativeSeparators(QFileInfo(vtu).absoluteFilePath());
-    const QString scriptPath = QDir(workDir).filePath(QStringLiteral("_emstudio_open_thermal_paraview.py"));
-    {
-        QFile script(scriptPath);
-        if (!script.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-            appendToSimulationLog(
-                QStringLiteral("\n[ParaView] Cannot write helper script:\n  %1\n").arg(scriptPath).toUtf8());
-            // Fall back to plain open (user must click Apply).
-            const QStringList fallbackArgs{QDir::toNativeSeparators(vtu)};
-            QProcess::startDetached(paraView, fallbackArgs, workDir);
-            return;
-        }
-        QTextStream out(&script);
-        out.setCodec("UTF-8");
-        out << "from paraview.simple import *\n\n"
-            << "vtu = r'" << vtuPy << "'\n"
-            << "reader = OpenDataFile(vtu)\n"
-            << "view = GetActiveViewOrCreate('RenderView')\n"
-            << "display = Show(reader, view)\n"
-            << "ColorBy(display, ('POINTS', 'temperature'))\n"
-            << "display.RescaleTransferFunctionToDataRange(True, False)\n"
-            << "display.SetScalarBarVisibility(view, True)\n"
-            << "Render()\n"
-            << "ResetCamera()\n";
-        script.close();
-    }
-
-    const QStringList args{
-        QStringLiteral("--script=") + QDir::toNativeSeparators(scriptPath),
-    };
-    appendToSimulationLog(
-        QStringLiteral("\n[ParaView] Opening thermal results (auto-show temperature):\n  %1\n  %2 %3\n")
-            .arg(vtu, paraView, args.join(QLatin1Char(' ')))
-            .toUtf8());
-
-    if (!QProcess::startDetached(paraView, args, workDir)) {
-        appendToSimulationLog(QByteArray("\n[ParaView] Failed to start process.\n"));
-        error(tr("Failed to start ParaView:\n%1 %2").arg(paraView, args.join(QLatin1Char(' '))));
-    }
+    if (!m_ui->layoutView->isFieldMode())
+        m_ui->layoutView->setFieldMode(true);
+    else
+        scheduleFieldOverlayRefresh(true);
 }
 
 void MainWindow::appendThermalObjectRow(const QString &type,

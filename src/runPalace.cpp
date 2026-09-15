@@ -567,13 +567,13 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
         m_palacePhase = PalacePhase::None;
 
         // Palace/Elmer EM write CSV; Results needs Touchstone (.sNp) via combine_extend_snp.py
-        // Elmer Thermal produces .vtu temperature fields — open in ParaView instead.
+        // Elmer Thermal → Substrate tab + Layout Field at hottest Z.
         if (exitCode == 0 && !m_headless) {
             if (isElmerThermalKey(currentSimToolKey())) {
                 QString runDir = detectRunDirFromLog();
                 if (runDir.isEmpty())
                     runDir = resolveResultsDirectory();
-                openThermalResultsInParaView(runDir);
+                openThermalResultsInFieldView(runDir);
             } else if (m_resultsViewer) {
                 QString runDir = detectRunDirFromLog();
                 if (runDir.isEmpty())

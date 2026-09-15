@@ -244,36 +244,6 @@ void ElmerTest::findThermalResultsVtu_prefersThermalResultsPrefix()
     QCOMPARE(QFileInfo(found).fileName(), QStringLiteral("thermal_results_t0001.vtu"));
 }
 
-void ElmerTest::resolveParaViewExecutable_usesPreferenceWhenPresent()
-{
-    MainWindow w;
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-
-#ifdef Q_OS_WIN
-    const QString fake = dir.filePath(QStringLiteral("paraview.exe"));
-#else
-    const QString fake = dir.filePath(QStringLiteral("paraview"));
-#endif
-    {
-        QFile f(fake);
-        QVERIFY(f.open(QIODevice::WriteOnly));
-        f.write("stub");
-        f.close();
-    }
-#ifndef Q_OS_WIN
-    QFile::setPermissions(fake,
-                          QFile::permissions(fake) |
-                              QFileDevice::ExeUser |
-                              QFileDevice::ExeGroup |
-                              QFileDevice::ExeOther);
-#endif
-
-    w.testSetPreference(QStringLiteral("PARAVIEW_EXE"), fake);
-    QCOMPARE(QDir::fromNativeSeparators(w.testResolveParaViewExecutable()),
-             QDir::fromNativeSeparators(fake));
-}
-
 void ElmerTest::substrateOffset_expressionResolvesWithVariables()
 {
     QTemporaryDir dir;
@@ -408,16 +378,7 @@ void ElmerTest::thermalRows_addRemoveAndWorkflowHelpers()
     QVERIFY(!replaced.contains(QStringLiteral("add_heatsource")));
 }
 
-void ElmerTest::openThermalResults_noVtuIsNoop()
-{
-    MainWindow w;
-    QTemporaryDir dir;
-    QVERIFY(dir.isValid());
-    // No VTU → early return; should not throw / hang.
-    w.testOpenThermalResultsInParaView(dir.path());
-}
-
-void ElmerTest::openThermalResults_withVtuAndParaViewStub()
+void ElmerTest::openThermalResults_switchesToFieldView()
 {
     MainWindow w;
     QTemporaryDir dir;
@@ -431,32 +392,9 @@ void ElmerTest::openThermalResults_withVtuAndParaViewStub()
         f.close();
     }
 
-#ifdef Q_OS_WIN
-    const QString pv = dir.filePath(QStringLiteral("paraview_stub.cmd"));
-    {
-        QFile f(pv);
-        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
-        QTextStream(&f) << "@echo off\r\nexit /b 0\r\n";
-    }
-#else
-    const QString pv = dir.filePath(QStringLiteral("paraview_stub.sh"));
-    {
-        QFile f(pv);
-        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
-        QTextStream(&f) << "#!/bin/sh\nexit 0\n";
-    }
-    QFile::setPermissions(pv,
-                          QFile::permissions(pv) |
-                              QFileDevice::ExeUser |
-                              QFileDevice::ExeGroup |
-                              QFileDevice::ExeOther);
-#endif
-
-    w.testSetPreference(QStringLiteral("PARAVIEW_EXE"), pv);
-    w.testOpenThermalResultsInParaView(dir.path());
-
-    // Helper script should be written next to the VTU.
-    QVERIFY(QFileInfo::exists(dir.filePath(QStringLiteral("_emstudio_open_thermal_paraview.py"))));
+    // No dump tooling needed: should switch to Substrate + Field without hanging.
+    w.testOpenThermalResultsInFieldView(dir.path());
+    QVERIFY(w.testIsFieldMode());
 }
 
 void ElmerTest::generateScript_elmerThermalFromGui()

@@ -27,7 +27,7 @@ It provides an integrated workflow for:
 - Configuring simulation parameters  
 - Generating configuration files for solvers (**OpenEMS**, **Palace**, **Elmer EM**, **Elmer Thermal**)  
 - Editing Python driver scripts with syntax highlighting  
-- Running simulations, streaming logs, and viewing results (S-parameters / ParaView for thermal)
+- Running simulations, streaming logs, and viewing results (S-parameters / Layout Field for thermal)  
 
 ---
 
@@ -41,9 +41,9 @@ It provides an integrated workflow for:
 - Python script editor with syntax highlighting & autocompletion  
 - Python/Palace parser with JSON configuration  
 - QtPropertyBrowser-based parameter editor  
-- Preferences dialog (paths, solver settings, Python interpreter, ParaView)  
+- Preferences dialog (paths, solver settings, Python interpreter, Layout Field Python)  
 - Simulation tools: **OpenEMS**, **Palace**, **Elmer EM**, **Elmer Thermal**  
-- Results viewer for S-parameters; ParaView launch for thermal VTU fields  
+- Results viewer for S-parameters; Layout Field Z-clip for thermal VTU fields  
 - Command-line interface for automation  
 
 ---
@@ -137,14 +137,13 @@ and **Elmer Thermal** (steady-state heat conduction).
 - Project page: https://www.elmerfem.org/
 - Source / downloads: https://github.com/ElmerCSC/elmerfem
 
-For thermal field visualization after a successful run, install
-[ParaView](https://www.paraview.org/download/) and set `PARAVIEW_EXE` in Preferences
-(or leave it empty to auto-detect a common install path).
+For thermal field visualization after a successful run, EMStudio opens the **Substrate** tab
+and turns on **Field** at the hottest Z (max temperature). Set `FIELD_VIEWER_PYTHON` in
+Preferences to a host Python with PyVista + Pillow (`pip install pyvista pillow`).
 
-The screenshot below shows an **Elmer Thermal** stackup in EMStudio together with the
-resulting temperature field opened in ParaView:
+The screenshot below shows an **Elmer Thermal** stackup in EMStudio:
 
-<img src="./doc/png/elmer_thermal1.png" alt="Elmer Thermal workflow with ParaView" width="700">
+<img src="./doc/png/elmer_thermal1.png" alt="Elmer Thermal workflow with Layout Field" width="700">
 
 ---
 
@@ -340,9 +339,9 @@ Floating controls on the layout preview (top-right):
 **Field view** (requires a host Python with PyVista + Pillow):
 
 1. Run a simulation that writes field dumps (`fdump` / VTK / VTU / Palace `.pvd`, or Elmer Thermal `thermal_results*.vtu`).
-2. On the Substrate tab, click **Field**.
-3. On first open, EMStudio auto-picks a “hot” Z (strongest field inside the layout ROI), then exports a PNG slice via `scripts/field_slice_export.py`.
-4. Drag the **Z** slider (export runs on release), optionally enable **Log** scale or **Arrows** (in-plane vectors such as Poynting `S`).
+2. On the Substrate tab, click **Field** (after a successful **Elmer Thermal** run this happens automatically at max-T Z).
+3. On first open, EMStudio auto-picks a “hot” Z (strongest field / max temperature), then exports a PNG slice via `scripts/field_slice_export.py`.
+4. Drag the **Z** slider (export runs on release), use **Max** to jump back to the hottest Z, optionally enable **Log** scale or **Arrows** (in-plane vectors such as Poynting `S`).
 
 Set **Preferences → Layout Field → FIELD_VIEWER_PYTHON** to a Windows `python.exe` that has:
 
@@ -384,7 +383,7 @@ When creating ports entries from scratch, there is a checkbox "Use Substrate Lay
 
 In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area. 
 
-When **Elmer Thermal** is selected as the simulation tool, the Ports tab becomes **Thermal**. Instead of EM ports you define thermal objects (heat sources in Watts and constant-temperature boundaries in Kelvin), each with a GDS marker layer and a target stackup layer. After a successful solve, EMStudio opens the temperature field (`thermal_results*.vtu`) in ParaView (see the screenshot under [Elmer (EM and Thermal)](#elmer-em-and-thermal) above).
+When **Elmer Thermal** is selected as the simulation tool, the Ports tab becomes **Thermal**. Instead of EM ports you define thermal objects (heat sources in Watts and constant-temperature boundaries in Kelvin), each with a GDS marker layer and a target stackup layer. After a successful solve, EMStudio switches to the **Substrate** tab and opens **Field** at max temperature Z (see [Elmer (EM and Thermal)](#elmer-em-and-thermal) and Layout Field above).
 
 ## Simulate
 
@@ -439,7 +438,7 @@ select **meas** as `$1` and **open** as `$2` (or evaluate an already written `*_
 
 <img src="./doc/png/results1.png" alt="Results viewer S-parameters" width="700">
 
-For **Elmer Thermal**, the Results tab is hidden — temperature fields are viewed in ParaView instead
+For **Elmer Thermal**, the Results tab is hidden — temperature fields are viewed on the Substrate tab via **Field**
 (see the Thermal section above).
 
 --
@@ -535,14 +534,14 @@ Typical ingredients:
 - Stackup XML with thermal conductivity (and optional temperature tables)  
 - GDS marker layers for heatsource / consttemp objects  
 - Python model using `create_elmer_thermal`  
-- Results: `thermal_results*.vtu` (open in ParaView) and `thermal_results.dat` (min/max T)
+- Results: `thermal_results*.vtu` (Layout Field on Substrate) and `thermal_results.dat` (min/max T)
 
 ### Using with EMStudio
 
 1. Set **Simulation Tool** to **Elmer Thermal**  
-2. Configure `ELMER_SOLVER_PATH`, `ELMER_PYTHON` (Python ≥ 3.12 recommended), and optionally `PARAVIEW_EXE`  
+2. Configure `ELMER_SOLVER_PATH`, `ELMER_PYTHON` (Python ≥ 3.12 recommended), and `FIELD_VIEWER_PYTHON` (PyVista)  
 3. Open or generate a thermal Python model, set GDS + XML, define Thermal objects  
-4. Run from the Simulate tab — on success, ParaView opens the temperature field  
+4. Run from the Simulate tab — on success, Substrate opens with Field at max-T Z  
 
 (See the Elmer Thermal screenshot under [Elmer (EM and Thermal)](#elmer-em-and-thermal).)
 
@@ -558,7 +557,7 @@ EMStudio can be used directly with OpenEMS, Palace, and Elmer models for:
 - Steady-state thermal (heat) simulation with Elmer Thermal  
 - SG13G2 / interposer stack evaluation  
 - Port setup & S‑parameter extraction  
-- Thermal object setup and ParaView field viewing  
+- Thermal object setup and Layout Field temperature viewing  
 - Automated script generation  
 - KLayout‑based design environment integration
 

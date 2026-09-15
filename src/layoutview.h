@@ -192,6 +192,8 @@ signals:
     void                        fieldModeChanged(bool on);
     /*! Z-clip or display options changed; MainWindow should re-export the slice. */
     void                        fieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
+    /*! User asked to jump to the hottest Z (max |E| / temperature in layout ROI). */
+    void                        fieldHotZRequest();
     /*! Cursor position in GDS micrometres (Y-up). */
     void                        cursorUmChanged(qreal xUm, qreal yUm);
     /*! Measure segment in GDS micrometres; both ends valid when \a active. */
@@ -219,11 +221,12 @@ private slots:
     void                        onFieldZSliderPreview(int value);
     /*! Slider released → emit \c fieldSliceRequest for a new export. */
     void                        onFieldZSliderCommitted();
+    /*! Max / hot-Z button → emit \c fieldHotZRequest. */
+    void                        onFieldHotZClicked();
 
 private:
     void                        applyHighlight();
     void                        setLayerHighlightVisual(const QString &name, bool on);
-    void                        fitContent();
     void                        applyLayerVisual(int gdsLayer);
     qreal                       opacityFor(int gdsLayer) const;
     bool                        visibleFor(int gdsLayer) const;
@@ -271,8 +274,14 @@ private:
     static void                 setPixelOffset(QGraphicsItem *item, qreal dxPx, qreal dyPx);
 
     void                        rebuildScene(bool refit = true);
-    void                        rebuildScene2D();
+    void                        rebuildScene2D(bool refit);
     void                        rebuildScene3D(bool refit);
+    /*! Fit viewport to layout (Field: zoomed-in); scene still holds full field for zoom-out. */
+    void                        fitPreferredContent();
+    /*! Fit viewport to the full sceneRect (layout ∪ field domain). */
+    void                        fitFullContent();
+    void                        fitContent();
+
     void                        repositionFloatingControls();
     void                        loadViewModeFromSettings();
     void                        saveViewModeToSettings() const;
@@ -289,6 +298,7 @@ private:
     class QToolButton          *m_fieldBtn = nullptr;
     class QWidget              *m_fieldPanel = nullptr;
     class QSlider              *m_fieldZSlider = nullptr;
+    class QToolButton          *m_fieldHotZBtn = nullptr;
     class QCheckBox            *m_fieldLogChk = nullptr;
     class QCheckBox            *m_fieldArrowsChk = nullptr;
     class QLabel               *m_fieldStatusLbl = nullptr;

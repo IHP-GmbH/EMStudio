@@ -259,6 +259,8 @@ MainWindow::MainWindow(QWidget *parent)
                 this, &MainWindow::onLayoutFieldModeChanged);
         connect(m_ui->layoutView, &LayoutView::fieldSliceRequest,
                 this, &MainWindow::onLayoutFieldSliceRequest);
+        connect(m_ui->layoutView, &LayoutView::fieldHotZRequest,
+                this, &MainWindow::onLayoutFieldHotZRequest);
         if (!m_fieldSliceDebounce) {
             m_fieldSliceDebounce = new QTimer(this);
             m_fieldSliceDebounce->setSingleShot(true);
@@ -908,6 +910,8 @@ QString MainWindow::findFieldDumpPath(const QString &runDir) const
 {
     QString dir = runDir;
     if (dir.isEmpty())
+        dir = m_fieldDumpSearchDir;
+    if (dir.isEmpty())
         dir = resolveResultsDirectory();
     if (dir.isEmpty() || !QDir(dir).exists())
         return {};
@@ -1022,6 +1026,7 @@ QString MainWindow::resolveFieldViewerPython(QString *detailOut) const
 void MainWindow::onLayoutFieldModeChanged(bool on)
 {
     if (!on) {
+        m_fieldDumpSearchDir.clear();
         if (m_ui && m_ui->layoutView)
             m_ui->layoutView->clearFieldOverlay();
         return;
@@ -1039,6 +1044,19 @@ void MainWindow::onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showAr
     m_pendingFieldLog = logScale;
     m_pendingFieldArrows = showArrows;
     m_fieldPreferAutoZ = false; // user moved Z / options
+    scheduleFieldOverlayRefresh(true);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Slot: jump to hottest Z (auto-Z / max temperature or |E| in layout ROI).
+ **********************************************************************************************************************/
+void MainWindow::onLayoutFieldHotZRequest()
+{
+    if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
+        return;
+    m_pendingFieldLog = m_ui->layoutView->fieldLogScale();
+    m_pendingFieldArrows = m_ui->layoutView->fieldShowArrows();
+    m_fieldPreferAutoZ = true;
     scheduleFieldOverlayRefresh(true);
 }
 
@@ -1160,11 +1178,13 @@ void MainWindow::refreshFieldOverlay(bool force)
     const QString metaPath = QDir(outDir).filePath(QStringLiteral("field_slice_meta.json"));
 
     // Instant paint from last export while a new one is prepared (avoids UI freeze).
-    if (!force && m_ui->layoutView->fieldOverlay().valid()) {
-        m_fieldLastDumpPath = dump;
+    // Do not keep an old overlay when the dump path changed (new model / new run).
+    if (!force && m_ui->layoutView->fieldOverlay().valid()
+        && dump == m_fieldLastDumpPath) {
         return;
     }
-    if (!m_ui->layoutView->fieldOverlay().valid() && QFileInfo::exists(metaPath)) {
+    if (!m_ui->layoutView->fieldOverlay().valid() && QFileInfo::exists(metaPath)
+        && (m_fieldLastDumpPath.isEmpty() || dump == m_fieldLastDumpPath)) {
         if (loadFieldOverlayFromCache(metaPath) && !force) {
             m_fieldLastDumpPath = dump;
             m_fieldPreferAutoZ = false;
@@ -2619,6 +2639,8 @@ void MainWindow::refreshLayoutPreview()
     const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
     if (gdsPath.isEmpty() || !QFileInfo::exists(gdsPath) || topCell.isEmpty()) {
         m_ui->layoutView->clear();
+        m_layoutPreviewKey.clear();
+        m_fieldLastDumpPath.clear();
         if (m_layoutLayerPanel)
             m_layoutLayerPanel->clear();
         return;
@@ -2628,6 +2650,8 @@ void MainWindow::refreshLayoutPreview()
     QString err;
     if (!GdsLayout::flattenTopCell(gdsPath, topCell, &polys, &err)) {
         m_ui->layoutView->clear();
+        m_layoutPreviewKey.clear();
+        m_fieldLastDumpPath.clear();
         if (m_layoutLayerPanel)
             m_layoutLayerPanel->clear();
         if (!err.isEmpty())
@@ -2772,9 +2796,22 @@ void MainWindow::refreshLayoutPreview()
     }
 
     m_ui->layoutView->setPolygons(polys, styles, ports);
-    // Don't block the Substrate tab on a Python re-export; keep the last overlay.
-    if (m_ui->layoutView->isFieldMode() && !m_ui->layoutView->fieldOverlay().valid())
+
+    // New GDS / top cell / stackup → drop the previous Field heatmap so it cannot
+    // ghost over the new layout or stretch sceneRect into a cropped strip.
+    const QString previewKey = gdsPath + QLatin1Char('\n') + topCell + QLatin1Char('\n') + subXml;
+    const bool modelGeomChanged = (previewKey != m_layoutPreviewKey);
+    m_layoutPreviewKey = previewKey;
+    if (modelGeomChanged) {
+        m_ui->layoutView->clearFieldOverlay();
+        m_fieldLastDumpPath.clear();
+        m_fieldPreferAutoZ = true;
+        if (m_ui->layoutView->isFieldMode())
+            scheduleFieldOverlayRefresh(true);
+    } else if (m_ui->layoutView->isFieldMode()
+               && !m_ui->layoutView->fieldOverlay().valid()) {
         scheduleFieldOverlayRefresh();
+    }
 
     if (m_layoutLayerPanel) {
         QSet<int> usedGds;

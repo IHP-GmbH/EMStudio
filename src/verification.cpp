@@ -764,9 +764,9 @@ QString MainWindow::testFindThermalResultsVtu(const QString &runDir) const
     return findThermalResultsVtu(runDir);
 }
 
-QString MainWindow::testResolveParaViewExecutable() const
+bool MainWindow::testIsFieldMode() const
 {
-    return resolveParaViewExecutable();
+    return m_ui && m_ui->layoutView && m_ui->layoutView->isFieldMode();
 }
 
 void MainWindow::testClickAddThermalObject()
@@ -821,9 +821,9 @@ QString MainWindow::testApplyGdsAndXmlPaths(const QString &script,
     return s;
 }
 
-void MainWindow::testOpenThermalResultsInParaView(const QString &runDir)
+void MainWindow::testOpenThermalResultsInFieldView(const QString &runDir)
 {
-    openThermalResultsInParaView(runDir);
+    openThermalResultsInFieldView(runDir);
 }
 
 QString MainWindow::testResolveKeywordsPath(const QString &simKeyLower) const

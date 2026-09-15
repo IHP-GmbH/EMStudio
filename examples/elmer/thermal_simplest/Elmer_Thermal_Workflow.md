@@ -170,7 +170,7 @@ rather than the single-threaded `ElmerSolver`.
 
 ### Results
 
-- `thermal_results.vtu` — full 3D temperature field, open in ParaView.
+- `thermal_results.vtu` — full 3D temperature field (view in EMStudio Layout Field after run).
 - `thermal_results.dat` — quick min/max temperature summary (plain text).
 
 Both appear in the `elmer_model/` output directory once `ElmerSolver`

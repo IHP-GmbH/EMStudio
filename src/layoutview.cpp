@@ -142,8 +142,18 @@ LayoutView::LayoutView(QWidget *parent)
     m_fieldZSlider = new QSlider(Qt::Horizontal, m_fieldPanel);
     m_fieldZSlider->setRange(0, 1000);
     m_fieldZSlider->setValue(500);
-    m_fieldZSlider->setFixedWidth(140);
+    m_fieldZSlider->setFixedWidth(120);
     zRow->addWidget(m_fieldZSlider, 1);
+    m_fieldHotZBtn = new QToolButton(m_fieldPanel);
+    m_fieldHotZBtn->setObjectName(QStringLiteral("layoutViewFieldHotZBtn"));
+    m_fieldHotZBtn->setText(tr("Max"));
+    m_fieldHotZBtn->setAutoRaise(false);
+    m_fieldHotZBtn->setCursor(Qt::PointingHandCursor);
+    m_fieldHotZBtn->setFixedSize(34, 20);
+    m_fieldHotZBtn->setStyleSheet(
+        QStringLiteral("QToolButton { font-size: 10px; padding: 0 2px; }"));
+    m_fieldHotZBtn->setToolTip(tr("Jump to hottest Z (max temperature or |E| in the layout ROI)."));
+    zRow->addWidget(m_fieldHotZBtn);
     panelLay->addLayout(zRow);
     auto *optRow = new QHBoxLayout;
     optRow->setSpacing(8);
@@ -159,6 +169,7 @@ LayoutView::LayoutView(QWidget *parent)
 
     connect(m_fieldZSlider, &QSlider::valueChanged, this, &LayoutView::onFieldZSliderPreview);
     connect(m_fieldZSlider, &QSlider::sliderReleased, this, &LayoutView::onFieldZSliderCommitted);
+    connect(m_fieldHotZBtn, &QToolButton::clicked, this, &LayoutView::onFieldHotZClicked);
     connect(m_fieldLogChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
     connect(m_fieldArrowsChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
 
@@ -173,7 +184,7 @@ LayoutView::LayoutView(QWidget *parent)
                                        "Drag: orbit · Click: select · Two-finger scroll: orbit\n"
                                        "Alt+drag / Middle: pan · Pinch / Ctrl+scroll: zoom · R: reset")
                                   : tr("Top view (click for 3D).\n"
-                                       "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom"));
+                                       "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom · F: fit layout · Home: full field"));
     }
     {
         const QSignalBlocker block(m_fieldBtn);
@@ -188,7 +199,7 @@ LayoutView::LayoutView(QWidget *parent)
 }
 
 /*!*******************************************************************************************************************
- * \brief Clears all polygons, highlight state, and the scene rectangle.
+ * \brief Clears all polygons, highlight state, Field overlay, and the scene rectangle.
  **********************************************************************************************************************/
 void LayoutView::clear()
 {
@@ -196,11 +207,13 @@ void LayoutView::clear()
     m_styles.clear();
     m_ports.clear();
     m_highlightedName.clear();
+    m_field = FieldOverlay{};
     m_zoomLocked = false;
     m_cursorValid = false;
     clearMeasure();
     m_scene->clear();
     m_scene->setSceneRect(QRectF());
+    syncFloatingControls();
 }
 
 QPointF LayoutView::sceneToGdsUm(const QPointF &scenePt)
@@ -249,14 +262,14 @@ void LayoutView::rebuildScene(bool refit)
     if (m_viewMode == ViewMode::Iso3D)
         rebuildScene3D(refit);
     else
-        rebuildScene2D();
+        rebuildScene2D(refit);
 
     m_highlightedName = keepHighlight;
     applyHighlight();
     repositionFloatingControls();
 }
 
-void LayoutView::rebuildScene2D()
+void LayoutView::rebuildScene2D(bool refit)
 {
     addFieldOverlayItems();
 
@@ -512,15 +525,17 @@ void LayoutView::rebuildScene2D()
         // Scene Y-down: field image covers [xmin,-ymax] .. [xmax,-ymin].
         const QRectF fieldScene(QPointF(m_field.xminUm, -m_field.ymaxUm),
                                 QPointF(m_field.xmaxUm, -m_field.yminUm));
-        bounds = bounds.isNull() ? fieldScene.normalized()
-                                 : bounds.united(fieldScene.normalized());
+        const QRectF fieldNorm = fieldScene.normalized();
+        // Keep the full field domain in sceneRect so the user can zoom out to it.
+        bounds = bounds.isNull() ? fieldNorm : bounds.united(fieldNorm);
     }
 
     if (!bounds.isNull()) {
         bounds.adjust(-bounds.width() * 0.05, -bounds.height() * 0.05,
                       bounds.width() * 0.05, bounds.height() * 0.05);
         m_scene->setSceneRect(bounds);
-        fitContent();
+        if (refit && !m_zoomLocked)
+            fitPreferredContent();
     }
 }
 
@@ -935,7 +950,7 @@ void LayoutView::setViewMode(ViewMode mode)
                                        "Drag: orbit · Click: select · Two-finger scroll: orbit\n"
                                        "Alt+drag / Middle: pan · Pinch / Ctrl+scroll: zoom · R: reset")
                                   : tr("Top view (click for 3D).\n"
-                                       "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom"));
+                                       "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom · F: fit layout · Home: full field"));
     }
     saveViewModeToSettings();
     syncFloatingControls();
@@ -971,6 +986,8 @@ void LayoutView::setFieldMode(bool on)
         return;
     }
     m_fieldOn = on;
+    if (m_fieldOn)
+        m_zoomLocked = false;
     if (m_fieldOn && m_viewMode == ViewMode::Iso3D) {
         m_viewMode = ViewMode::Top2D;
         if (m_modeBtn) {
@@ -1020,8 +1037,12 @@ void LayoutView::setFieldOverlay(const FieldOverlay &overlay)
         updateFieldControlsFromOverlay();
 
     syncFloatingControls();
-    if (m_fieldOn && !statusOnly)
+    if (m_fieldOn && !statusOnly) {
         rebuildScene(false);
+        // First Field image / unlocked view: frame on layout; scene keeps full mesh for zoom-out.
+        if (!m_zoomLocked)
+            fitPreferredContent();
+    }
 }
 
 /*!*******************************************************************************************************************
@@ -1217,6 +1238,18 @@ void LayoutView::onFieldZSliderCommitted()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Max button → ask MainWindow to re-export at the hottest Z (auto-Z).
+ **********************************************************************************************************************/
+void LayoutView::onFieldHotZClicked()
+{
+    if (m_blockFieldControls || !m_fieldOn)
+        return;
+    if (m_fieldStatusLbl)
+        m_fieldStatusLbl->setText(tr("Finding max Z…"));
+    emit fieldHotZRequest();
+}
+
+/*!*******************************************************************************************************************
  * \brief Log / Arrows changed; arrow-only toggles redraw without re-export.
  **********************************************************************************************************************/
 void LayoutView::onFieldControlsChanged()
@@ -1407,13 +1440,70 @@ void LayoutView::applyHighlight()
 }
 
 /*!*******************************************************************************************************************
- * \brief Fits the scene rectangle into the viewport while keeping aspect ratio.
+ * \brief Fits layout (or full scene) into the viewport while keeping aspect ratio.
+ *
+ * With Field on, prefers the GDS layout bbox so the DUT is readable; the sceneRect
+ * still spans the full field domain so the user can zoom out. Home fits the full scene.
  **********************************************************************************************************************/
-void LayoutView::fitContent()
+void LayoutView::fitPreferredContent()
+{
+    if (m_fieldOn && m_field.valid()) {
+        // Prefer visible metals so a large hidden sheet does not force a wide frame.
+        QRectF layoutUm;
+        bool any = false;
+        for (const GdsFlatPolygon &p : m_polys) {
+            if (p.layer >= 201 && p.layer <= 299)
+                continue;
+            if (m_styles.contains(p.layer)
+                && m_styles.value(p.layer).kind.compare(QLatin1String("port"), Qt::CaseInsensitive) == 0)
+                continue;
+            if (!visibleFor(p.layer))
+                continue;
+            for (const QPointF &pt : p.pointsUm) {
+                if (!any) {
+                    layoutUm = QRectF(pt, pt);
+                    any = true;
+                } else {
+                    layoutUm.setLeft(qMin(layoutUm.left(), pt.x()));
+                    layoutUm.setRight(qMax(layoutUm.right(), pt.x()));
+                    layoutUm.setTop(qMin(layoutUm.top(), pt.y()));
+                    layoutUm.setBottom(qMax(layoutUm.bottom(), pt.y()));
+                }
+            }
+        }
+        if (any) {
+            layoutUm = layoutUm.normalized();
+            if (layoutUm.width() > 0 && layoutUm.height() > 0) {
+                // GDS Y-up → scene Y-down.
+                QRectF layoutScene(QPointF(layoutUm.left(), -layoutUm.bottom()),
+                                   QPointF(layoutUm.right(), -layoutUm.top()));
+                layoutScene = layoutScene.normalized();
+                layoutScene.adjust(-layoutScene.width() * 0.25, -layoutScene.height() * 0.25,
+                                   layoutScene.width() * 0.25, layoutScene.height() * 0.25);
+                fitInView(layoutScene, Qt::KeepAspectRatio);
+                return;
+            }
+        }
+    }
+    fitFullContent();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Fits the full scene rectangle (layout ∪ field domain).
+ **********************************************************************************************************************/
+void LayoutView::fitFullContent()
 {
     if (m_scene->sceneRect().isEmpty())
         return;
     fitInView(m_scene->sceneRect(), Qt::KeepAspectRatio);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Alias for \c fitPreferredContent (F key / resize auto-fit).
+ **********************************************************************************************************************/
+void LayoutView::fitContent()
+{
+    fitPreferredContent();
 }
 
 /*!*******************************************************************************************************************
@@ -1556,10 +1646,17 @@ void LayoutView::keyPressEvent(QKeyEvent *event)
         event->accept();
         return;
     }
-    if (event->key() == Qt::Key_F || event->key() == Qt::Key_Home) {
+    if (event->key() == Qt::Key_F) {
         m_zoomLocked = false;
         resetTransform();
-        fitContent();
+        fitPreferredContent();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Home) {
+        m_zoomLocked = false;
+        resetTransform();
+        fitFullContent();
         event->accept();
         return;
     }

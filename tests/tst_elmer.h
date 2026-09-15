@@ -24,11 +24,9 @@ private slots:
     void defaultElmerThermalTemplate_containsThermalWorkflow();
     void thermalTable_roundTripFromScript();
     void findThermalResultsVtu_prefersThermalResultsPrefix();
-    void resolveParaViewExecutable_usesPreferenceWhenPresent();
     void substrateOffset_expressionResolvesWithVariables();
     void thermalRows_addRemoveAndWorkflowHelpers();
-    void openThermalResults_noVtuIsNoop();
-    void openThermalResults_withVtuAndParaViewStub();
+    void openThermalResults_switchesToFieldView();
     void generateScript_elmerThermalFromGui();
     void forceStartSimulationOff_clearsTrueFlags();
     void applyGdsAndXmlPaths_updatesCellnameAndGdsCellname();

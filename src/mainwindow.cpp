@@ -957,6 +957,8 @@ void MainWindow::saveSettings()
         settings.beginGroup(QStringLiteral("LayoutPreview"));
         settings.setValue(QStringLiteral("usedLayersOnly"), m_layoutLayerPanel->usedLayersOnly());
         settings.setValue(QStringLiteral("showCoordinates"), m_layoutLayerPanel->showCoordinates());
+        if (m_ui && m_ui->layoutView)
+            settings.setValue(QStringLiteral("view3d"), m_ui->layoutView->isView3d());
         settings.endGroup();
     }
 }
@@ -1580,12 +1582,19 @@ QStringList MainWindow::buildKlayoutLaunchArgs(const QString &gdsPath, const QSt
     if (!hasFlag(QStringLiteral("-e")) && !hasFlag(QStringLiteral("-ne")))
         args << QStringLiteral("-e");
 
-    if (!topCell.isEmpty()) {
-        const QString macroPath = QDir::toNativeSeparators(resolveKlayoutShowGdsScript());
-        if (QFileInfo::exists(macroPath)) {
-            args << QStringLiteral("-rm") << macroPath;
+    
+    QString tech;
+    const int nIdx = args.indexOf(QStringLiteral("-n"));
+    if (nIdx >= 0 && nIdx + 1 < args.size() && !args.at(nIdx + 1).startsWith(QLatin1Char('-')))
+        tech = args.at(nIdx + 1).trimmed();
+
+    const QString macroPath = QDir::toNativeSeparators(resolveKlayoutShowGdsScript());
+    if (QFileInfo::exists(macroPath)) {
+        args << QStringLiteral("-rm") << macroPath;
+        if (!tech.isEmpty())
+            args << QStringLiteral("-rd") << QStringLiteral("tech=%1").arg(tech);
+        if (!topCell.isEmpty())
             args << QStringLiteral("-rd") << QStringLiteral("topcell=%1").arg(topCell);
-        }
     }
 
     args << QDir::toNativeSeparators(gdsPath);
@@ -1620,10 +1629,35 @@ void MainWindow::on_btnShowInKlayout_clicked()
         launchMsg += tr(" (top cell: %1)").arg(topCell);
     info(launchMsg, false);
 
-    if (!QProcess::startDetached(klayoutExe, args, workDir)) {
+    if (!startKlayoutDetached(klayoutExe, args, workDir)) {
         error(tr("Failed to start KLayout:\n%1 %2")
                   .arg(klayoutExe, args.join(QLatin1Char(' '))));
     }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Starts KLayout detached from EMStudio.
+ *
+ * On Windows, batch launchers (.bat/.cmd) such as the IHP PDK \c start_klayout_sg13g2.bat must be run
+ * through \c cmd.exe /c so environment setup (KLAYOUT_PATH, \c -nn tech) and forwarded args (%*) work
+ * the same as in an interactive terminal.
+ **********************************************************************************************************************/
+bool MainWindow::startKlayoutDetached(const QString &program, const QStringList &args,
+                                      const QString &workDir) const
+{
+    const QString cwd = workDir.isEmpty() ? QDir::currentPath() : workDir;
+
+#if defined(Q_OS_WIN)
+    const QString lower = program.toLower();
+    if (lower.endsWith(QStringLiteral(".bat")) || lower.endsWith(QStringLiteral(".cmd"))) {
+        QStringList cmdArgs;
+        cmdArgs << QStringLiteral("/c") << QDir::toNativeSeparators(program);
+        cmdArgs += args;
+        return QProcess::startDetached(QStringLiteral("cmd.exe"), cmdArgs, cwd);
+    }
+#endif
+
+    return QProcess::startDetached(program, args, cwd);
 }
 
 /*!*******************************************************************************************************************
@@ -1794,7 +1828,13 @@ void MainWindow::on_btnAddPort_clicked()
     rebuildComboWithMapping(fromLayerBox,   m_gdsToSubName, m_subNameToGds, namesMode);
     rebuildComboWithMapping(toLayerBox,     m_gdsToSubName, m_subNameToGds, namesMode);
 
+    hookPortCombo(sourceLayerBox);
+    hookPortCombo(fromLayerBox);
+    hookPortCombo(toLayerBox);
+    hookPortCombo(directionBox);
+
     setStateChanged();
+    refreshLayoutPreview();
 }
 
 /*!*******************************************************************************************************************
@@ -1811,6 +1851,7 @@ void MainWindow::on_btnReomovePort_clicked()
     if (row >= 0) {
         m_ui->tblPorts->removeRow(row);
         setStateChanged();
+        refreshLayoutPreview();
     } else {
         error("No port selected to remove.", true);
     }
@@ -1828,6 +1869,7 @@ void MainWindow::on_btnRemovePorts_clicked()
 
     m_ui->tblPorts->setRowCount(0);
     setStateChanged();
+    refreshLayoutPreview();
 }
 
 /*!*******************************************************************************************************************
@@ -2160,6 +2202,9 @@ void MainWindow::refreshLayoutPreview()
             st.color = matColor.value(L.material(), QColor(120, 120, 140));
             // Draw lower metals first using zmin
             st.order = int(L.zmin() * 1000.0);
+            st.zminUm = L.zmin();
+            st.zmaxUm = L.zmax();
+            st.hasZ = true;
             styles.insert(gds, st);
         }
     } else {
@@ -2173,10 +2218,59 @@ void MainWindow::refreshLayoutPreview()
         }
     }
 
-    QHash<int, QString> portDirections;
+    QHash<int, LayoutView::PortInfo> ports;
     if (m_ui->tblPorts) {
+        auto layerZ = [&](const QString &nameOrGds, double *zmin, double *zmax) -> bool {
+            const QString n = nameOrGds.trimmed();
+            if (n.isEmpty())
+                return false;
+
+            // Ports table may store GDS number ("67") or stack name ("Metal5").
+            bool okNum = false;
+            const int gdsNum = n.toInt(&okNum);
+            if (okNum && styles.contains(gdsNum) && styles.value(gdsNum).hasZ) {
+                *zmin = styles.value(gdsNum).zminUm;
+                *zmax = styles.value(gdsNum).zmaxUm;
+                return true;
+            }
+            if (okNum) {
+                const QString mapped = m_gdsToSubName.value(gdsNum);
+                if (!mapped.isEmpty()) {
+                    for (auto it = styles.cbegin(); it != styles.cend(); ++it) {
+                        if (it.value().name.compare(mapped, Qt::CaseInsensitive) != 0)
+                            continue;
+                        if (!it.value().hasZ)
+                            return false;
+                        *zmin = it.value().zminUm;
+                        *zmax = it.value().zmaxUm;
+                        return true;
+                    }
+                }
+            }
+
+            for (auto it = styles.cbegin(); it != styles.cend(); ++it) {
+                if (it.value().name.compare(n, Qt::CaseInsensitive) != 0)
+                    continue;
+                if (!it.value().hasZ)
+                    return false;
+                *zmin = it.value().zminUm;
+                *zmax = it.value().zmaxUm;
+                return true;
+            }
+
+            const int byName = m_subNameToGds.value(n, -1);
+            if (byName >= 0 && styles.contains(byName) && styles.value(byName).hasZ) {
+                *zmin = styles.value(byName).zminUm;
+                *zmax = styles.value(byName).zmaxUm;
+                return true;
+            }
+            return false;
+        };
+
         for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
             auto *srcBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 3));
+            auto *fromBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 4));
+            auto *toBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 5));
             auto *dirBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 6));
             if (!srcBox || !dirBox)
                 continue;
@@ -2189,11 +2283,37 @@ void MainWindow::refreshLayoutPreview()
                 gds = m_subNameToGds.value(src, -1);
             if (gds < 0)
                 continue;
-            portDirections.insert(gds, dirBox->currentText().trimmed().toLower());
+
+            LayoutView::PortInfo pi;
+            pi.direction = dirBox->currentText().trimmed().toLower();
+            if (fromBox)
+                pi.fromLayer = fromBox->currentText().trimmed();
+            if (toBox)
+                pi.toLayer = toBox->currentText().trimmed();
+
+            // Z from XML: tail on From top face, tip at To mid (P1→TM1, P2→M5).
+            double f0 = 0, f1 = 0, t0 = 0, t1 = 0;
+            if (!pi.fromLayer.isEmpty() && layerZ(pi.fromLayer, &f0, &f1)) {
+                pi.zFromUm = std::max(f0, f1); // top of Metal1
+                pi.hasFromZ = true;
+            }
+            if (!pi.toLayer.isEmpty() && layerZ(pi.toLayer, &t0, &t1)) {
+                pi.zToUm = 0.5 * (t0 + t1); // mid of destination metal
+                pi.hasToZ = true;
+            }
+            ports.insert(gds, pi);
+
+            // Also key by Pn (201…) so markers match GDS port layers if Source differs.
+            if (auto *numItem = m_ui->tblPorts->item(r, 0)) {
+                bool okPort = false;
+                const int portNum = numItem->text().trimmed().toInt(&okPort);
+                if (okPort && portNum >= 1 && portNum <= 99)
+                    ports.insert(200 + portNum, pi);
+            }
         }
     }
 
-    m_ui->layoutView->setPolygons(polys, styles, portDirections);
+    m_ui->layoutView->setPolygons(polys, styles, ports);
 
     if (m_layoutLayerPanel) {
         QSet<int> usedGds;
@@ -3265,6 +3385,7 @@ void MainWindow::appendParsedPortsToTable(const QVector<PortInfo>& ports)
 
     const bool namesMode = m_ui->cbSubLayerNames->isChecked();
 
+    m_blockPortChanges = true;
     for (const PortInfo& p : ports) {
         const int row = m_ui->tblPorts->rowCount();
         m_ui->tblPorts->insertRow(row);
@@ -3306,10 +3427,6 @@ void MainWindow::appendParsedPortsToTable(const QVector<PortInfo>& ports)
         const QString fromVal = p.fromLayer;
         const QString toVal   = p.toLayer;
 
-        sourceLayerBox->setCurrentText(srcVal);
-        if (!fromVal.isEmpty()) fromLayerBox->setCurrentText(fromVal);
-        if (!toVal.isEmpty())   toLayerBox->setCurrentText(toVal);
-
         m_ui->tblPorts->setCellWidget(row, 3, sourceLayerBox);
         m_ui->tblPorts->setCellWidget(row, 4, fromLayerBox);
         m_ui->tblPorts->setCellWidget(row, 5, toLayerBox);
@@ -3318,7 +3435,29 @@ void MainWindow::appendParsedPortsToTable(const QVector<PortInfo>& ports)
         rebuildComboWithMapping(sourceLayerBox, m_gdsToSubName, m_subNameToGds, namesMode);
         rebuildComboWithMapping(fromLayerBox,   m_gdsToSubName, m_subNameToGds, namesMode);
         rebuildComboWithMapping(toLayerBox,     m_gdsToSubName, m_subNameToGds, namesMode);
+
+        // Set selection after rebuild so From/To (e.g. Metal5) are not dropped.
+        auto setCombo = [](QComboBox *box, const QString &val) {
+            if (!box || val.isEmpty())
+                return;
+            int idx = box->findText(val);
+            if (idx < 0) {
+                box->addItem(val);
+                idx = box->findText(val);
+            }
+            if (idx >= 0)
+                box->setCurrentIndex(idx);
+        };
+        setCombo(sourceLayerBox, srcVal);
+        setCombo(fromLayerBox, fromVal);
+        setCombo(toLayerBox, toVal);
+
+        hookPortCombo(sourceLayerBox);
+        hookPortCombo(fromLayerBox);
+        hookPortCombo(toLayerBox);
+        hookPortCombo(directionBox);
     }
+    m_blockPortChanges = false;
 }
 
 /*!*******************************************************************************************************************
@@ -3349,6 +3488,7 @@ void MainWindow::importPortsFromEditor()
         appendParsedPortsToTable(parsed);
         if (m_ui->cbSubLayerNames->isEnabled() && m_ui->cbSubLayerNames->isChecked())
             applySubLayerNamesToPorts(true);
+        refreshLayoutPreview();
     }
 }
 

@@ -1,0 +1,12 @@
+---
+description: Build only EMStudio by default; tests on request
+alwaysApply: true
+---
+
+# Build scope
+
+When verifying app changes after edit/compile:
+
+- Build **only** the `EMStudio` target (e.g. `cmake --build ... --target EMStudio`).
+- Do **not** build `emstudio_golden_tests` or run the test suite unless the user explicitly asks.
+- Run tests later, in a separate step, when requested.

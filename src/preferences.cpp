@@ -304,8 +304,10 @@ void Preferences::setupPreferencesPanel()
     klayoutOptionsProp->setToolTip(tr("Optional KLayout command-line options.\n"
                                       "Examples:\n"
                                       "  - -e\n"
-                                      "  - -e -ne\n\n"
-                                      "EMStudio appends its own options for top-cell selection and the current GDS file."));
+                                      "  - -e -n sg13g2\n\n"
+                                      "Use -n <tech> so opened GDS gets a technology (needed for PDK PCells).\n"
+                                      "If KLAYOUT_EXE is a PDK .bat that already passes -nn, -n is optional.\n"
+                                      "EMStudio appends helper options for top-cell selection and the GDS path."));
     klayoutOptionsProp->setValue(m_preferences.value(QStringLiteral("KLAYOUT_OPTIONS"), QString()));
     klayoutGroup->addSubProperty(klayoutOptionsProp);
 

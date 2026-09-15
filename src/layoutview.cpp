@@ -33,7 +33,14 @@
 #include <QFontMetrics>
 #include <QTransform>
 #include <QVariant>
+#include <QToolButton>
+#include <QSettings>
+#include <QSignalBlocker>
+#include <QGestureEvent>
+#include <QPinchGesture>
+#include <QNativeGestureEvent>
 #include <QtGlobal>
+#include <QtMath>
 #include <cmath>
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
@@ -60,6 +67,45 @@ LayoutView::LayoutView(QWidget *parent)
     setMouseTracking(true);
     viewport()->setMouseTracking(true);
     viewport()->setCursor(Qt::ArrowCursor);
+    grabGesture(Qt::PinchGesture);
+
+    m_modeBtn = new QToolButton(this);
+    m_modeBtn->setObjectName(QStringLiteral("layoutViewModeBtn"));
+    m_modeBtn->setCheckable(true);
+    m_modeBtn->setAutoRaise(false);
+    m_modeBtn->setCursor(Qt::PointingHandCursor);
+    m_modeBtn->setFixedSize(40, 26);
+    m_modeBtn->setStyleSheet(
+        QStringLiteral(
+            "QToolButton {"
+            "  background: rgba(255,255,255,220);"
+            "  border: 1px solid #7a7a7a;"
+            "  border-radius: 4px;"
+            "  font-weight: bold;"
+            "  font-size: 11px;"
+            "}"
+            "QToolButton:checked {"
+            "  background: rgba(40,100,180,210);"
+            "  color: white;"
+            "  border-color: #245a9e;"
+            "}"));
+    connect(m_modeBtn, &QToolButton::toggled, this, &LayoutView::onModeButtonToggled);
+    loadViewModeFromSettings();
+    {
+        const QSignalBlocker block(m_modeBtn);
+        m_modeBtn->setChecked(m_viewMode == ViewMode::Iso3D);
+        m_modeBtn->setText(m_viewMode == ViewMode::Iso3D ? QStringLiteral("3D")
+                                                         : QStringLiteral("2D"));
+        m_modeBtn->setToolTip(m_viewMode == ViewMode::Iso3D
+                                  ? tr("3D view (click for top view).\n"
+                                       "Drag: orbit · Click: select · Two-finger scroll: orbit\n"
+                                       "Alt+drag / Middle: pan · Pinch / Ctrl+scroll: zoom · R: reset")
+                                  : tr("Top view (click for 3D).\n"
+                                       "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom"));
+    }
+    m_modeBtn->raise();
+    repositionModeButton();
+    setContextMenuPolicy(Qt::NoContextMenu);
 }
 
 /*!*******************************************************************************************************************
@@ -67,6 +113,9 @@ LayoutView::LayoutView(QWidget *parent)
  **********************************************************************************************************************/
 void LayoutView::clear()
 {
+    m_polys.clear();
+    m_styles.clear();
+    m_ports.clear();
     m_highlightedName.clear();
     m_zoomLocked = false;
     m_cursorValid = false;
@@ -101,23 +150,51 @@ void LayoutView::setPixelOffset(QGraphicsItem *item, qreal dxPx, qreal dyPx)
  **********************************************************************************************************************/
 void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
                              const QHash<int, LayerStyle> &styles,
-                             const QHash<int, QString> &portDirections)
+                             const QHash<int, PortInfo> &ports)
 {
-    clear();
+    m_polys = polys;
+    m_styles = styles;
+    m_ports = ports;
+    m_zoomLocked = false;
+    rebuildScene();
+}
 
+void LayoutView::rebuildScene(bool refit)
+{
+    const QString keepHighlight = m_highlightedName;
+    m_cursorValid = false;
+    clearMeasure();
+    m_scene->clear();
+    m_scene->setSceneRect(QRectF());
+
+    if (m_viewMode == ViewMode::Iso3D)
+        rebuildScene3D(refit);
+    else
+        rebuildScene2D();
+
+    m_highlightedName = keepHighlight;
+    applyHighlight();
+    repositionModeButton();
+}
+
+void LayoutView::rebuildScene2D()
+{
     struct Item {
         GdsFlatPolygon poly;
         LayerStyle style;
     };
     QVector<Item> items;
-    items.reserve(polys.size());
+    items.reserve(m_polys.size());
 
-    for (const GdsFlatPolygon &p : polys) {
+    // Content center (non-port) — Z-port arrows point inward to the injection edge.
+    QPointF contentCenter(0, 0);
+    int centerN = 0;
+
+    for (const GdsFlatPolygon &p : m_polys) {
         LayerStyle st;
-        if (styles.contains(p.layer)) {
-            st = styles.value(p.layer);
+        if (m_styles.contains(p.layer)) {
+            st = m_styles.value(p.layer);
         } else {
-            // Unmapped GDS layer (e.g. port markers 201/202).
             const int portIdx = p.layer - 200;
             st.name = (portIdx >= 1 && portIdx <= 99)
                     ? QStringLiteral("P%1").arg(portIdx)
@@ -127,7 +204,18 @@ void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
             st.order = 10000 + p.layer;
         }
         items.push_back({p, st});
+
+        const bool isPortLayer = (st.kind == QLatin1String("port"))
+                || (p.layer >= 201 && p.layer <= 299);
+        if (isPortLayer)
+            continue;
+        for (const QPointF &pt : p.pointsUm) {
+            contentCenter += QPointF(pt.x(), -pt.y());
+            ++centerN;
+        }
     }
+    if (centerN > 0)
+        contentCenter /= centerN;
 
     std::stable_sort(items.begin(), items.end(),
                      [](const Item &a, const Item &b) {
@@ -186,16 +274,16 @@ void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
 
             const QPointF mid = line.pointAt(0.5);
 
-            // Direction from Ports table: in-plane arrows for x/y; ⊙ (+z) / ⊗ (-z).
-            QString dir = portDirections.value(it.poly.layer).trimmed().toLower();
+            // Direction from Ports table: in-plane arrows; Z → inward tip on injection edge.
+            QString dir = m_ports.value(it.poly.layer).direction.trimmed().toLower();
             if (dir.isEmpty())
                 dir = QStringLiteral("z");
             if (dir.contains(QLatin1Char('z'))) {
                 const QString zl = dir.startsWith(QLatin1Char('-'))
                         ? QStringLiteral("-z") : QStringLiteral("z");
-                addPortOutOfPlaneMarker(mid, it.style.color, it.style.name,
-                                        QStringLiteral("port"), it.poly.layer, vis,
-                                        double(it.style.order) + 0.4, zl);
+                addPortInwardArrow(mid, contentCenter, it.style.color, it.style.name,
+                                   QStringLiteral("port"), it.poly.layer, vis,
+                                   double(it.style.order) + 0.4, zl);
             } else {
                 QPointF dirScene(1, 0);
                 QString dirLabel = dir;
@@ -253,6 +341,7 @@ void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
         item->setData(kRoleKind, isPort ? QStringLiteral("port") : it.style.kind);
         item->setData(kRoleGds, it.poly.layer);
         item->setData(kRoleIsPort, isPort);
+        item->setData(kRoleBrush, it.style.color);
         item->setVisible(vis);
         item->setZValue(double(it.style.order));
         bounds |= drawn.boundingRect();
@@ -275,15 +364,15 @@ void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
             label->setPos(bb.center());
             setPixelOffset(label, 8, -16);
 
-            QString dir = portDirections.value(it.poly.layer).trimmed().toLower();
+            QString dir = m_ports.value(it.poly.layer).direction.trimmed().toLower();
             if (dir.isEmpty())
                 dir = QStringLiteral("x");
             if (dir.contains(QLatin1Char('z'))) {
                 const QString zl = dir.startsWith(QLatin1Char('-'))
                         ? QStringLiteral("-z") : QStringLiteral("z");
-                addPortOutOfPlaneMarker(bb.center(), it.style.color, it.style.name,
-                                        QStringLiteral("port"), it.poly.layer, vis,
-                                        double(it.style.order) + 0.4, zl);
+                addPortInwardArrow(bb.center(), contentCenter, it.style.color, it.style.name,
+                                   QStringLiteral("port"), it.poly.layer, vis,
+                                   double(it.style.order) + 0.4, zl);
             } else {
                 QPointF dirScene(1, 0);
                 QString dirLabel = dir;
@@ -311,8 +400,450 @@ void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
         m_scene->setSceneRect(bounds);
         fitContent();
     }
+}
 
-    applyHighlight();
+void LayoutView::updateOrbitCenter()
+{
+    double xLo = 0, xHi = 0, yLo = 0, yHi = 0;
+    double zLo = 0, zHi = 1;
+    bool anyXy = false;
+    bool anyZ = false;
+
+    // Z range only from metals/vias that actually appear in the layout (not whole stackup).
+    for (const GdsFlatPolygon &p : m_polys) {
+        if (p.layer >= 201 && p.layer <= 299)
+            continue;
+        if (!m_styles.contains(p.layer) || !m_styles.value(p.layer).hasZ)
+            continue;
+        const LayerStyle &st = m_styles.value(p.layer);
+        const double a = std::min(st.zminUm, st.zmaxUm);
+        const double b = std::max(st.zminUm, st.zmaxUm);
+        if (!anyZ) {
+            zLo = a;
+            zHi = b;
+            anyZ = true;
+        } else {
+            zLo = std::min(zLo, a);
+            zHi = std::max(zHi, b);
+        }
+    }
+    if (!anyZ || zHi <= zLo)
+        zHi = zLo + 1.0;
+
+    for (const GdsFlatPolygon &p : m_polys) {
+        for (const QPointF &pt : p.pointsUm) {
+            if (!anyXy) {
+                xLo = xHi = pt.x();
+                yLo = yHi = pt.y();
+                anyXy = true;
+            } else {
+                xLo = std::min(xLo, pt.x());
+                xHi = std::max(xHi, pt.x());
+                yLo = std::min(yLo, pt.y());
+                yHi = std::max(yHi, pt.y());
+            }
+        }
+    }
+
+    m_orbitCx = anyXy ? 0.5 * (xLo + xHi) : 0.0;
+    m_orbitCy = anyXy ? 0.5 * (yLo + yHi) : 0.0;
+    m_orbitCz = 0.5 * (zLo + zHi);
+}
+
+bool LayoutView::layerMidZ(const QString &nameOrGds, qreal *zMid) const
+{
+    if (!zMid)
+        return false;
+    const QString n = nameOrGds.trimmed();
+    if (n.isEmpty())
+        return false;
+
+    bool okNum = false;
+    const int gdsNum = n.toInt(&okNum);
+    if (okNum && m_styles.contains(gdsNum) && m_styles.value(gdsNum).hasZ) {
+        const LayerStyle &st = m_styles.value(gdsNum);
+        *zMid = 0.5 * (st.zminUm + st.zmaxUm);
+        return true;
+    }
+
+    for (auto it = m_styles.cbegin(); it != m_styles.cend(); ++it) {
+        if (!it.value().hasZ)
+            continue;
+        if (it.value().name.compare(n, Qt::CaseInsensitive) != 0)
+            continue;
+        *zMid = 0.5 * (it.value().zminUm + it.value().zmaxUm);
+        return true;
+    }
+    return false;
+}
+
+void LayoutView::rebuildScene3D(bool refit)
+{
+    struct Item {
+        GdsFlatPolygon poly;
+        LayerStyle style;
+    };
+    QVector<Item> items;
+    items.reserve(m_polys.size());
+
+    updateOrbitCenter();
+
+    // Used-metal Z span (fallback when a port has no from/to in the table).
+    double zLo = m_orbitCz - 0.5;
+    double zHi = m_orbitCz + 0.5;
+    bool anyZ = false;
+    for (const GdsFlatPolygon &p : m_polys) {
+        if (p.layer >= 201 && p.layer <= 299)
+            continue;
+        if (!m_styles.contains(p.layer) || !m_styles.value(p.layer).hasZ)
+            continue;
+        const LayerStyle &st = m_styles.value(p.layer);
+        const double a = std::min(st.zminUm, st.zmaxUm);
+        const double b = std::max(st.zminUm, st.zmaxUm);
+        if (!anyZ) {
+            zLo = a;
+            zHi = b;
+            anyZ = true;
+        } else {
+            zLo = std::min(zLo, a);
+            zHi = std::max(zHi, b);
+        }
+    }
+    if (!anyZ || zHi <= zLo)
+        zHi = zLo + 1.0;
+
+    for (const GdsFlatPolygon &p : m_polys) {
+        LayerStyle st;
+        if (m_styles.contains(p.layer)) {
+            st = m_styles.value(p.layer);
+        } else {
+            const int portIdx = p.layer - 200;
+            st.name = (portIdx >= 1 && portIdx <= 99)
+                    ? QStringLiteral("P%1").arg(portIdx)
+                    : QStringLiteral("L%1").arg(p.layer);
+            st.kind = QStringLiteral("port");
+            st.color = QColor(220, 40, 180);
+            st.order = 10000 + p.layer;
+            st.hasZ = false;
+        }
+        if (!st.hasZ && st.kind != QLatin1String("port")) {
+            st.hasZ = true;
+            st.zminUm = zLo;
+            st.zmaxUm = zLo + 0.15;
+        }
+        items.push_back({p, st});
+    }
+
+    struct Face {
+        QPolygonF poly;
+        QColor fill;
+        QString name;
+        QString kind;
+        int gds = 0;
+        bool isPort = false;
+        qreal depth = 0.0;
+    };
+    QVector<Face> faces;
+
+    constexpr qreal kMinThickUm = 0.05;
+    QRectF portBounds;
+
+    for (const Item &it : items) {
+        if (it.poly.pointsUm.size() < 2)
+            continue;
+
+        const qreal op = opacityFor(it.poly.layer);
+        const bool vis = visibleFor(it.poly.layer);
+        const bool isPort = (it.style.kind == QLatin1String("port"))
+                || (it.poly.layer >= 201 && it.poly.layer <= 299);
+
+        // Ports: markers on feeder XY at from↔to Z (not top of full stackup).
+        if (isPort) {
+            QPointF c(0, 0);
+            int nPts = 0;
+            const int n = it.poly.pointsUm.size();
+            const int count = (n > 1 && it.poly.pointsUm.first() == it.poly.pointsUm.last())
+                    ? n - 1 : n;
+            for (int i = 0; i < count; ++i) {
+                c += it.poly.pointsUm.at(i);
+                ++nPts;
+            }
+            if (nPts < 1)
+                continue;
+            c /= nPts;
+
+            const PortInfo pi = m_ports.value(it.poly.layer);
+            QString dir = pi.direction.trimmed().toLower();
+            if (dir.isEmpty())
+                dir = QStringLiteral("z");
+
+            QColor col = it.style.color;
+            col.setAlpha(qBound(40, int(255 * op + 0.5), 255));
+            const QString pname = it.style.name.isEmpty()
+                    ? QStringLiteral("P%1").arg(it.poly.layer - 200)
+                    : it.style.name;
+
+            QPointF tipScene;
+            QPointF labelPos;
+
+            if (dir.contains(QLatin1Char('z'))) {
+                // XY = port footprint in layout; Z = XML From → To (from Ports table).
+                const bool neg = dir.startsWith(QLatin1Char('-'));
+                qreal zFrom = 0.0;
+                qreal zTo = 0.0;
+                bool gotFrom = pi.hasFromZ;
+                bool gotTo = pi.hasToZ;
+                if (gotFrom)
+                    zFrom = pi.zFromUm;
+                else
+                    gotFrom = layerMidZ(pi.fromLayer, &zFrom);
+                if (gotTo)
+                    zTo = pi.zToUm;
+                else
+                    gotTo = layerMidZ(pi.toLayer, &zTo);
+
+                if (gotFrom && !gotTo)
+                    zTo = zFrom + 0.5;
+                else if (!gotFrom && gotTo)
+                    zFrom = zTo - 0.5;
+                else if (!gotFrom && !gotTo) {
+                    zFrom = 0.5 * (zLo + zHi) - 0.25;
+                    zTo = zFrom + 0.5;
+                }
+
+                if (qAbs(zTo - zFrom) < 0.05)
+                    zTo = zFrom + (neg ? -0.05 : 0.05);
+                const qreal zTip = neg ? zFrom : zTo;
+                const qreal zTail = neg ? zTo : zFrom;
+                tipScene = project3D(c.x(), c.y(), zTip);
+                const QPointF tailScene = project3D(c.x(), c.y(), zTail);
+                addPortArrowAlong(tailScene, tipScene, col, pname, QStringLiteral("port"),
+                                  it.poly.layer, vis, 1e9,
+                                  neg ? QStringLiteral("-z") : QStringLiteral("z"));
+                labelPos = project3D(c.x(), c.y(), 0.5 * (zTail + zTip));
+            } else {
+                qreal zMark = 0.5 * (zLo + zHi);
+                if (pi.hasFromZ && pi.hasToZ)
+                    zMark = 0.5 * (pi.zFromUm + pi.zToUm);
+                else if (pi.hasToZ)
+                    zMark = pi.zToUm;
+                else if (pi.hasFromZ)
+                    zMark = pi.zFromUm;
+                qreal dx = 1.0, dy = 0.0;
+                QString dirLabel = QStringLiteral("x");
+                if (dir == QLatin1String("-x")) {
+                    dx = -1.0;
+                    dirLabel = QStringLiteral("-x");
+                } else if (dir == QLatin1String("y") || dir == QLatin1String("+y")) {
+                    dx = 0.0;
+                    dy = 1.0;
+                    dirLabel = QStringLiteral("y");
+                } else if (dir == QLatin1String("-y")) {
+                    dx = 0.0;
+                    dy = -1.0;
+                    dirLabel = QStringLiteral("-y");
+                }
+                tipScene = project3D(c.x(), c.y(), zMark);
+                const QPointF outward = project3D(c.x() - dx, c.y() - dy, zMark);
+                addPortArrowAlong(outward, tipScene, col, pname, QStringLiteral("port"),
+                                  it.poly.layer, vis, 1e9, dirLabel);
+                labelPos = tipScene;
+            }
+
+            auto *label = m_scene->addSimpleText(pname);
+            QFont f = label->font();
+            f.setBold(true);
+            f.setPointSize(9);
+            label->setFont(f);
+            label->setBrush(col);
+            label->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+            label->setData(kRoleName, pname);
+            label->setData(kRoleKind, QStringLiteral("port"));
+            label->setData(kRoleGds, it.poly.layer);
+            label->setData(kRoleIsPort, true);
+            label->setData(kRolePen, it.style.color);
+            label->setVisible(vis);
+            label->setZValue(1e9 + 0.1);
+            label->setPos(labelPos);
+            setPixelOffset(label, 8, -16);
+            portBounds |= QRectF(labelPos.x() - 2, labelPos.y() - 2, 4, 4);
+            continue;
+        }
+
+        if (it.poly.pointsUm.size() < 3)
+            continue;
+
+        double z0 = std::min(it.style.zminUm, it.style.zmaxUm);
+        double z1 = std::max(it.style.zminUm, it.style.zmaxUm);
+        if (z1 - z0 < kMinThickUm)
+            z1 = z0 + kMinThickUm;
+
+        QPolygonF topPoly;
+        topPoly.reserve(it.poly.pointsUm.size());
+        qreal topDepth = 0.0;
+        int topN = 0;
+        for (const QPointF &p : it.poly.pointsUm) {
+            topPoly << project3D(p.x(), p.y(), z1);
+            topDepth += depth3D(p.x(), p.y(), z1);
+            ++topN;
+        }
+        if (topN > 0)
+            topDepth /= topN;
+
+        const int n = it.poly.pointsUm.size();
+        const int edgeCount = (n > 1 && it.poly.pointsUm.first() == it.poly.pointsUm.last())
+                ? n - 1 : n;
+        for (int i = 0; i < edgeCount; ++i) {
+            const QPointF &a = it.poly.pointsUm.at(i);
+            const QPointF &b = it.poly.pointsUm.at((i + 1) % n);
+            QPolygonF wall;
+            wall << project3D(a.x(), a.y(), z0)
+                 << project3D(b.x(), b.y(), z0)
+                 << project3D(b.x(), b.y(), z1)
+                 << project3D(a.x(), a.y(), z1);
+            QColor side = it.style.color.darker(135);
+            side.setAlpha(qBound(0, int(kBaseFillAlpha * op * 0.85 + 0.5), 255));
+            const qreal d = 0.25 * (depth3D(a.x(), a.y(), z0) + depth3D(b.x(), b.y(), z0)
+                                    + depth3D(b.x(), b.y(), z1) + depth3D(a.x(), a.y(), z1));
+            faces.push_back({wall, side, it.style.name, it.style.kind, it.poly.layer, false, d});
+        }
+
+        QColor top = it.style.color;
+        top.setAlpha(qBound(0, int(kBaseFillAlpha * op + 0.5), 255));
+        faces.push_back({topPoly, top, it.style.name, it.style.kind, it.poly.layer, false, topDepth});
+    }
+
+    // Painter's algorithm: farther faces first (lower zValue), closer on top.
+    std::stable_sort(faces.begin(), faces.end(),
+                     [](const Face &a, const Face &b) { return a.depth > b.depth; });
+
+    QRectF bounds = portBounds;
+    for (int i = 0; i < faces.size(); ++i) {
+        const Face &f = faces.at(i);
+        const bool vis = visibleFor(f.gds);
+        auto *item = m_scene->addPolygon(f.poly, QPen(QColor(30, 30, 30), 0), QBrush(f.fill));
+        item->setData(kRoleName, f.name);
+        item->setData(kRoleKind, f.kind);
+        item->setData(kRoleGds, f.gds);
+        item->setData(kRoleIsPort, false);
+        if (m_styles.contains(f.gds))
+            item->setData(kRoleBrush, m_styles.value(f.gds).color);
+        else
+            item->setData(kRoleBrush, f.fill);
+        item->setVisible(vis);
+        item->setZValue(double(i));
+        bounds |= f.poly.boundingRect();
+    }
+
+    if (!bounds.isNull()) {
+        bounds.adjust(-bounds.width() * 0.08, -bounds.height() * 0.08,
+                      bounds.width() * 0.08, bounds.height() * 0.08);
+        m_scene->setSceneRect(bounds);
+        if (refit) {
+            m_zoomLocked = false;
+            fitContent();
+        }
+    }
+}
+
+QPointF LayoutView::project3D(qreal xUm, qreal yUm, qreal zUm) const
+{
+    const qreal yaw = qDegreesToRadians(m_yawDeg);
+    const qreal pitch = qDegreesToRadians(m_pitchDeg);
+    const qreal px = xUm - m_orbitCx;
+    const qreal py = yUm - m_orbitCy;
+    const qreal pz = zUm - m_orbitCz;
+
+    const qreal cy = std::cos(yaw);
+    const qreal sy = std::sin(yaw);
+    const qreal x1 = px * cy - py * sy;
+    const qreal y1 = px * sy + py * cy;
+    const qreal z1 = pz;
+
+    const qreal cp = std::cos(pitch);
+    const qreal sp = std::sin(pitch);
+    const qreal z2 = y1 * sp + z1 * cp;
+    // Orthographic view along +Y after yaw/pitch; Qt Y grows downward → flip Z up.
+    return QPointF(x1, -z2);
+}
+
+qreal LayoutView::depth3D(qreal xUm, qreal yUm, qreal zUm) const
+{
+    const qreal yaw = qDegreesToRadians(m_yawDeg);
+    const qreal pitch = qDegreesToRadians(m_pitchDeg);
+    const qreal px = xUm - m_orbitCx;
+    const qreal py = yUm - m_orbitCy;
+    const qreal pz = zUm - m_orbitCz;
+
+    const qreal sy = std::sin(yaw);
+    const qreal cy = std::cos(yaw);
+    const qreal y1 = px * sy + py * cy;
+    const qreal z1 = pz;
+
+    const qreal cp = std::cos(pitch);
+    const qreal sp = std::sin(pitch);
+    
+    return y1 * cp - z1 * sp;
+}
+
+void LayoutView::resetOrbitAngles()
+{
+    m_yawDeg = 45.0;
+    m_pitchDeg = 30.0;
+}
+
+void LayoutView::setViewMode(ViewMode mode)
+{
+    if (m_viewMode == mode)
+        return;
+    m_viewMode = mode;
+    if (mode == ViewMode::Iso3D)
+        resetOrbitAngles();
+    if (m_modeBtn) {
+        const QSignalBlocker block(m_modeBtn);
+        m_modeBtn->setChecked(mode == ViewMode::Iso3D);
+        m_modeBtn->setText(mode == ViewMode::Iso3D ? QStringLiteral("3D") : QStringLiteral("2D"));
+        m_modeBtn->setToolTip(mode == ViewMode::Iso3D
+                                  ? tr("3D view (click for top view).\n"
+                                       "Drag: orbit · Click: select · Two-finger scroll: orbit\n"
+                                       "Alt+drag / Middle: pan · Pinch / Ctrl+scroll: zoom · R: reset")
+                                  : tr("Top view (click for 3D).\n"
+                                       "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom"));
+    }
+    saveViewModeToSettings();
+    if (!m_polys.isEmpty())
+        rebuildScene(true);
+}
+
+void LayoutView::onModeButtonToggled(bool on)
+{
+    setViewMode(on ? ViewMode::Iso3D : ViewMode::Top2D);
+}
+
+void LayoutView::repositionModeButton()
+{
+    if (!m_modeBtn)
+        return;
+    const int m = 8;
+    m_modeBtn->move(width() - m_modeBtn->width() - m, m);
+    m_modeBtn->raise();
+}
+
+void LayoutView::loadViewModeFromSettings()
+{
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    const bool v3d = settings.value(QStringLiteral("view3d"), false).toBool();
+    settings.endGroup();
+    m_viewMode = v3d ? ViewMode::Iso3D : ViewMode::Top2D;
+}
+
+void LayoutView::saveViewModeToSettings() const
+{
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    settings.setValue(QStringLiteral("view3d"), m_viewMode == ViewMode::Iso3D);
+    settings.endGroup();
 }
 
 /*!*******************************************************************************************************************
@@ -476,9 +1007,101 @@ void LayoutView::drawBackground(QPainter *painter, const QRectF &rect)
 void LayoutView::wheelEvent(QWheelEvent *event)
 {
     m_zoomLocked = true;
-    const double factor = (event->angleDelta().y() > 0) ? 1.15 : (1.0 / 1.15);
+
+    const QPoint pixel = event->pixelDelta();
+    const QPoint angle = event->angleDelta();
+    const bool ctrl = event->modifiers() & Qt::ControlModifier;
+
+    auto applyOrbit = [&](qreal dx, qreal dy) {
+        m_yawDeg += dx;
+        m_pitchDeg = qBound(-85.0, m_pitchDeg - dy, 85.0);
+        if (!m_polys.isEmpty())
+            rebuildScene(false);
+    };
+
+    auto applyPan = [&](int dx, int dy) {
+        horizontalScrollBar()->setValue(horizontalScrollBar()->value() - dx);
+        verticalScrollBar()->setValue(verticalScrollBar()->value() - dy);
+    };
+
+    // Ctrl+scroll / pinch path below → zoom. Otherwise navigate.
+    if (!ctrl) {
+        if (m_viewMode == ViewMode::Iso3D) {
+            // Trackpad / wheel → orbit (so navigation works without Right/Ctrl).
+            if (!pixel.isNull())
+                applyOrbit(pixel.x() * 0.35, pixel.y() * 0.35);
+            else if (!angle.isNull())
+                applyOrbit(angle.x() * 0.08, angle.y() * 0.08);
+            else {
+                QGraphicsView::wheelEvent(event);
+                return;
+            }
+            event->accept();
+            return;
+        }
+
+        // 2D: pan with trackpad pixel scroll; plain vertical notches still zoom below.
+        if (!pixel.isNull()) {
+            applyPan(pixel.x(), pixel.y());
+            event->accept();
+            return;
+        }
+        if (qAbs(angle.x()) > qAbs(angle.y()) && !angle.isNull()) {
+            applyPan(angle.x(), angle.y());
+            event->accept();
+            return;
+        }
+    }
+
+    qreal dy = angle.y();
+    if (qFuzzyIsNull(dy))
+        dy = pixel.y();
+    if (qFuzzyIsNull(dy)) {
+        QGraphicsView::wheelEvent(event);
+        return;
+    }
+
+    const double factor = (dy > 0) ? 1.15 : (1.0 / 1.15);
+    const QGraphicsView::ViewportAnchor oldAnchor = transformationAnchor();
+    setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
     scale(factor, factor);
+    setTransformationAnchor(oldAnchor);
     event->accept();
+}
+
+bool LayoutView::viewportEvent(QEvent *event)
+{
+    if (event->type() == QEvent::Gesture) {
+        auto *ge = static_cast<QGestureEvent *>(event);
+        if (QPinchGesture *pinch = static_cast<QPinchGesture *>(ge->gesture(Qt::PinchGesture))) {
+            if (pinch->changeFlags() & QPinchGesture::ScaleFactorChanged) {
+                const qreal factor = pinch->scaleFactor();
+                if (factor > 0.0 && !qFuzzyCompare(factor, 1.0)) {
+                    m_zoomLocked = true;
+                    const QGraphicsView::ViewportAnchor oldAnchor = transformationAnchor();
+                    setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+                    scale(factor, factor);
+                    setTransformationAnchor(oldAnchor);
+                }
+                return true;
+            }
+        }
+    }
+    if (event->type() == QEvent::NativeGesture) {
+        auto *ne = static_cast<QNativeGestureEvent *>(event);
+        if (ne->gestureType() == Qt::ZoomNativeGesture) {
+            const qreal factor = 1.0 + ne->value();
+            if (!qFuzzyIsNull(ne->value()) && factor > 0.0) {
+                m_zoomLocked = true;
+                const QGraphicsView::ViewportAnchor oldAnchor = transformationAnchor();
+                setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+                scale(factor, factor);
+                setTransformationAnchor(oldAnchor);
+                return true;
+            }
+        }
+    }
+    return QGraphicsView::viewportEvent(event);
 }
 
 /*!*******************************************************************************************************************
@@ -492,6 +1115,14 @@ void LayoutView::keyPressEvent(QKeyEvent *event)
         clearHighlight();
         clearMeasure();
         emit highlightCleared();
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_R && m_viewMode == ViewMode::Iso3D) {
+        resetOrbitAngles();
+        m_zoomLocked = false;
+        if (!m_polys.isEmpty())
+            rebuildScene(true);
         event->accept();
         return;
     }
@@ -515,6 +1146,7 @@ void LayoutView::resizeEvent(QResizeEvent *event)
     QGraphicsView::resizeEvent(event);
     if (!m_zoomLocked)
         fitContent();
+    repositionModeButton();
 }
 
 /*!*******************************************************************************************************************
@@ -527,10 +1159,23 @@ void LayoutView::resizeEvent(QResizeEvent *event)
  **********************************************************************************************************************/
 void LayoutView::mousePressEvent(QMouseEvent *event)
 {
-    // Middle button or Alt+Left: pan. Default cursor stays an arrow for precise coords.
+    // Explicit orbit shortcuts (also available via plain left-drag after threshold).
+    if (m_viewMode == ViewMode::Iso3D
+        && (event->button() == Qt::RightButton
+            || (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier)))) {
+        m_orbiting = true;
+        m_leftPressPending = false;
+        m_panLast = event->pos();
+        viewport()->setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+
+    // Middle button or Alt+Left: pan.
     if (event->button() == Qt::MiddleButton
         || (event->button() == Qt::LeftButton && (event->modifiers() & Qt::AltModifier))) {
         m_panning = true;
+        m_leftPressPending = false;
         m_panLast = event->pos();
         viewport()->setCursor(Qt::ClosedHandCursor);
         event->accept();
@@ -538,6 +1183,7 @@ void LayoutView::mousePressEvent(QMouseEvent *event)
     }
 
     if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ShiftModifier)) {
+        m_leftPressPending = false;
         setFocus(Qt::MouseFocusReason);
         const QPointF p = mapToScene(event->pos());
         if (!m_measureHasStart || m_measureHasEnd) {
@@ -555,39 +1201,44 @@ void LayoutView::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    if (event->button() == Qt::LeftButton) {
+    // Plain left: defer select vs drag (orbit in 3D / pan in 2D).
+    if (event->button() == Qt::LeftButton && event->modifiers() == Qt::NoModifier) {
         setFocus(Qt::MouseFocusReason);
-
-        // items(pos) is topmost-first stacking order.
-        struct Hit { QString name; QString kind; };
-        QVector<Hit> stack;
-        QSet<QString> seen;
-        for (QGraphicsItem *it : items(event->pos())) {
-            const QString name = it->data(kRoleName).toString();
-            if (name.isEmpty() || seen.contains(name))
-                continue;
-            seen.insert(name);
-            stack.append({name, it->data(kRoleKind).toString()});
-        }
-
-        if (!stack.isEmpty()) {
-            int idx = 0;
-            for (int i = 0; i < stack.size(); ++i) {
-                if (stack.at(i).name == m_highlightedName) {
-                    idx = (i + 1) % stack.size();
-                    break;
-                }
-            }
-            const Hit &pick = stack.at(idx);
-            setHighlightedLayer(pick.name);
-            emit layerClicked(pick.name, pick.kind);
-        }
+        m_leftPressPending = true;
+        m_pressPos = event->pos();
+        m_panLast = event->pos();
+        event->accept();
+        return;
     }
+
     QGraphicsView::mousePressEvent(event);
 }
 
 void LayoutView::mouseMoveEvent(QMouseEvent *event)
 {
+    if (m_leftPressPending && !m_orbiting && !m_panning) {
+        if ((event->pos() - m_pressPos).manhattanLength() >= 6) {
+            m_leftPressPending = false;
+            if (m_viewMode == ViewMode::Iso3D)
+                m_orbiting = true;
+            else
+                m_panning = true;
+            viewport()->setCursor(Qt::ClosedHandCursor);
+        }
+    }
+
+    if (m_orbiting) {
+        const QPoint delta = event->pos() - m_panLast;
+        m_panLast = event->pos();
+        m_yawDeg += delta.x() * 0.4;
+        m_pitchDeg = qBound(-85.0, m_pitchDeg - delta.y() * 0.4, 85.0);
+        m_zoomLocked = true;
+        if (!m_polys.isEmpty())
+            rebuildScene(false);
+        event->accept();
+        return;
+    }
+
     if (m_panning) {
         const QPoint delta = event->pos() - m_panLast;
         m_panLast = event->pos();
@@ -614,6 +1265,42 @@ void LayoutView::mouseMoveEvent(QMouseEvent *event)
 
 void LayoutView::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (event->button() == Qt::LeftButton && m_leftPressPending) {
+        m_leftPressPending = false;
+        // Click without drag → select shape under press point.
+        struct Hit { QString name; QString kind; };
+        QVector<Hit> stack;
+        QSet<QString> seen;
+        for (QGraphicsItem *it : items(m_pressPos)) {
+            const QString name = it->data(kRoleName).toString();
+            if (name.isEmpty() || seen.contains(name))
+                continue;
+            seen.insert(name);
+            stack.append({name, it->data(kRoleKind).toString()});
+        }
+        if (!stack.isEmpty()) {
+            int idx = 0;
+            for (int i = 0; i < stack.size(); ++i) {
+                if (stack.at(i).name == m_highlightedName) {
+                    idx = (i + 1) % stack.size();
+                    break;
+                }
+            }
+            const Hit &pick = stack.at(idx);
+            setHighlightedLayer(pick.name);
+            emit layerClicked(pick.name, pick.kind);
+        }
+        event->accept();
+        return;
+    }
+
+    if (m_orbiting
+        && (event->button() == Qt::RightButton || event->button() == Qt::LeftButton)) {
+        m_orbiting = false;
+        viewport()->setCursor(Qt::ArrowCursor);
+        event->accept();
+        return;
+    }
     if (m_panning
         && (event->button() == Qt::MiddleButton || event->button() == Qt::LeftButton)) {
         m_panning = false;
@@ -862,7 +1549,7 @@ void LayoutView::addPortArrow(const QPointF &origin,
     else
         d /= len;
 
-    // Pixel-space arrow (ItemIgnoresTransformations): tip at origin.
+    // Pixel-space arrow (ItemIgnoresTransformations): tip at origin (injection point).
     const qreal tip = 10.0;
     const qreal wing = 5.0;
     const QPointF n(-d.y(), d.x());
@@ -901,79 +1588,63 @@ void LayoutView::addPortArrow(const QPointF &origin,
     dl->setZValue(z + 0.05);
 }
 
-void LayoutView::addPortOutOfPlaneMarker(const QPointF &origin,
-                                         const QColor &color,
-                                         const QString &name,
-                                         const QString &kind,
-                                         int gdsLayer,
-                                         bool visible,
-                                         qreal z,
-                                         const QString &dirLabel)
+void LayoutView::addPortInwardArrow(const QPointF &tipScene,
+                                    const QPointF &towardScene,
+                                    const QColor &color,
+                                    const QString &name,
+                                    const QString &kind,
+                                    int gdsLayer,
+                                    bool visible,
+                                    qreal z,
+                                    const QString &dirLabel)
 {
-    // Top-view convention: ⊙ = +z toward viewer, ⊗ = -z into the page.
-    // Ring/dot/cross are black and thick for readability on light fills.
-    Q_UNUSED(color);
-    const bool intoPage = dirLabel.startsWith(QLatin1Char('-'));
-    const qreal r = 11.0;
-    const QColor ink(0, 0, 0);
+    QPointF into = towardScene - tipScene;
+    if (std::hypot(into.x(), into.y()) < 1e-9)
+        into = QPointF(1, 0);
+    // Tip on the port edge; direction into the layout (injection).
+    addPortArrow(tipScene, into, color, name, kind, gdsLayer, visible, z, dirLabel);
+}
 
-    QPen ring(ink);
-    ring.setWidthF(2.8);
-    ring.setCosmetic(true);
-    ring.setCapStyle(Qt::RoundCap);
-    ring.setJoinStyle(Qt::RoundJoin);
-
-    auto tag = [&](QGraphicsItem *item) {
-        item->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
-        item->setPos(origin);
-        item->setData(kRoleName, name);
-        item->setData(kRoleKind, kind);
-        item->setData(kRoleGds, gdsLayer);
-        item->setData(kRoleIsPort, true);
-        item->setData(kRolePen, ink);
-        item->setVisible(visible);
-        item->setZValue(z);
-        item->setToolTip(QStringLiteral("%1 direction %2 (%3)")
-                             .arg(name, dirLabel,
-                                  intoPage ? QStringLiteral("into page / away")
-                                           : QStringLiteral("toward viewer")));
-    };
-
-    auto *circle = m_scene->addEllipse(-r, -r, 2 * r, 2 * r, ring, Qt::NoBrush);
-    tag(circle);
-
-    if (intoPage) {
-        QPen cross(ink);
-        cross.setWidthF(3.0);
-        cross.setCosmetic(true);
-        cross.setCapStyle(Qt::RoundCap);
-        const qreal s = r * 0.58;
-        auto *l1 = m_scene->addLine(-s, -s, s, s, cross);
-        auto *l2 = m_scene->addLine(-s, s, s, -s, cross);
-        tag(l1);
-        tag(l2);
-    } else {
-        const qreal dr = 3.6;
-        auto *dot = m_scene->addEllipse(-dr, -dr, 2 * dr, 2 * dr, QPen(Qt::NoPen), QBrush(ink));
-        tag(dot);
+void LayoutView::addPortArrowAlong(const QPointF &tailScene,
+                                   const QPointF &tipScene,
+                                   const QColor &color,
+                                   const QString &name,
+                                   const QString &kind,
+                                   int gdsLayer,
+                                   bool visible,
+                                   qreal z,
+                                   const QString &dirLabel)
+{
+    QPointF delta = tipScene - tailScene;
+    qreal len = std::hypot(delta.x(), delta.y());
+    QPointF tail = tailScene;
+    if (len < 1e-6) {
+        delta = QPointF(0, -1);
+        len = 1.0;
+        tail = tipScene - delta;
     }
 
-    auto *dl = m_scene->addSimpleText(dirLabel);
-    QFont f = dl->font();
-    f.setPointSize(8);
-    f.setBold(true);
-    dl->setFont(f);
-    dl->setBrush(ink);
-    dl->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
-    dl->setPos(origin);
-    setPixelOffset(dl, r + 4, -5);
-    dl->setData(kRoleName, name);
-    dl->setData(kRoleKind, kind);
-    dl->setData(kRoleGds, gdsLayer);
-    dl->setData(kRoleIsPort, true);
-    dl->setData(kRolePen, ink);
-    dl->setVisible(visible);
-    dl->setZValue(z + 0.05);
+    QColor penColor = color;
+    if (penColor.alpha() < 40)
+        penColor.setAlpha(200);
+    QPen shaft(penColor);
+    shaft.setCosmetic(true);
+    shaft.setWidth(4);
+    shaft.setCapStyle(Qt::RoundCap);
+
+    auto *line = m_scene->addLine(QLineF(tail, tipScene), shaft);
+    line->setData(kRoleName, name);
+    line->setData(kRoleKind, kind);
+    line->setData(kRoleGds, gdsLayer);
+    line->setData(kRoleIsPort, true);
+    line->setData(kRolePen, color);
+    line->setVisible(visible);
+    line->setZValue(z);
+    line->setToolTip(QStringLiteral("%1 direction %2").arg(name, dirLabel));
+
+    // Arrowhead in pixel space at the tip (touches injection face).
+    addPortArrow(tipScene, tipScene - tail, color, name, kind, gdsLayer, visible, z + 0.02,
+                 dirLabel);
 }
 
 #endif // QT_VERSION

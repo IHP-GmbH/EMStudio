@@ -477,6 +477,9 @@ private:
     QStringList                     parseKlayoutUserArgs(const QString &raw) const;
     QStringList                     extractLegacyKlayoutArgsFromExeField(const QString &raw) const;
     QStringList                     buildKlayoutLaunchArgs(const QString &gdsPath, const QString &topCell) const;
+    bool                            startKlayoutDetached(const QString &program,
+                                                         const QStringList &args,
+                                                         const QString &workDir) const;
 
     QString                         createDefaultOpenemsScript();
     QString                         createDefaultPalaceScript();

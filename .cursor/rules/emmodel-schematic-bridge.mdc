@@ -1,0 +1,26 @@
+---
+description: Future EM→schematic emModel / layout-lookalike symbol plan
+alwaysApply: false
+globs: 
+---
+
+# EM model view (ADS-like emModel) — future work
+
+## Context (discussed with user)
+
+Keysight ADS pattern after RF/EM:
+
+- **layout** + **emSetup** + **emModel** (S/Y container) + **symbol** (often layout look-alike with pins)
+- Schematic places the **symbol**; simulation resolves to **emModel**, not schematic of the same cell
+
+## Decision for IHP stack (EMStudio / LibMan / CommonDB / Qucs-S)
+
+- **Do** aim for: cell with layout + emmodel artifact + layout-lookalike **symbol**
+- **Do not** add a new geometric CORE `ViewType` only for S-parameters in v1
+- Prefer LibMan view `emmodel` (sidecar `.sNp` + meta) and/or CORE `opaque`/properties
+- **Qucs-S** does **not** open an `emmodel` view natively; it opens `schematic.core` / `symbol.core` and uses Touchstone via FileSP / `.lib` / netlist
+- Publish path: EMStudio → `.sNp` + auto symbol look-alike + emmodel meta → schematic instance nets via nport/FileSP
+
+## Fragile contract
+
+Port order: EM ports ↔ symbol pins ↔ Touchstone port index must stay consistent.

@@ -17,6 +17,7 @@ class LayoutViewTest : public QObject
 private slots:
     void setPolygons_conductorsAndPorts_drawAndInteract();
     void visibilityOpacity_andClear();
+    void viewMode3d_isoExtrusion_persistsInSettings();
 };
 
 #endif // TST_LAYOUT_VIEW_H

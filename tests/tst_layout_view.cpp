@@ -11,6 +11,7 @@
 #include <QHash>
 #include <QKeyEvent>
 #include <QMouseEvent>
+#include <QSettings>
 #include <QSignalSpy>
 #include <QWheelEvent>
 
@@ -90,11 +91,18 @@ void LayoutViewTest::setPolygons_conductorsAndPorts_drawAndInteract()
     styles.insert(204, style(QStringLiteral("P4"), QStringLiteral("port"),
                              QColor(220, 40, 180), 103));
 
-    QHash<int, QString> dirs;
-    dirs.insert(201, QStringLiteral("x"));
-    dirs.insert(202, QStringLiteral("-x"));
-    dirs.insert(203, QStringLiteral("y"));
-    dirs.insert(204, QStringLiteral("-z"));
+    QHash<int, LayoutView::PortInfo> dirs;
+    {
+        LayoutView::PortInfo p;
+        p.direction = QStringLiteral("x");
+        dirs.insert(201, p);
+        p.direction = QStringLiteral("-x");
+        dirs.insert(202, p);
+        p.direction = QStringLiteral("y");
+        dirs.insert(203, p);
+        p.direction = QStringLiteral("-z");
+        dirs.insert(204, p);
+    }
 
     view.setPolygons(polys, styles, dirs);
     QTest::qWait(30);
@@ -148,9 +156,9 @@ void LayoutViewTest::setPolygons_conductorsAndPorts_drawAndInteract()
     view.setShowCoordinates(true);
 
     // Alternate directions on thick ports: +z / -y
-    dirs.insert(201, QStringLiteral("z"));
-    dirs.insert(202, QStringLiteral("-y"));
-    dirs.insert(203, QStringLiteral("+y"));
+    dirs[201].direction = QStringLiteral("z");
+    dirs[202].direction = QStringLiteral("-y");
+    dirs[203].direction = QStringLiteral("+y");
     view.setPolygons(polys, styles, dirs);
     QTest::qWait(20);
 
@@ -185,4 +193,83 @@ void LayoutViewTest::visibilityOpacity_andClear()
 
     view.clear();
     view.clearHighlight(); // no-op when empty
+}
+
+void LayoutViewTest::viewMode3d_isoExtrusion_persistsInSettings()
+{
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    const QVariant prev = settings.value(QStringLiteral("view3d"));
+    settings.setValue(QStringLiteral("view3d"), false);
+    settings.endGroup();
+    settings.sync();
+
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(400, 300);
+    view.show();
+    QCOMPARE(view.viewMode(), LayoutView::ViewMode::Top2D);
+    QVERIFY(!view.isView3d());
+
+    QVector<GdsFlatPolygon> polys;
+    polys << makeRect(1, 0, 0, 10, 8);
+    polys << makeRect(2, 2, 2, 6, 6);
+    QHash<int, LayoutView::LayerStyle> styles;
+    auto s1 = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+    s1.hasZ = true;
+    s1.zminUm = 0.0;
+    s1.zmaxUm = 0.5;
+    auto s2 = style(QStringLiteral("M2"), QStringLiteral("conductor"), QColor(40, 120, 200), 20);
+    s2.hasZ = true;
+    s2.zminUm = 1.0;
+    s2.zmaxUm = 1.4;
+    styles.insert(1, s1);
+    styles.insert(2, s2);
+    view.setPolygons(polys, styles);
+
+    QHash<int, LayoutView::PortInfo> ports;
+    LayoutView::PortInfo p1;
+    p1.direction = QStringLiteral("z");
+    p1.fromLayer = QStringLiteral("M1");
+    p1.toLayer = QStringLiteral("M2");
+    p1.hasFromZ = true;
+    p1.hasToZ = true;
+    p1.zFromUm = 0.25; // mid M1
+    p1.zToUm = 1.2;    // mid M2
+    ports.insert(201, p1);
+    QVector<GdsFlatPolygon> withPort = polys;
+    withPort << makeRect(201, 1, 1, 2, 2);
+    view.setPolygons(withPort, styles, ports);
+
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    QVERIFY(view.isView3d());
+    QTest::qWait(20);
+    QVERIFY(!view.grab().isNull());
+
+    // Orbit drag (Ctrl+Left) should keep 3D mode and redraw.
+    QMouseEvent orbPress(QEvent::MouseButtonPress, QPointF(200, 150), Qt::LeftButton, Qt::LeftButton,
+                         Qt::ControlModifier);
+    QApplication::sendEvent(view.viewport(), &orbPress);
+    QMouseEvent orbMove(QEvent::MouseMove, QPointF(260, 170), Qt::LeftButton, Qt::LeftButton,
+                        Qt::ControlModifier);
+    QApplication::sendEvent(view.viewport(), &orbMove);
+    QMouseEvent orbRelease(QEvent::MouseButtonRelease, QPointF(260, 170), Qt::LeftButton, Qt::LeftButton,
+                           Qt::ControlModifier);
+    QApplication::sendEvent(view.viewport(), &orbRelease);
+    QVERIFY(view.isView3d());
+
+    QKeyEvent resetR(QEvent::KeyPress, Qt::Key_R, Qt::NoModifier);
+    QApplication::sendEvent(&view, &resetR);
+
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    QCOMPARE(settings.value(QStringLiteral("view3d")).toBool(), true);
+    if (prev.isValid())
+        settings.setValue(QStringLiteral("view3d"), prev);
+    else
+        settings.remove(QStringLiteral("view3d"));
+    settings.endGroup();
+    settings.sync();
+
+    view.setViewMode(LayoutView::ViewMode::Top2D);
+    QVERIFY(!view.isView3d());
 }

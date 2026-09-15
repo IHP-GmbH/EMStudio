@@ -1,12 +1,16 @@
-# EMStudio helper: select a top cell after KLayout opens a layout.
+# EMStudio helper: after opening a GDS, optionally attach technology and select top cell.
 # Usage:
-#   klayout -e -rm klayout_show_gds.rb -rd topcell=TOP file.gds
+#   klayout -e -rm klayout_show_gds.rb -rd tech=sg13g2 -rd topcell=TOP file.gds
+#
+# Plain GDS files often open without a technology. PDK PyCells are only placeable
+# when the layout's technology is set (same as File → New Layout → choose tech).
+# Technology name comes from EMStudio Preferences → KLAYOUT_TECH (-rd tech=...).
 
 module EmstudioKlayoutShowGds
   def self.install
-    return unless defined?($topcell) && $topcell && !$topcell.to_s.empty?
+    top = (defined?($topcell) && $topcell) ? $topcell.to_s : ""
+    tech = (defined?($tech) && $tech) ? $tech.to_s : ""
 
-    top = $topcell.to_s
     app = RBA::Application.instance
     mw = app.main_window
 
@@ -14,7 +18,19 @@ module EmstudioKlayoutShowGds
       view = mw.current_view
       next unless view
 
-      layout = view.active_cellview.layout
+      cv = view.active_cellview
+      next unless cv
+
+      # Attach tech from -rd tech=... so Library Browser exposes PDK PCells for this layout.
+      begin
+        cv.technology = tech unless tech.empty?
+      rescue
+        # Technology may be missing if PDK was not loaded; keep going.
+      end
+
+      next if top.empty?
+
+      layout = cv.layout
       cell = layout.cell(top)
       next unless cell
 

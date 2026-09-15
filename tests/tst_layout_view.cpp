@@ -273,3 +273,81 @@ void LayoutViewTest::viewMode3d_isoExtrusion_persistsInSettings()
     view.setViewMode(LayoutView::ViewMode::Top2D);
     QVERIFY(!view.isView3d());
 }
+
+void LayoutViewTest::fieldMode_disables3d_andLoadsOverlay()
+{
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    const QVariant prev3d = settings.value(QStringLiteral("view3d"));
+    const QVariant prevField = settings.value(QStringLiteral("viewField"));
+    settings.setValue(QStringLiteral("view3d"), false);
+    settings.setValue(QStringLiteral("viewField"), false);
+    settings.endGroup();
+    settings.sync();
+
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(400, 300);
+    view.show();
+
+    QVector<GdsFlatPolygon> polys;
+    polys << makeRect(1, 0, 0, 10, 8);
+    QHash<int, LayoutView::LayerStyle> styles;
+    auto s1 = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+    s1.hasZ = true;
+    s1.zminUm = 0.0;
+    s1.zmaxUm = 0.5;
+    styles.insert(1, s1);
+    view.setPolygons(polys, styles);
+
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    QVERIFY(view.isView3d());
+    QVERIFY(!view.isFieldMode());
+
+    view.setFieldMode(true);
+    QVERIFY(view.isFieldMode());
+    QVERIFY(!view.isView3d());
+    QCOMPARE(view.viewMode(), LayoutView::ViewMode::Top2D);
+
+    LayoutView::FieldOverlay ov;
+    QImage img(32, 32, QImage::Format_ARGB32);
+    img.fill(QColor(0, 120, 255, 180));
+    ov.image = img;
+    ov.xminUm = 0;
+    ov.xmaxUm = 10;
+    ov.yminUm = 0;
+    ov.ymaxUm = 8;
+    ov.zUm = 0.25;
+    ov.zMinUm = 0;
+    ov.zMaxUm = 1;
+    ov.quantity = QStringLiteral("|E|");
+    ov.showArrows = true;
+    LayoutView::FieldArrow a;
+    a.xUm = 5;
+    a.yUm = 4;
+    a.dx = 1;
+    a.dy = 0;
+    a.mag = 1;
+    ov.arrows << a;
+    view.setFieldOverlay(ov);
+    QVERIFY(view.fieldOverlay().valid());
+    QTest::qWait(20);
+    QVERIFY(!view.grab().isNull());
+
+    // Turning 3D on must clear Field.
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    QVERIFY(view.isView3d());
+    QVERIFY(!view.isFieldMode());
+
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    if (prev3d.isValid())
+        settings.setValue(QStringLiteral("view3d"), prev3d);
+    else
+        settings.remove(QStringLiteral("view3d"));
+    if (prevField.isValid())
+        settings.setValue(QStringLiteral("viewField"), prevField);
+    else
+        settings.remove(QStringLiteral("viewField"));
+    settings.endGroup();
+    settings.sync();
+}

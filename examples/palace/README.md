@@ -19,4 +19,6 @@ Each subfolder is a self-contained run: Python model + GDS + stackup XML.
 3. Check GDS / XML paths on the Main tab (scripts usually expect files next to the .py).
 4. Simulate → Run.
 
+After a run with field dumps enabled (`settings['fdump']` / VTK output), open the **Substrate** tab and click **Field** on the layout preview to see a Z-clip heatmap. Needs Preferences **FIELD_VIEWER_PYTHON** with `pyvista` + `pillow`.
+
 These files are local downloads (`examples/` is gitignored).

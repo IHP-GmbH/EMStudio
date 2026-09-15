@@ -54,4 +54,12 @@ test_results_*.txt
 output/
 docker/workspace/.bash_history
 scripts/**/__pycache__/
+**/__pycache__/
+examples/**/palace_model/
+examples/**/elmer_model/
+
+# Layout Field view exports (next to solver dumps)
+**/field_slice.png
+**/field_slice_meta.json
+**/field_volume_cache.npz
 

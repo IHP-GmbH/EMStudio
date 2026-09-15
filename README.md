@@ -22,7 +22,8 @@ It provides an integrated workflow for:
 
 - Loading GDS layout data  
 - Choosing substrate stacks (dielectrics, metals, layers, thermal tables)  
-- Visualizing a 2.5D stack cross-section and GDS layout top-view (linked highlight)  
+- Visualizing a 2.5D stack cross-section and GDS layout top-view (2D / Iso3D / Field)  
+
 - Configuring simulation parameters  
 - Generating configuration files for solvers (**OpenEMS**, **Palace**, **Elmer EM**, **Elmer Thermal**)  
 - Editing Python driver scripts with syntax highlighting  
@@ -35,7 +36,8 @@ It provides an integrated workflow for:
 - Cross-platform Qt GUI (Linux & Windows)  
 - GDS reader (`gdsreader.cpp`)  
 - Substrate & material model (including thermal conductivity / tables)  
-- 2.5D stack visualization with GDS layout preview and click cross-reference (`substrateview` / `layoutview`)  
+- 2.5D stack visualization with GDS layout preview (2D / Iso3D / Field) and click cross-reference (`substrateview` / `layoutview`)  
+
 - Python script editor with syntax highlighting & autocompletion  
 - Python/Palace parser with JSON configuration  
 - QtPropertyBrowser-based parameter editor  
@@ -263,6 +265,11 @@ The screenshot shows the configuration of EMStudio on a Windows machine, with op
 - **MODEL_TEMPLATES_DIR**
   EMStudio provides templates for openEMS and Palace workflows, so that you can start from scratch with no existing Python model code. The path configured here points to the template directory where `openems_model.py` and `palace_model.py`are located.
 
+- **FIELD_VIEWER_PYTHON**  
+  Optional host Python used only for **Layout Field** view (`scripts/field_slice_export.py`).  
+  Prefer a native Windows `python.exe` with `pyvista` and `pillow` installed.  
+  If empty, EMStudio falls back to the active tool Python / PATH.
+
 - **OpenEMS Python Path**  
   Path to the Python interpreter used for the **openEMS** workflow. 
   If you installed openEMS and the IHP workflow files into 
@@ -320,6 +327,32 @@ Before leaving any tab, save your changes using File > Save or Ctrl+S
 ## Substrate
 
 The substrate tab is where you select the XML stackup file to be used for simulation. EMStudio shows a **2.5D stack cross-section** next to a **GDS layout top-view**. Click a metal, via, or dielectric in either pane to highlight the matching layer in the other (cross-reference). Unmapped GDS layers such as port markers are still shown. The same stackup also prepares the Ports configuration tab using layer names from the XML.
+
+### Layout preview: 2D / 3D / Field
+
+Floating controls on the layout preview (top-right):
+
+| Control | Role |
+| --- | --- |
+| **2D / 3D** | Top view vs isometric extrusion from stack `zmin`/`zmax` (orbit with drag / scroll). |
+| **Field** | Z-clip heatmap overlay of a field dump (mutually exclusive with Iso3D). |
+
+**Field view** (requires a host Python with PyVista + Pillow):
+
+1. Run a simulation that writes field dumps (`fdump` / VTK / VTU / Palace `.pvd`, or Elmer Thermal `thermal_results*.vtu`).
+2. On the Substrate tab, click **Field**.
+3. On first open, EMStudio auto-picks a “hot” Z (strongest field inside the layout ROI), then exports a PNG slice via `scripts/field_slice_export.py`.
+4. Drag the **Z** slider (export runs on release), optionally enable **Log** scale or **Arrows** (in-plane vectors such as Poynting `S`).
+
+Set **Preferences → Layout Field → FIELD_VIEWER_PYTHON** to a Windows `python.exe` that has:
+
+```bash
+python -m pip install pyvista pillow
+# optional, smoother sampling:
+python -m pip install scipy
+```
+
+If PyVista is missing, the Field panel shows a short hint and the Simulation log prints the install command. The colormap is autoscaled per Z-slice (2–98% percentiles), so a nearly flat field far from the DUT can look like a strong rainbow — prefer the auto-Z hotspot or enable **Log**. Nested metal rectangles that look “shifted” are usually different GDS layers, not a broken transform.
 
 Before leaving any tab, save your changes using File > Save or Ctrl+S
 

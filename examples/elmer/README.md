@@ -26,4 +26,6 @@ Volker’s repo ships **one dedicated Elmer package** (thermal). Elmer **EM** (S
 
 Thermal docs: see `thermal_simplest/Elmer_Thermal_Workflow.md` (from Volker).
 
+After a thermal solve, `thermal_results*.vtu` can also be shown as a Z-clip temperature map via **Substrate → Field** (same PyVista path as EM field dumps; set **FIELD_VIEWER_PYTHON**).
+
 These files are local downloads (`examples/` is gitignored).

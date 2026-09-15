@@ -18,6 +18,7 @@ private slots:
     void setPolygons_conductorsAndPorts_drawAndInteract();
     void visibilityOpacity_andClear();
     void viewMode3d_isoExtrusion_persistsInSettings();
+    void fieldMode_disables3d_andLoadsOverlay();
 };
 
 #endif // TST_LAYOUT_VIEW_H

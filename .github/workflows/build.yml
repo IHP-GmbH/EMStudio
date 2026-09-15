@@ -295,6 +295,39 @@ jobs:
           modules: 'qtcharts'
           tools: 'tools_mingw81'
 
+      # install-qt-action may put mingw810_32 ahead of mingw810_64 on PATH.
+      # Linking 64-bit Qt with 32-bit g++ yields undefined QWidget/WinMain refs.
+      - name: Prefer MinGW 64-bit on PATH
+        shell: bash
+        run: |
+          set -euxo pipefail
+          MINGW64_BIN=""
+          for root in "${IQTA_TOOLS:-}" "${RUNNER_WORKSPACE}/Qt/Tools" "D:/a/EMStudio/Qt/Tools"; do
+            [[ -n "${root}" && -d "${root}" ]] || continue
+            while IFS= read -r -d '' gpp; do
+              MINGW64_BIN="$(dirname "${gpp}")"
+              break
+            done < <(find "${root}" -type f -path '*/mingw*_64/bin/g++.exe' -print0 2>/dev/null)
+            [[ -n "${MINGW64_BIN}" ]] && break
+          done
+          if [[ -z "${MINGW64_BIN}" ]]; then
+            echo "Could not locate mingw*_64/bin/g++.exe" >&2
+            ls -la "${RUNNER_WORKSPACE}/Qt/Tools" || true
+            exit 1
+          fi
+          echo "Using MinGW64: ${MINGW64_BIN}"
+          echo "${MINGW64_BIN}" >> "${GITHUB_PATH}"
+          export PATH="${MINGW64_BIN}:${PATH}"
+          which g++
+          g++ -dumpmachine
+          case "$(g++ -dumpmachine)" in
+            x86_64-*-mingw*|x86_64-w64-mingw*) ;;
+            *)
+              echo "Expected x86_64 MinGW, got: $(g++ -dumpmachine)" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --yes
@@ -309,6 +342,8 @@ jobs:
       - name: Build (mingw32-make)
         shell: bash
         run: |
+          which g++
+          g++ -dumpmachine
           cd build
           mingw32-make -j"$(nproc)"
 

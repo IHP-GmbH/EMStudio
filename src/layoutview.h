@@ -19,6 +19,7 @@
 #include <QVector>
 #include <QPointF>
 #include <QRectF>
+#include <QImage>
 #include <QGraphicsView>
 #include <QGraphicsScene>
 
@@ -33,8 +34,9 @@
  * LayoutView draws layout geometry next to the Substrate stackup on the Substrate tab.
  * Polygons are colored from the stackup materials when a GDS layer maps to a named layer;
  * unmapped layers (e.g. port markers 201/202) are shown with a distinct port style.
- * A floating 2D/3D control (top-right) toggles top view vs isometric extrusion from
- * stack \c zmin/\c zmax; the choice is stored in QSettings under LayoutPreview/view3d.
+ * Floating 2D/3D and Field controls (top-right): Iso3D extrudes from stack
+ * \c zmin/\c zmax; Field shows a Z-clip heatmap overlay (mutually exclusive with 3D).
+ * Choices are stored under QSettings LayoutPreview/view3d and viewField.
  *
  * Interaction mirrors SubstrateView:
  * - Left-click a polygon to highlight it and emit \c layerClicked.
@@ -91,6 +93,35 @@ public:
     /*! Top-down (2D) vs isometric extrusion (3D) preview. */
     enum class ViewMode { Top2D, Iso3D };
 
+    /*! In-plane vector sample on a Z clip (GDS µm, Y-up). */
+    struct FieldArrow
+    {
+        qreal xUm = 0.0;
+        qreal yUm = 0.0;
+        qreal dx = 0.0; //!< In-plane X component (GDS)
+        qreal dy = 0.0; //!< In-plane Y component (GDS, Y-up)
+        qreal mag = 1.0;
+    };
+
+    /*! Heatmap + optional arrows from \c field_slice_export.py cache. */
+    struct FieldOverlay
+    {
+        QImage  image; //!< RGBA heatmap
+        qreal   xminUm = 0.0;
+        qreal   xmaxUm = 0.0;
+        qreal   yminUm = 0.0; //!< GDS Y-up
+        qreal   ymaxUm = 0.0;
+        qreal   zUm = 0.0;
+        qreal   zMinUm = 0.0;
+        qreal   zMaxUm = 1.0;
+        QString quantity;
+        QString status; //!< Empty when overlay is valid; else user-facing message
+        QVector<FieldArrow> arrows;
+        bool    logScale = false;
+        bool    showArrows = true;
+        bool    valid() const { return !image.isNull() && xmaxUm > xminUm && ymaxUm > yminUm; }
+    };
+
     explicit LayoutView(QWidget *parent = nullptr);
 
     void                        clear();
@@ -113,11 +144,54 @@ public:
     ViewMode                    viewMode() const { return m_viewMode; }
     bool                        isView3d() const { return m_viewMode == ViewMode::Iso3D; }
 
+    /*!*******************************************************************************************************************
+     * \brief Enables or disables Field mode (Z-clip heatmap overlay).
+     *
+     * Mutually exclusive with Iso3D: turning Field on forces Top2D. Persists
+     * under QSettings LayoutPreview/viewField and emits \c fieldModeChanged.
+     *
+     * \param on True to show the Field panel and request a slice export.
+     **********************************************************************************************************************/
+    void                        setFieldMode(bool on);
+    /*! True while Field mode is active (Iso3D button disabled). */
+    bool                        isFieldMode() const { return m_fieldOn; }
+    /*!*******************************************************************************************************************
+     * \brief Replaces the current Field overlay and refreshes the floating panel.
+     *
+     * When Field mode is on, rebuilds the scene so the heatmap / arrows redraw.
+     *
+     * \param overlay Heatmap image, GDS µm bounds, Z range, quantity, arrows.
+     **********************************************************************************************************************/
+    void                        setFieldOverlay(const FieldOverlay &overlay);
+    /*! Clears heatmap / status and rebuilds the scene if Field mode is on. */
+    void                        clearFieldOverlay();
+    /*! Last overlay applied via \c setFieldOverlay (may be invalid / status-only). */
+    const FieldOverlay         &fieldOverlay() const { return m_field; }
+    /*!*******************************************************************************************************************
+     * \brief Z clip [µm] implied by the Field Z slider within overlay zMin..zMax.
+     **********************************************************************************************************************/
+    qreal                       fieldClipZUm() const;
+    /*! True when the Field panel Log checkbox is checked. */
+    bool                        fieldLogScale() const;
+    /*! True when the Field panel Arrows checkbox is checked. */
+    bool                        fieldShowArrows() const;
+    /*!*******************************************************************************************************************
+     * \brief GDS µm Y-up bounding box of non-port layout polygons (for field crop).
+     *
+     * Skips port GDS layers (201–299) and styles tagged kind=port so the exporter
+     * frames the DUT rather than port markers.
+     **********************************************************************************************************************/
+    QRectF                      layoutContentBoundsUm() const;
+
 signals:
     /*! Emitted when the user clicks a polygon; \a name / \a kind match stack item tagging. */
     void                        layerClicked(const QString &name, const QString &kind);
     /*! Emitted when Esc (or equivalent) clears the layout highlight. */
     void                        highlightCleared();
+    /*! Field mode toggled (MainWindow should load / clear field dumps). */
+    void                        fieldModeChanged(bool on);
+    /*! Z-clip or display options changed; MainWindow should re-export the slice. */
+    void                        fieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
     /*! Cursor position in GDS micrometres (Y-up). */
     void                        cursorUmChanged(qreal xUm, qreal yUm);
     /*! Measure segment in GDS micrometres; both ends valid when \a active. */
@@ -137,6 +211,14 @@ protected:
 
 private slots:
     void                        onModeButtonToggled(bool on);
+    /*! Field toolbutton toggled → \c setFieldMode. */
+    void                        onFieldButtonToggled(bool on);
+    /*! Log / Arrows changed; may re-export or only redraw arrows. */
+    void                        onFieldControlsChanged();
+    /*! Live Z readout while dragging; export deferred until release. */
+    void                        onFieldZSliderPreview(int value);
+    /*! Slider released → emit \c fieldSliceRequest for a new export. */
+    void                        onFieldZSliderCommitted();
 
 private:
     void                        applyHighlight();
@@ -145,6 +227,16 @@ private:
     void                        applyLayerVisual(int gdsLayer);
     qreal                       opacityFor(int gdsLayer) const;
     bool                        visibleFor(int gdsLayer) const;
+    /*!*******************************************************************************************************************
+     * \brief Adds the Field heatmap pixmap under layout polygons (scene Y-down).
+     **********************************************************************************************************************/
+    void                        addFieldOverlayItems();
+    /*! Syncs Z slider / Log / Arrows widgets from \c m_field without re-export. */
+    void                        updateFieldControlsFromOverlay();
+    /*! Shows/hides Field panel, updates status line, repositions floating controls. */
+    void                        syncFloatingControls();
+    /*! Emits \c fieldSliceRequest from current slider / checkbox state. */
+    void                        emitFieldSliceRequest();
     void                        addPortArrow(const QPointF &origin,
                                              const QPointF &dirScene,
                                              const QColor &color,
@@ -181,7 +273,7 @@ private:
     void                        rebuildScene(bool refit = true);
     void                        rebuildScene2D();
     void                        rebuildScene3D(bool refit);
-    void                        repositionModeButton();
+    void                        repositionFloatingControls();
     void                        loadViewModeFromSettings();
     void                        saveViewModeToSettings() const;
     void                        resetOrbitAngles();
@@ -194,7 +286,16 @@ private:
 
     QGraphicsScene             *m_scene = nullptr;
     class QToolButton          *m_modeBtn = nullptr;
+    class QToolButton          *m_fieldBtn = nullptr;
+    class QWidget              *m_fieldPanel = nullptr;
+    class QSlider              *m_fieldZSlider = nullptr;
+    class QCheckBox            *m_fieldLogChk = nullptr;
+    class QCheckBox            *m_fieldArrowsChk = nullptr;
+    class QLabel               *m_fieldStatusLbl = nullptr;
     ViewMode                    m_viewMode = ViewMode::Top2D;
+    bool                        m_fieldOn = false;
+    FieldOverlay                m_field;
+    bool                        m_blockFieldControls = false;
 
     QVector<GdsFlatPolygon>     m_polys;
     QHash<int, LayerStyle>      m_styles;

@@ -312,6 +312,23 @@ void Preferences::setupPreferencesPanel()
     klayoutGroup->addSubProperty(klayoutOptionsProp);
 
     // -------------------------------------------------------------------------------------------------------------
+    // Layout Field view
+    // -------------------------------------------------------------------------------------------------------------
+    QtVariantProperty *layoutFieldGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("Layout Field"));
+
+    QtVariantProperty *fieldPythonProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(),
+                                      QLatin1String("FIELD_VIEWER_PYTHON"));
+    fieldPythonProp->setWhatsThis("file");
+    fieldPythonProp->setToolTip(tr(
+        "Optional host Python used by Layout Field view (scripts/field_slice_export.py).\n"
+        "Needs PyVista (+ Pillow). Leave empty to reuse OpenEMS / Elmer / Palace Python paths.\n"
+        "Field mode shows a Z-clip heatmap (|E| or Temperature) under the layout metals."));
+    fieldPythonProp->setValue(m_preferences.value(QStringLiteral("FIELD_VIEWER_PYTHON"), QString()));
+    layoutFieldGroup->addSubProperty(fieldPythonProp);
+
+    // -------------------------------------------------------------------------------------------------------------
     // ParaView (Elmer Thermal field visualization)
     // -------------------------------------------------------------------------------------------------------------
     QtVariantProperty *paraViewGroup =
@@ -332,6 +349,7 @@ void Preferences::setupPreferencesPanel()
     m_propertyBrowser->addProperty(palaceGroup);
     m_propertyBrowser->addProperty(elmerGroup);
     m_propertyBrowser->addProperty(klayoutGroup);
+    m_propertyBrowser->addProperty(layoutFieldGroup);
     m_propertyBrowser->addProperty(paraViewGroup);
 
     connect(m_variantManager, &QtVariantPropertyManager::valueChanged,

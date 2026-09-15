@@ -29,14 +29,14 @@
 #include <QFileInfo>
 #include <QSettings>
 #include <QJsonArray>
-#include <QScrollBar>
 #include <QJsonValue>
+#include <QJsonObject>
+#include <QJsonDocument>
+#include <QScrollBar>
 #include <QFileDialog>
 #include <QTextStream>
-#include <QJsonObject>
 #include <QMessageBox>
 #include <QCloseEvent>
-#include <QJsonDocument>
 #include <QSignalBlocker>
 #include <QPushButton>
 #include <QStandardPaths>
@@ -255,6 +255,22 @@ MainWindow::MainWindow(QWidget *parent)
                     if (m_layoutLayerPanel)
                         m_layoutLayerPanel->setHighlightedName(name);
                 });
+        connect(m_ui->layoutView, &LayoutView::fieldModeChanged,
+                this, &MainWindow::onLayoutFieldModeChanged);
+        connect(m_ui->layoutView, &LayoutView::fieldSliceRequest,
+                this, &MainWindow::onLayoutFieldSliceRequest);
+        if (!m_fieldSliceDebounce) {
+            m_fieldSliceDebounce = new QTimer(this);
+            m_fieldSliceDebounce->setSingleShot(true);
+            m_fieldSliceDebounce->setInterval(250);
+            connect(m_fieldSliceDebounce, &QTimer::timeout, this, [this]() {
+                const bool force = m_fieldRefreshForce;
+                m_fieldRefreshForce = false;
+                refreshFieldOverlay(force);
+            });
+        }
+        if (m_ui->layoutView->isFieldMode())
+            scheduleFieldOverlayRefresh(false);
     }
 
     setupLayoutLayerPanel();
@@ -879,6 +895,443 @@ QString MainWindow::resolveResultsDirectory() const
     return QDir::cleanPath(modelDir.absolutePath());
 }
 
+/*!*******************************************************************************************************************
+ * \brief Locates the newest field dump under \a runDir (or current results dir).
+ *
+ * Prefers thermal VTU for Elmer/Thermal, then Palace \c .pvd, then OpenEMS/VTK
+ * meshes (\c .vtr/.vtu/.vtk/.vti).
+ *
+ * \param runDir Optional results root; empty → \c resolveResultsDirectory().
+ * \return Absolute path, or empty if none found.
+ **********************************************************************************************************************/
+QString MainWindow::findFieldDumpPath(const QString &runDir) const
+{
+    QString dir = runDir;
+    if (dir.isEmpty())
+        dir = resolveResultsDirectory();
+    if (dir.isEmpty() || !QDir(dir).exists())
+        return {};
+
+    const QString key = currentSimToolKey().toLower();
+
+    auto newestMatch = [](const QString &root, const QStringList &filters) -> QString {
+        QFileInfo best;
+        QDirIterator it(root, filters, QDir::Files, QDirIterator::Subdirectories);
+        int guard = 0;
+        while (it.hasNext() && guard++ < 400) {
+            const QFileInfo fi(it.next());
+            if (!best.exists() || fi.lastModified() > best.lastModified())
+                best = fi;
+        }
+        return best.exists() ? best.absoluteFilePath() : QString();
+    };
+
+    if (isElmerFamilyKey(key) || key.contains(QLatin1String("thermal"))) {
+        const QString vtu = findThermalResultsVtu(dir);
+        if (!vtu.isEmpty())
+            return vtu;
+    }
+
+    // Palace: prefer .pvd collections
+    if (const QString pvd = newestMatch(dir, {QStringLiteral("*.pvd")}); !pvd.isEmpty())
+        return pvd;
+
+    // OpenEMS / VTK dumps
+    if (const QString vtk = newestMatch(dir, {QStringLiteral("*.vtr"), QStringLiteral("*.vtu"),
+                                               QStringLiteral("*.vtk"), QStringLiteral("*.vti")});
+        !vtk.isEmpty())
+        return vtk;
+
+    return {};
+}
+
+/*!*******************************************************************************************************************
+ * \brief Absolute path to \c scripts/field_slice_export.py next to the app / sources.
+ **********************************************************************************************************************/
+QString MainWindow::resolveFieldSliceExportScript() const
+{
+    return resolveModelTemplatePath(QStringLiteral("field_slice_export.py"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Host Python for \c field_slice_export.py (PyVista/Pillow).
+ *
+ * Order: Preferences FIELD_VIEWER_PYTHON, then the active tool Python, then
+ * other configured Pythons, then PATH \c python3/\c python.
+ *
+ * \param[out] detailOut Optional human-readable path or error hint.
+ **********************************************************************************************************************/
+QString MainWindow::resolveFieldViewerPython(QString *detailOut) const
+{
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("Preferences"));
+    const QString fieldPy = settings.value(QStringLiteral("FIELD_VIEWER_PYTHON")).toString().trimmed();
+    const QString openemsPy = settings.value(QStringLiteral("Python Path")).toString().trimmed();
+    const QString elmerPy = settings.value(QStringLiteral("ELMER_PYTHON")).toString().trimmed();
+    const QString palacePy = settings.value(QStringLiteral("PALACE_PYTHON")).toString().trimmed();
+    settings.endGroup();
+
+#ifdef Q_OS_WIN
+    auto usable = [](const QString &p) {
+        return !p.isEmpty() && QFileInfo::exists(p) && !p.startsWith(QLatin1Char('/'));
+    };
+#else
+    auto usable = [](const QString &p) {
+        return !p.isEmpty() && QFileInfo::exists(p);
+    };
+#endif
+
+    const QString key = currentSimToolKey().toLower();
+    QStringList ordered;
+    if (usable(fieldPy))
+        ordered << fieldPy;
+    if (key == QLatin1String("openems") && usable(openemsPy))
+        ordered << openemsPy;
+    else if (isElmerFamilyKey(key) && usable(elmerPy))
+        ordered << elmerPy;
+    else if (key == QLatin1String("palace") && usable(palacePy))
+        ordered << palacePy;
+    if (usable(openemsPy))
+        ordered << openemsPy;
+    if (usable(elmerPy))
+        ordered << elmerPy;
+    if (usable(palacePy))
+        ordered << palacePy;
+
+    const QString py3 = QStandardPaths::findExecutable(QStringLiteral("python3"));
+    if (usable(py3))
+        ordered << py3;
+    const QString py = QStandardPaths::findExecutable(QStringLiteral("python"));
+    if (usable(py))
+        ordered << py;
+
+    ordered.removeDuplicates();
+    if (ordered.isEmpty()) {
+        if (detailOut)
+            *detailOut = QStringLiteral("No host Python found (set FIELD_VIEWER_PYTHON or tool Python paths).");
+        return {};
+    }
+    if (detailOut)
+        *detailOut = ordered.first();
+    return ordered.first();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Slot: LayoutView Field mode toggled — clear or schedule first export.
+ **********************************************************************************************************************/
+void MainWindow::onLayoutFieldModeChanged(bool on)
+{
+    if (!on) {
+        if (m_ui && m_ui->layoutView)
+            m_ui->layoutView->clearFieldOverlay();
+        return;
+    }
+    m_fieldPreferAutoZ = true;
+    scheduleFieldOverlayRefresh(true);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Slot: LayoutView Z / Log / Arrows request — queue a forced re-export.
+ **********************************************************************************************************************/
+void MainWindow::onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showArrows)
+{
+    m_pendingFieldZUm = zUm;
+    m_pendingFieldLog = logScale;
+    m_pendingFieldArrows = showArrows;
+    m_fieldPreferAutoZ = false; // user moved Z / options
+    scheduleFieldOverlayRefresh(true);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Debounces Field exports so rapid UI changes coalesce into one run.
+ **********************************************************************************************************************/
+void MainWindow::scheduleFieldOverlayRefresh(bool force)
+{
+    if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
+        return;
+    if (force)
+        m_fieldRefreshForce = true;
+    if (!m_fieldSliceDebounce) {
+        refreshFieldOverlay(m_fieldRefreshForce);
+        m_fieldRefreshForce = false;
+        return;
+    }
+    m_fieldSliceDebounce->start();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Loads \c field_slice_meta.json + PNG into LayoutView.
+ *
+ * Reads the PNG via \c QImage::loadFromData so a concurrent writer cannot leave
+ * a half-decoded pixmap.
+ *
+ * \param metaPath Absolute path to \c field_slice_meta.json.
+ * \return True if an overlay was applied (valid image and/or status text).
+ **********************************************************************************************************************/
+bool MainWindow::loadFieldOverlayFromCache(const QString &metaPath)
+{
+    if (!m_ui || !m_ui->layoutView)
+        return false;
+
+    QFile f(metaPath);
+    if (!f.open(QIODevice::ReadOnly))
+        return false;
+    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll());
+    f.close();
+    if (!doc.isObject())
+        return false;
+    const QJsonObject o = doc.object();
+
+    LayoutView::FieldOverlay ov;
+    ov.quantity = o.value(QStringLiteral("quantity")).toString();
+    ov.status = o.value(QStringLiteral("status")).toString();
+    ov.zUm = o.value(QStringLiteral("z_um")).toDouble();
+    ov.zMinUm = o.value(QStringLiteral("zmin_um")).toDouble();
+    ov.zMaxUm = o.value(QStringLiteral("zmax_um")).toDouble(ov.zMinUm + 1.0);
+    ov.xminUm = o.value(QStringLiteral("xmin_um")).toDouble();
+    ov.xmaxUm = o.value(QStringLiteral("xmax_um")).toDouble();
+    ov.yminUm = o.value(QStringLiteral("ymin_um")).toDouble();
+    ov.ymaxUm = o.value(QStringLiteral("ymax_um")).toDouble();
+    ov.logScale = o.value(QStringLiteral("log_scale")).toBool();
+    ov.showArrows = o.value(QStringLiteral("show_arrows")).toBool(true);
+
+    const QString pngName = o.value(QStringLiteral("png")).toString(QStringLiteral("field_slice.png"));
+    const QString pngPath = QDir(QFileInfo(metaPath).absolutePath()).filePath(pngName);
+    if (QFileInfo::exists(pngPath)) {
+        QFile pf(pngPath);
+        if (pf.open(QIODevice::ReadOnly)) {
+            const QByteArray bytes = pf.readAll();
+            pf.close();
+            if (!ov.image.loadFromData(bytes))
+                ov.image = QImage();
+        }
+    }
+    if (ov.image.isNull())
+        return false;
+
+    const QJsonArray arrows = o.value(QStringLiteral("arrows")).toArray();
+    ov.arrows.reserve(arrows.size());
+    for (const QJsonValue &v : arrows) {
+        const QJsonObject a = v.toObject();
+        LayoutView::FieldArrow fa;
+        fa.xUm = a.value(QStringLiteral("x_um")).toDouble();
+        fa.yUm = a.value(QStringLiteral("y_um")).toDouble();
+        fa.dx = a.value(QStringLiteral("dx")).toDouble();
+        fa.dy = a.value(QStringLiteral("dy")).toDouble();
+        fa.mag = a.value(QStringLiteral("mag")).toDouble(1.0);
+        ov.arrows.push_back(fa);
+    }
+
+    m_ui->layoutView->setFieldOverlay(ov);
+    return ov.valid() || !ov.status.isEmpty();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Starts (or reuses cache for) a Field Z-slice export into LayoutView.
+ *
+ * Runs asynchronously via \c QProcess; kills any in-flight export when a newer
+ * request arrives. Passes layout content bounds as ROI when available.
+ *
+ * \param force True to ignore a still-valid on-screen overlay and re-export.
+ **********************************************************************************************************************/
+void MainWindow::refreshFieldOverlay(bool force)
+{
+    if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
+        return;
+
+    LayoutView::FieldOverlay pending;
+    pending.zUm = m_pendingFieldZUm;
+    pending.logScale = m_pendingFieldLog;
+    pending.showArrows = m_pendingFieldArrows;
+
+    const QString dump = findFieldDumpPath();
+    if (dump.isEmpty()) {
+        pending.status = tr("No field dump found. Enable fdump / field_dumps, or open a run with .pvd/.vtk/.vtu.");
+        m_ui->layoutView->setFieldOverlay(pending);
+        appendToSimulationLog(
+            QByteArray("\n[Field] No field dump found under the current results directory.\n"
+                       "  Palace: set settings['fdump'] and re-run.\n"
+                       "  OpenEMS: enable field_dumps in the model.\n"
+                       "  Elmer Thermal: need thermal_results*.vtu after a successful run.\n"));
+        return;
+    }
+
+    const QString outDir = QFileInfo(dump).absolutePath();
+    const QString metaPath = QDir(outDir).filePath(QStringLiteral("field_slice_meta.json"));
+
+    // Instant paint from last export while a new one is prepared (avoids UI freeze).
+    if (!force && m_ui->layoutView->fieldOverlay().valid()) {
+        m_fieldLastDumpPath = dump;
+        return;
+    }
+    if (!m_ui->layoutView->fieldOverlay().valid() && QFileInfo::exists(metaPath)) {
+        if (loadFieldOverlayFromCache(metaPath) && !force) {
+            m_fieldLastDumpPath = dump;
+            m_fieldPreferAutoZ = false;
+            return;
+        }
+    }
+
+    const QString script = resolveFieldSliceExportScript();
+    if (script.isEmpty() || !QFileInfo::exists(script)) {
+        pending.status = tr("field_slice_export.py not found next to EMStudio (scripts/).");
+        m_ui->layoutView->setFieldOverlay(pending);
+        appendToSimulationLog(
+            QByteArray("\n[Field] Missing scripts/field_slice_export.py next to EMStudio.exe.\n"
+                       "  Rebuild/copy scripts, or run from a complete install.\n"));
+        return;
+    }
+
+    QString pyDetail;
+    const QString python = resolveFieldViewerPython(&pyDetail);
+    if (python.isEmpty()) {
+        pending.status = pyDetail.isEmpty()
+                ? tr("No Python interpreter for Field view.")
+                : pyDetail;
+        m_ui->layoutView->setFieldOverlay(pending);
+        appendToSimulationLog(
+            QByteArray("\n[Field] No host Python found for Field view.\n"
+                       "  Set Preferences → Layout Field → FIELD_VIEWER_PYTHON\n"
+                       "  to a Windows python.exe, then:\n"
+                       "    pip install pyvista pillow\n"));
+        return;
+    }
+
+    const qreal zUm = m_ui->layoutView->fieldClipZUm();
+    const bool logScale = m_ui->layoutView->fieldLogScale();
+    const bool showArrows = m_ui->layoutView->fieldShowArrows();
+
+    LayoutView::FieldOverlay busy = m_ui->layoutView->fieldOverlay();
+    busy.zUm = zUm;
+    busy.status = tr("Exporting slice…");
+    busy.logScale = logScale;
+    busy.showArrows = showArrows;
+    m_ui->layoutView->setFieldOverlay(busy);
+
+    QStringList args;
+    args << script
+         << QStringLiteral("--input") << dump
+         << QStringLiteral("--outdir") << outDir
+         << QStringLiteral("--resolution") << QStringLiteral("512");
+
+    const bool dumpChanged = (dump != m_fieldLastDumpPath);
+    if (dumpChanged)
+        m_fieldPreferAutoZ = true;
+    m_fieldLastDumpPath = dump;
+    m_fieldExportOutDir = outDir;
+
+    if (m_fieldPreferAutoZ)
+        args << QStringLiteral("--auto-z");
+    else
+        args << QStringLiteral("--z-um") << QString::number(zUm, 'g', 12);
+
+    if (logScale)
+        args << QStringLiteral("--log");
+    if (!showArrows)
+        args << QStringLiteral("--no-arrows");
+
+    const QRectF layoutBb = m_ui->layoutView->layoutContentBoundsUm();
+    if (layoutBb.isValid() && layoutBb.width() > 0 && layoutBb.height() > 0) {
+        args << QStringLiteral("--xmin-um") << QString::number(layoutBb.left(), 'g', 12)
+             << QStringLiteral("--xmax-um") << QString::number(layoutBb.right(), 'g', 12)
+             << QStringLiteral("--ymin-um") << QString::number(layoutBb.top(), 'g', 12)
+             << QStringLiteral("--ymax-um") << QString::number(layoutBb.bottom(), 'g', 12);
+    }
+
+    if (!m_fieldExportProcess) {
+        m_fieldExportProcess = new QProcess(this);
+        connect(m_fieldExportProcess,
+                QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, &MainWindow::onFieldExportFinished);
+    }
+    // Abort any in-flight export without applying a torn PNG/meta.
+    if (m_fieldExportProcess->state() != QProcess::NotRunning) {
+        ++m_fieldExportToken;
+        m_fieldExportProcess->kill();
+        m_fieldExportProcess->waitForFinished(800);
+    }
+
+    const int token = ++m_fieldExportToken;
+    m_fieldExportProcess->setProperty("fieldExportToken", token);
+    m_fieldExportBusy = true;
+    m_fieldExportProcess->setProgram(python);
+    m_fieldExportProcess->setArguments(args);
+    m_fieldExportProcess->setWorkingDirectory(outDir);
+    m_fieldExportProcess->setProcessChannelMode(QProcess::MergedChannels);
+    m_fieldExportProcess->start();
+    if (!m_fieldExportProcess->waitForStarted(3000)) {
+        m_fieldExportBusy = false;
+        pending = m_ui->layoutView->fieldOverlay();
+        pending.status = tr("Failed to start Python:\n%1").arg(python);
+        m_ui->layoutView->setFieldOverlay(pending);
+        appendToSimulationLog(
+            QByteArray("\n[Field] Failed to start Python:\n  ")
+            + python.toUtf8() + "\n"
+            + "  Set FIELD_VIEWER_PYTHON in Preferences to a valid python.exe.\n");
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Slot: async Field export process finished — load cache or show error.
+ *
+ * Ignores superseded tokens and CrashExit (killed for a newer Z).
+ **********************************************************************************************************************/
+void MainWindow::onFieldExportFinished(int exitCode, QProcess::ExitStatus status)
+{
+    const int token = m_fieldExportProcess
+            ? m_fieldExportProcess->property("fieldExportToken").toInt()
+            : -1;
+    if (token != m_fieldExportToken) {
+        // Superseded / killed — keep the last good overlay.
+        return;
+    }
+    m_fieldExportBusy = false;
+    if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
+        return;
+    if (!m_fieldExportProcess)
+        return;
+
+    const QByteArray out = m_fieldExportProcess->readAll();
+    const QString outDir = m_fieldExportOutDir;
+    LayoutView::FieldOverlay pending = m_ui->layoutView->fieldOverlay();
+
+    if (status != QProcess::NormalExit || exitCode != 0) {
+        // CrashExit usually means we killed the process for a newer Z — ignore.
+        if (status == QProcess::CrashExit)
+            return;
+        QString msg = QString::fromUtf8(out).trimmed();
+        const bool missingPv =
+            msg.contains(QStringLiteral("No module named 'pyvista'"), Qt::CaseInsensitive)
+            || msg.contains(QStringLiteral("No module named 'PIL'"), Qt::CaseInsensitive)
+            || msg.contains(QStringLiteral("PyVista"), Qt::CaseInsensitive)
+            || msg.contains(QStringLiteral("Pillow"), Qt::CaseInsensitive);
+        if (missingPv) {
+            pending.status = tr("Need: pip install pyvista pillow\n"
+                                "(set FIELD_VIEWER_PYTHON in Preferences)");
+            appendToSimulationLog(
+                QByteArray("\n[Field] PyVista/Pillow not installed for Field view.\n"
+                           "  Python used: see Preferences → FIELD_VIEWER_PYTHON\n"
+                           "  Fix: python -m pip install pyvista pillow\n"));
+        } else {
+            if (msg.size() > 180)
+                msg = msg.right(180);
+            pending.status = tr("Field export failed: %1")
+                                 .arg(msg.isEmpty() ? tr("(no output)") : msg);
+            appendToSimulationLog(QByteArray("\n[Field] export failed\n") + out + '\n');
+        }
+        m_ui->layoutView->setFieldOverlay(pending);
+        return;
+    }
+
+    const QString metaPath = QDir(outDir).filePath(QStringLiteral("field_slice_meta.json"));
+    if (!loadFieldOverlayFromCache(metaPath)) {
+        pending.status = tr("Could not load field_slice_meta.json");
+        m_ui->layoutView->setFieldOverlay(pending);
+    } else {
+        m_fieldPreferAutoZ = false;
+    }
+}
+
 void MainWindow::updateResultsViewerFromModel(bool force)
 {
     if (!m_resultsViewer)
@@ -904,6 +1357,10 @@ void MainWindow::updateResultsViewerFromModel(bool force)
     } else {
         m_resultsViewer->rescan();
     }
+
+    if (m_ui && m_ui->layoutView && m_ui->layoutView->isFieldMode()
+        && !m_ui->layoutView->fieldOverlay().valid())
+        scheduleFieldOverlayRefresh(false);
 }
 
 void MainWindow::syncResultsViewerHostPython()
@@ -957,8 +1414,10 @@ void MainWindow::saveSettings()
         settings.beginGroup(QStringLiteral("LayoutPreview"));
         settings.setValue(QStringLiteral("usedLayersOnly"), m_layoutLayerPanel->usedLayersOnly());
         settings.setValue(QStringLiteral("showCoordinates"), m_layoutLayerPanel->showCoordinates());
-        if (m_ui && m_ui->layoutView)
+        if (m_ui && m_ui->layoutView) {
             settings.setValue(QStringLiteral("view3d"), m_ui->layoutView->isView3d());
+            settings.setValue(QStringLiteral("viewField"), m_ui->layoutView->isFieldMode());
+        }
         settings.endGroup();
     }
 }
@@ -991,7 +1450,6 @@ void MainWindow::loadSettings()
     }
 
     if (m_ui && m_ui->dockRunControl && m_ui->dockLog) {
-        // Use isHidden(): tabbed docks can report !isVisible() while still open.
         if (m_ui->dockRunControl->isHidden() && m_ui->dockLog->isHidden()) {
             m_ui->dockRunControl->show();
             m_ui->dockLog->show();
@@ -2314,6 +2772,9 @@ void MainWindow::refreshLayoutPreview()
     }
 
     m_ui->layoutView->setPolygons(polys, styles, ports);
+    // Don't block the Substrate tab on a Python re-export; keep the last overlay.
+    if (m_ui->layoutView->isFieldMode() && !m_ui->layoutView->fieldOverlay().valid())
+        scheduleFieldOverlayRefresh();
 
     if (m_layoutLayerPanel) {
         QSet<int> usedGds;

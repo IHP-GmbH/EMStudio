@@ -28,6 +28,7 @@
 #include <QVariant>
 #include <QPointer>
 #include <QMainWindow>
+#include <QProcess>
 
 #include "pythonparser.h"
 #include "sanitycheck.h"
@@ -37,6 +38,7 @@ class QProcessEnvironment;
 class QLineEdit;
 class QComboBox;
 class QTableWidget;
+class QTimer;
 class QtProperty;
 class QListWidgetItem;
 class QtVariantProperty;
@@ -394,6 +396,63 @@ private:
                                                            const QString &targetLayer);
     QString                         resolveParaViewExecutable() const;
     QString                         findThermalResultsVtu(const QString &runDir) const;
+    /*!*******************************************************************************************************************
+     * \brief Locates the newest field dump under \a runDir (or current results dir).
+     *
+     * Prefers thermal VTU for Elmer/Thermal, then Palace \c .pvd, then OpenEMS/VTK
+     * meshes (\c .vtr/.vtu/.vtk/.vti).
+     *
+     * \param runDir Optional results root; empty → \c resolveResultsDirectory().
+     * \return Absolute path, or empty if none found.
+     **********************************************************************************************************************/
+    QString                         findFieldDumpPath(const QString &runDir = QString()) const;
+    /*!*******************************************************************************************************************
+     * \brief Host Python for \c field_slice_export.py (PyVista/Pillow).
+     *
+     * Order: Preferences FIELD_VIEWER_PYTHON, then the active tool Python, then
+     * other configured Pythons, then PATH \c python3/\c python.
+     *
+     * \param[out] detailOut Optional human-readable path or error hint.
+     **********************************************************************************************************************/
+    QString                         resolveFieldViewerPython(QString *detailOut = nullptr) const;
+    /*! Absolute path to \c scripts/field_slice_export.py next to the app / sources. */
+    QString                         resolveFieldSliceExportScript() const;
+    /*!*******************************************************************************************************************
+     * \brief Starts (or reuses cache for) a Field Z-slice export into LayoutView.
+     *
+     * Runs asynchronously via \c QProcess; kills any in-flight export when a newer
+     * request arrives. Passes layout content bounds as ROI when available.
+     *
+     * \param force True to ignore a still-valid on-screen overlay and re-export.
+     **********************************************************************************************************************/
+    void                            refreshFieldOverlay(bool force = false);
+    /*!*******************************************************************************************************************
+     * \brief Loads \c field_slice_meta.json + PNG into LayoutView.
+     *
+     * Reads the PNG via \c QImage::loadFromData so a concurrent writer cannot
+     * leave a half-decoded pixmap. Returns false if meta/PNG cannot be loaded.
+     *
+     * \param metaPath Absolute path to \c field_slice_meta.json.
+     **********************************************************************************************************************/
+    bool                            loadFieldOverlayFromCache(const QString &metaPath);
+    /*!*******************************************************************************************************************
+     * \brief Slot: LayoutView Field mode toggled — clear or schedule first export.
+     **********************************************************************************************************************/
+    void                            onLayoutFieldModeChanged(bool on);
+    /*!*******************************************************************************************************************
+     * \brief Slot: LayoutView Z / Log / Arrows request — queue a forced re-export.
+     **********************************************************************************************************************/
+    void                            onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
+    /*!*******************************************************************************************************************
+     * \brief Debounces Field exports so rapid UI changes coalesce into one run.
+     **********************************************************************************************************************/
+    void                            scheduleFieldOverlayRefresh(bool force = false);
+    /*!*******************************************************************************************************************
+     * \brief Slot: async Field export process finished — load cache or show error.
+     *
+     * Ignores superseded tokens and CrashExit (killed for a newer Z).
+     **********************************************************************************************************************/
+    void                            onFieldExportFinished(int exitCode, QProcess::ExitStatus status);
     void                            openThermalResultsInParaView(const QString &runDir);
     bool                            isElmerFamilyKey(const QString &key) const;
     bool                            isElmerThermalKey(const QString &key) const;
@@ -574,6 +633,17 @@ private:
     ResultsViewer                  *m_resultsViewer = nullptr;
     QTableWidget                   *m_tblThermalObjects = nullptr;
     class LayoutLayerPanel         *m_layoutLayerPanel = nullptr;
+    QTimer                         *m_fieldSliceDebounce = nullptr;
+    qreal                           m_pendingFieldZUm = 0.0;
+    bool                            m_pendingFieldLog = false;
+    bool                            m_pendingFieldArrows = true;
+    bool                            m_fieldExportBusy = false;
+    bool                            m_fieldPreferAutoZ = true;
+    bool                            m_fieldRefreshForce = false;
+    int                             m_fieldExportToken = 0;
+    QString                         m_fieldLastDumpPath;
+    QString                         m_fieldExportOutDir;
+    QProcess                       *m_fieldExportProcess = nullptr;
 
     bool                            m_headless = false;
     bool                            m_blockPortChanges;

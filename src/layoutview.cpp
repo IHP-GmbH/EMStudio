@@ -29,6 +29,7 @@
 #include <QGraphicsPolygonItem>
 #include <QGraphicsLineItem>
 #include <QGraphicsSimpleTextItem>
+#include <QLineF>
 #include <QFont>
 #include <QFontMetrics>
 #include <QTransform>
@@ -39,6 +40,13 @@
 #include <QGestureEvent>
 #include <QPinchGesture>
 #include <QNativeGestureEvent>
+#include <QSlider>
+#include <QCheckBox>
+#include <QLabel>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QGraphicsPixmapItem>
+#include <QPixmap>
 #include <QtGlobal>
 #include <QtMath>
 #include <cmath>
@@ -88,8 +96,72 @@ LayoutView::LayoutView(QWidget *parent)
             "  background: rgba(40,100,180,210);"
             "  color: white;"
             "  border-color: #245a9e;"
+            "}"
+            "QToolButton:disabled {"
+            "  background: rgba(220,220,220,200);"
+            "  color: #888;"
             "}"));
     connect(m_modeBtn, &QToolButton::toggled, this, &LayoutView::onModeButtonToggled);
+
+    m_fieldBtn = new QToolButton(this);
+    m_fieldBtn->setObjectName(QStringLiteral("layoutViewFieldBtn"));
+    m_fieldBtn->setCheckable(true);
+    m_fieldBtn->setAutoRaise(false);
+    m_fieldBtn->setCursor(Qt::PointingHandCursor);
+    m_fieldBtn->setFixedSize(48, 26);
+    m_fieldBtn->setText(QStringLiteral("Field"));
+    m_fieldBtn->setStyleSheet(m_modeBtn->styleSheet());
+    m_fieldBtn->setToolTip(tr("Field view: Z-clip heatmap + optional arrows.\n"
+                              "Disables 3D while active. Requires a field dump (fdump / VTK / VTU)."));
+    connect(m_fieldBtn, &QToolButton::toggled, this, &LayoutView::onFieldButtonToggled);
+
+    m_fieldPanel = new QWidget(this);
+    m_fieldPanel->setObjectName(QStringLiteral("layoutViewFieldPanel"));
+    m_fieldPanel->setStyleSheet(
+        QStringLiteral(
+            "QWidget#layoutViewFieldPanel {"
+            "  background: rgba(255,255,255,230);"
+            "  border: 1px solid #9a9a9a;"
+            "  border-radius: 4px;"
+            "}"
+            "QLabel { font-size: 10px; color: #333; }"
+            "QCheckBox { font-size: 10px; }"));
+    auto *panelLay = new QVBoxLayout(m_fieldPanel);
+    panelLay->setContentsMargins(6, 3, 6, 3);
+    panelLay->setSpacing(2);
+    m_fieldStatusLbl = new QLabel(m_fieldPanel);
+    m_fieldStatusLbl->setObjectName(QStringLiteral("layoutViewFieldStatus"));
+    m_fieldStatusLbl->setWordWrap(false);
+    m_fieldStatusLbl->setFixedWidth(168);
+    m_fieldStatusLbl->setMaximumHeight(16);
+    m_fieldStatusLbl->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    panelLay->addWidget(m_fieldStatusLbl);
+    auto *zRow = new QHBoxLayout;
+    zRow->setSpacing(4);
+    zRow->addWidget(new QLabel(tr("Z"), m_fieldPanel));
+    m_fieldZSlider = new QSlider(Qt::Horizontal, m_fieldPanel);
+    m_fieldZSlider->setRange(0, 1000);
+    m_fieldZSlider->setValue(500);
+    m_fieldZSlider->setFixedWidth(140);
+    zRow->addWidget(m_fieldZSlider, 1);
+    panelLay->addLayout(zRow);
+    auto *optRow = new QHBoxLayout;
+    optRow->setSpacing(8);
+    m_fieldLogChk = new QCheckBox(tr("Log"), m_fieldPanel);
+    m_fieldArrowsChk = new QCheckBox(tr("Arrows"), m_fieldPanel);
+    m_fieldArrowsChk->setChecked(true);
+    optRow->addWidget(m_fieldLogChk);
+    optRow->addWidget(m_fieldArrowsChk);
+    optRow->addStretch(1);
+    panelLay->addLayout(optRow);
+    m_fieldPanel->setVisible(false);
+    m_fieldPanel->adjustSize();
+
+    connect(m_fieldZSlider, &QSlider::valueChanged, this, &LayoutView::onFieldZSliderPreview);
+    connect(m_fieldZSlider, &QSlider::sliderReleased, this, &LayoutView::onFieldZSliderCommitted);
+    connect(m_fieldLogChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
+    connect(m_fieldArrowsChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
+
     loadViewModeFromSettings();
     {
         const QSignalBlocker block(m_modeBtn);
@@ -103,8 +175,15 @@ LayoutView::LayoutView(QWidget *parent)
                                   : tr("Top view (click for 3D).\n"
                                        "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom"));
     }
+    {
+        const QSignalBlocker block(m_fieldBtn);
+        m_fieldBtn->setChecked(m_fieldOn);
+    }
+    syncFloatingControls();
     m_modeBtn->raise();
-    repositionModeButton();
+    m_fieldBtn->raise();
+    m_fieldPanel->raise();
+    repositionFloatingControls();
     setContextMenuPolicy(Qt::NoContextMenu);
 }
 
@@ -174,11 +253,13 @@ void LayoutView::rebuildScene(bool refit)
 
     m_highlightedName = keepHighlight;
     applyHighlight();
-    repositionModeButton();
+    repositionFloatingControls();
 }
 
 void LayoutView::rebuildScene2D()
 {
+    addFieldOverlayItems();
+
     struct Item {
         GdsFlatPolygon poly;
         LayerStyle style;
@@ -392,6 +473,47 @@ void LayoutView::rebuildScene2D()
                              double(it.style.order) + 0.4, dirLabel);
             }
         }
+    }
+
+    if (m_fieldOn && m_field.valid() && m_field.showArrows && !m_field.arrows.isEmpty()) {
+        qreal maxMag = 1e-30;
+        for (const FieldArrow &a : m_field.arrows)
+            maxMag = qMax(maxMag, qAbs(a.mag));
+        const qreal extent = qMax(qAbs(m_field.xmaxUm - m_field.xminUm),
+                                  qAbs(m_field.ymaxUm - m_field.yminUm));
+        const qreal baseLen = qMax(0.5, extent * 0.04);
+        for (const FieldArrow &a : m_field.arrows) {
+            const qreal len = baseLen * qBound(0.25, qAbs(a.mag) / maxMag, 1.0);
+            QPointF dir(a.dx, -a.dy); // GDS Y-up → scene Y-down
+            const qreal n = std::hypot(dir.x(), dir.y());
+            if (n < 1e-12)
+                continue;
+            dir /= n;
+            const QPointF origin(a.xUm, -a.yUm);
+            const QPointF tip = origin + dir * len;
+            QPen pen(QColor(20, 20, 20, 200));
+            pen.setWidthF(0);
+            pen.setCosmetic(true);
+            auto *shaft = m_scene->addLine(QLineF(origin, tip), pen);
+            shaft->setZValue(20000);
+            shaft->setFlag(QGraphicsItem::ItemIgnoresTransformations, false);
+            // Arrowhead in scene units
+            const QPointF ortho(-dir.y(), dir.x());
+            const QPointF h1 = tip - dir * (len * 0.28) + ortho * (len * 0.18);
+            const QPointF h2 = tip - dir * (len * 0.28) - ortho * (len * 0.18);
+            QPolygonF head;
+            head << tip << h1 << h2;
+            auto *headItem = m_scene->addPolygon(head, Qt::NoPen, QBrush(QColor(20, 20, 20, 200)));
+            headItem->setZValue(20001);
+        }
+    }
+
+    if (m_fieldOn && m_field.valid()) {
+        // Scene Y-down: field image covers [xmin,-ymax] .. [xmax,-ymin].
+        const QRectF fieldScene(QPointF(m_field.xminUm, -m_field.ymaxUm),
+                                QPointF(m_field.xmaxUm, -m_field.yminUm));
+        bounds = bounds.isNull() ? fieldScene.normalized()
+                                 : bounds.united(fieldScene.normalized());
     }
 
     if (!bounds.isNull()) {
@@ -794,8 +916,13 @@ void LayoutView::resetOrbitAngles()
 
 void LayoutView::setViewMode(ViewMode mode)
 {
-    if (m_viewMode == mode)
+    if (mode == ViewMode::Iso3D && m_fieldOn)
+        setFieldMode(false);
+
+    if (m_viewMode == mode) {
+        syncFloatingControls();
         return;
+    }
     m_viewMode = mode;
     if (mode == ViewMode::Iso3D)
         resetOrbitAngles();
@@ -811,6 +938,7 @@ void LayoutView::setViewMode(ViewMode mode)
                                        "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom"));
     }
     saveViewModeToSettings();
+    syncFloatingControls();
     if (!m_polys.isEmpty())
         rebuildScene(true);
 }
@@ -820,13 +948,312 @@ void LayoutView::onModeButtonToggled(bool on)
     setViewMode(on ? ViewMode::Iso3D : ViewMode::Top2D);
 }
 
-void LayoutView::repositionModeButton()
+/*!*******************************************************************************************************************
+ * \brief Slot: Field toolbutton toggled — forwards to \c setFieldMode.
+ **********************************************************************************************************************/
+void LayoutView::onFieldButtonToggled(bool on)
 {
-    if (!m_modeBtn)
+    setFieldMode(on);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Enables or disables Field mode (Z-clip heatmap overlay).
+ *
+ * Mutually exclusive with Iso3D. Persists LayoutPreview/viewField and emits
+ * \c fieldModeChanged so MainWindow can start / stop slice exports.
+ *
+ * \param on True to enter Field mode.
+ **********************************************************************************************************************/
+void LayoutView::setFieldMode(bool on)
+{
+    if (m_fieldOn == on) {
+        syncFloatingControls();
         return;
+    }
+    m_fieldOn = on;
+    if (m_fieldOn && m_viewMode == ViewMode::Iso3D) {
+        m_viewMode = ViewMode::Top2D;
+        if (m_modeBtn) {
+            const QSignalBlocker block(m_modeBtn);
+            m_modeBtn->setChecked(false);
+            m_modeBtn->setText(QStringLiteral("2D"));
+            m_modeBtn->setToolTip(tr("Top view (click for 3D).\n"
+                                     "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom"));
+        }
+    }
+    if (m_fieldBtn) {
+        const QSignalBlocker block(m_fieldBtn);
+        m_fieldBtn->setChecked(m_fieldOn);
+    }
+    saveViewModeToSettings();
+    syncFloatingControls();
+    emit fieldModeChanged(m_fieldOn);
+    if (!m_polys.isEmpty() || m_field.valid() || !m_field.status.isEmpty())
+        rebuildScene(true);
+    // Export is triggered once from MainWindow::onLayoutFieldModeChanged (debounced).
+}
+
+/*!*******************************************************************************************************************
+ * \brief Replaces the current Field overlay and refreshes the floating panel.
+ *
+ * \param overlay Heatmap, GDS µm frame, Z range, quantity, arrows, status.
+ **********************************************************************************************************************/
+void LayoutView::setFieldOverlay(const FieldOverlay &overlay)
+{
+    const bool sameImage = (overlay.image.cacheKey() == m_field.image.cacheKey())
+            && (overlay.image.isNull() == m_field.image.isNull());
+    const bool sameFrame =
+            qFuzzyCompare(overlay.xminUm, m_field.xminUm)
+            && qFuzzyCompare(overlay.xmaxUm, m_field.xmaxUm)
+            && qFuzzyCompare(overlay.yminUm, m_field.yminUm)
+            && qFuzzyCompare(overlay.ymaxUm, m_field.ymaxUm)
+            && (overlay.showArrows == m_field.showArrows)
+            && (overlay.arrows.size() == m_field.arrows.size());
+    const bool statusOnly = sameImage && sameFrame && m_field.valid();
+    const bool sliderDown = m_fieldZSlider && m_fieldZSlider->isSliderDown();
+
+    m_field = overlay;
+
+    // Keep the handle where the user dragged it: a status-only "Exporting…" update
+    // still carries the previous slice zUm and must not yank the slider back.
+    if (!sliderDown && !statusOnly)
+        updateFieldControlsFromOverlay();
+
+    syncFloatingControls();
+    if (m_fieldOn && !statusOnly)
+        rebuildScene(false);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Clears the Field overlay (heatmap / status) and rebuilds if Field is on.
+ **********************************************************************************************************************/
+void LayoutView::clearFieldOverlay()
+{
+    m_field = FieldOverlay{};
+    syncFloatingControls();
+    if (m_fieldOn)
+        rebuildScene(false);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Z clip [µm] from the Field Z slider mapped into overlay zMin..zMax.
+ **********************************************************************************************************************/
+qreal LayoutView::fieldClipZUm() const
+{
+    if (!m_fieldZSlider)
+        return m_field.zUm;
+    const qreal z0 = m_field.zMinUm;
+    const qreal z1 = qMax(m_field.zMaxUm, z0 + 1e-9);
+    const qreal t = m_fieldZSlider->value() / 1000.0;
+    return z0 + t * (z1 - z0);
+}
+
+/*!*******************************************************************************************************************
+ * \brief True when the Field panel Log checkbox is checked.
+ **********************************************************************************************************************/
+bool LayoutView::fieldLogScale() const
+{
+    return m_fieldLogChk && m_fieldLogChk->isChecked();
+}
+
+/*!*******************************************************************************************************************
+ * \brief True when the Field panel Arrows checkbox is checked.
+ **********************************************************************************************************************/
+bool LayoutView::fieldShowArrows() const
+{
+    return m_fieldArrowsChk && m_fieldArrowsChk->isChecked();
+}
+
+/*!*******************************************************************************************************************
+ * \brief GDS µm Y-up bounding box of non-port layout polygons (for field crop).
+ *
+ * Skips port GDS layers (201–299) and styles with kind=port.
+ **********************************************************************************************************************/
+QRectF LayoutView::layoutContentBoundsUm() const
+{
+    QRectF bb;
+    bool any = false;
+    for (const GdsFlatPolygon &p : m_polys) {
+        if (p.layer >= 201 && p.layer <= 299)
+            continue;
+        if (m_styles.contains(p.layer)
+            && m_styles.value(p.layer).kind.compare(QLatin1String("port"), Qt::CaseInsensitive) == 0)
+            continue;
+        for (const QPointF &pt : p.pointsUm) {
+            if (!any) {
+                bb = QRectF(pt, pt);
+                any = true;
+            } else {
+                bb.setLeft(qMin(bb.left(), pt.x()));
+                bb.setRight(qMax(bb.right(), pt.x()));
+                bb.setTop(qMin(bb.top(), pt.y()));
+                bb.setBottom(qMax(bb.bottom(), pt.y()));
+            }
+        }
+    }
+    return any ? bb.normalized() : QRectF();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Adds the Field heatmap pixmap under layout polygons (scene Y-down).
+ **********************************************************************************************************************/
+void LayoutView::addFieldOverlayItems()
+{
+    if (!m_fieldOn || !m_field.valid())
+        return;
+
+    const QPixmap pix = QPixmap::fromImage(m_field.image);
+    if (pix.isNull())
+        return;
+
+    auto *item = m_scene->addPixmap(pix);
+    const qreal wUm = m_field.xmaxUm - m_field.xminUm;
+    const qreal hUm = m_field.ymaxUm - m_field.yminUm;
+    const qreal sx = wUm / qMax(1, pix.width());
+    const qreal sy = hUm / qMax(1, pix.height());
+    item->setTransform(QTransform::fromScale(sx, sy));
+    // Image row 0 = ymax (GDS); scene Y grows down → place top-left at (xmin, -ymax).
+    item->setPos(m_field.xminUm, -m_field.ymaxUm);
+    item->setZValue(-100000);
+    item->setOpacity(0.72);
+    item->setAcceptedMouseButtons(Qt::NoButton);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Syncs Z slider / Log / Arrows widgets from \c m_field without re-export.
+ **********************************************************************************************************************/
+void LayoutView::updateFieldControlsFromOverlay()
+{
+    if (!m_fieldZSlider)
+        return;
+    m_blockFieldControls = true;
+    const qreal z0 = m_field.zMinUm;
+    const qreal z1 = qMax(m_field.zMaxUm, z0 + 1e-9);
+    const qreal z = qBound(z0, m_field.zUm, z1);
+    const int slider = qRound(1000.0 * (z - z0) / (z1 - z0));
+    m_fieldZSlider->setValue(qBound(0, slider, 1000));
+    if (m_fieldLogChk)
+        m_fieldLogChk->setChecked(m_field.logScale);
+    if (m_fieldArrowsChk)
+        m_fieldArrowsChk->setChecked(m_field.showArrows);
+    m_blockFieldControls = false;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Shows/hides Field panel, updates compact status line, repositions controls.
+ **********************************************************************************************************************/
+void LayoutView::syncFloatingControls()
+{
+    if (m_modeBtn)
+        m_modeBtn->setEnabled(!m_fieldOn);
+    if (m_fieldPanel)
+        m_fieldPanel->setVisible(m_fieldOn);
+    if (m_fieldStatusLbl) {
+        QString full;
+        const bool exporting = m_field.status.contains(QStringLiteral("Exporting"), Qt::CaseInsensitive);
+        if (!m_field.status.isEmpty() && !exporting)
+            full = m_field.status;
+        else if (m_field.valid()) {
+            full = tr("%1 @ Z=%2 µm")
+                       .arg(m_field.quantity.isEmpty()
+                                ? QStringLiteral("Field")
+                                : m_field.quantity)
+                       .arg(m_field.zUm, 0, 'g', 4);
+            if (exporting)
+                full += tr(" (updating…)");
+        } else if (!m_field.status.isEmpty())
+            full = m_field.status;
+        else if (m_fieldOn)
+            full = tr("Loading field slice…");
+
+        // One compact line in the panel; full text on hover (and Simulation log).
+        QString shortTxt = full;
+        shortTxt.replace(QLatin1Char('\n'), QLatin1Char(' '));
+        shortTxt = shortTxt.simplified();
+        if (shortTxt.size() > 42)
+            shortTxt = shortTxt.left(40) + QStringLiteral("…");
+        m_fieldStatusLbl->setText(shortTxt);
+        m_fieldStatusLbl->setToolTip(full);
+        m_fieldStatusLbl->setVisible(!shortTxt.isEmpty());
+    }
+    if (m_fieldPanel)
+        m_fieldPanel->adjustSize();
+    repositionFloatingControls();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Emits \c fieldSliceRequest from current slider / checkbox state.
+ **********************************************************************************************************************/
+void LayoutView::emitFieldSliceRequest()
+{
+    emit fieldSliceRequest(fieldClipZUm(), fieldLogScale(), fieldShowArrows());
+}
+
+/*!*******************************************************************************************************************
+ * \brief Live Z readout while dragging; export is deferred until slider release.
+ **********************************************************************************************************************/
+void LayoutView::onFieldZSliderPreview(int /*value*/)
+{
+    if (m_blockFieldControls || !m_fieldOn || !m_fieldStatusLbl)
+        return;
+    // Instant Z readout while dragging — export only on release.
+    const QString q = m_field.quantity.isEmpty() ? QStringLiteral("Field") : m_field.quantity;
+    const QString full = tr("%1 @ Z=%2 µm").arg(q).arg(fieldClipZUm(), 0, 'g', 4);
+    QString shortTxt = full;
+    if (shortTxt.size() > 42)
+        shortTxt = shortTxt.left(40) + QStringLiteral("…");
+    m_fieldStatusLbl->setText(shortTxt);
+    m_fieldStatusLbl->setToolTip(full + tr("\n(release slider to reload slice)"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Slider released → emit \c fieldSliceRequest for a new Z-slice export.
+ **********************************************************************************************************************/
+void LayoutView::onFieldZSliderCommitted()
+{
+    if (m_blockFieldControls || !m_fieldOn)
+        return;
+    emitFieldSliceRequest();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Log / Arrows changed; arrow-only toggles redraw without re-export.
+ **********************************************************************************************************************/
+void LayoutView::onFieldControlsChanged()
+{
+    if (m_blockFieldControls || !m_fieldOn)
+        return;
+    m_field.logScale = fieldLogScale();
+    m_field.showArrows = fieldShowArrows();
+    // Arrow toggle alone can redraw without re-export.
+    if (sender() == m_fieldArrowsChk && m_field.valid()) {
+        rebuildScene(false);
+        return;
+    }
+    emitFieldSliceRequest();
+}
+
+void LayoutView::repositionFloatingControls()
+{
     const int m = 8;
-    m_modeBtn->move(width() - m_modeBtn->width() - m, m);
-    m_modeBtn->raise();
+    int x = width() - m;
+    if (m_modeBtn) {
+        x -= m_modeBtn->width();
+        m_modeBtn->move(x, m);
+        m_modeBtn->raise();
+        x -= m;
+    }
+    if (m_fieldBtn) {
+        x -= m_fieldBtn->width();
+        m_fieldBtn->move(x, m);
+        m_fieldBtn->raise();
+    }
+    if (m_fieldPanel && m_fieldPanel->isVisible()) {
+        m_fieldPanel->adjustSize();
+        const int px = width() - m_fieldPanel->width() - m;
+        m_fieldPanel->move(qMax(m, px), m + 30);
+        m_fieldPanel->raise();
+    }
 }
 
 void LayoutView::loadViewModeFromSettings()
@@ -834,15 +1261,18 @@ void LayoutView::loadViewModeFromSettings()
     QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     const bool v3d = settings.value(QStringLiteral("view3d"), false).toBool();
+    const bool vField = settings.value(QStringLiteral("viewField"), false).toBool();
     settings.endGroup();
-    m_viewMode = v3d ? ViewMode::Iso3D : ViewMode::Top2D;
+    m_fieldOn = vField;
+    m_viewMode = (v3d && !m_fieldOn) ? ViewMode::Iso3D : ViewMode::Top2D;
 }
 
 void LayoutView::saveViewModeToSettings() const
 {
     QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
     settings.beginGroup(QStringLiteral("LayoutPreview"));
-    settings.setValue(QStringLiteral("view3d"), m_viewMode == ViewMode::Iso3D);
+    settings.setValue(QStringLiteral("view3d"), m_viewMode == ViewMode::Iso3D && !m_fieldOn);
+    settings.setValue(QStringLiteral("viewField"), m_fieldOn);
     settings.endGroup();
 }
 
@@ -1146,7 +1576,7 @@ void LayoutView::resizeEvent(QResizeEvent *event)
     QGraphicsView::resizeEvent(event);
     if (!m_zoomLocked)
         fitContent();
-    repositionModeButton();
+    repositionFloatingControls();
 }
 
 /*!*******************************************************************************************************************

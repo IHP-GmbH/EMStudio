@@ -202,7 +202,9 @@ void LayoutViewTest::viewMode3d_isoExtrusion_persistsInSettings()
     QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     const QVariant prev = settings.value(QStringLiteral("view3d"));
+    const QVariant prevField = settings.value(QStringLiteral("viewField"));
     settings.setValue(QStringLiteral("view3d"), false);
+    settings.setValue(QStringLiteral("viewField"), false);
     settings.endGroup();
     settings.sync();
 
@@ -210,6 +212,9 @@ void LayoutViewTest::viewMode3d_isoExtrusion_persistsInSettings()
     view.setAttribute(Qt::WA_DontShowOnScreen, true);
     view.resize(400, 300);
     view.show();
+    // Leftover LayoutPreview/viewField from another suite would force Iso3D → Top2D.
+    if (view.isFieldMode())
+        view.setFieldMode(false);
     QCOMPARE(view.viewMode(), LayoutView::ViewMode::Top2D);
     QVERIFY(!view.isView3d());
 
@@ -269,6 +274,10 @@ void LayoutViewTest::viewMode3d_isoExtrusion_persistsInSettings()
         settings.setValue(QStringLiteral("view3d"), prev);
     else
         settings.remove(QStringLiteral("view3d"));
+    if (prevField.isValid())
+        settings.setValue(QStringLiteral("viewField"), prevField);
+    else
+        settings.remove(QStringLiteral("viewField"));
     settings.endGroup();
     settings.sync();
 

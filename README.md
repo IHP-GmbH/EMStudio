@@ -137,13 +137,18 @@ and **Elmer Thermal** (steady-state heat conduction).
 - Project page: https://www.elmerfem.org/
 - Source / downloads: https://github.com/ElmerCSC/elmerfem
 
-For thermal field visualization after a successful run, EMStudio opens the **Substrate** tab
-and turns on **Field** at the hottest Z (max temperature). Set `FIELD_VIEWER_PYTHON` in
-Preferences to a host Python with PyVista + Pillow (`pip install pyvista pillow`).
+For thermal / EM field visualization after a successful run, EMStudio opens the **Substrate**
+tab and turns on **Field** (Z-clip heatmap). Click **3D** while Field is on for an interactive
+PyVista volume window (no ParaView). Set `FIELD_VIEWER_PYTHON` in Preferences to a host
+Python with PyVista + Pillow (`pip install pyvista pillow`).
 
-The screenshot below shows an **Elmer Thermal** stackup in EMStudio:
+**Layout Field** (2D Z-clip on the Substrate layout pane):
 
-<img src="./doc/png/elmer_thermal1.png" alt="Elmer Thermal workflow with Layout Field" width="700">
+<img src="./doc/png/field.png" alt="Layout Field Z-clip heatmap on Substrate" width="700">
+
+**Field → 3D** (separate PyVista volume window):
+
+<img src="./doc/png/field3d.png" alt="EMStudio Field 3D PyVista volume viewer" width="700">
 
 ---
 
@@ -359,6 +364,8 @@ python -m pip install scipy pyvistaqt PySide6
 ```
 
 If PyVista is missing, the Field panel shows a short hint and the Simulation log prints the install command. If the 3D viewer fails to start, check the Simulation log (`[Field 3D]`). The colormap is autoscaled per Z-slice (2–98% percentiles), so a nearly flat field far from the DUT can look like a strong rainbow — prefer the auto-Z hotspot or enable **Log**. Nested metal rectangles that look “shifted” are usually different GDS layers, not a broken transform.
+
+See screenshots under [Elmer (EM and Thermal)](#elmer-em-and-thermal) (`field.png` / `field3d.png`).
 
 Before leaving any tab, save your changes using File > Save or Ctrl+S
 

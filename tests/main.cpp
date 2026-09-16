@@ -179,6 +179,17 @@ int main(int argc, char **argv)
                 testStatus == 0 ? "PASS" : "FAIL",
                 test.name.toUtf8().constData());
         fflush(stdout);
+        if (testStatus != 0) {
+            QFile failed(logFile);
+            if (failed.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                const QByteArray body = failed.readAll();
+                failed.close();
+                fprintf(stdout, "----- %s detail -----\n", test.name.toUtf8().constData());
+                fwrite(body.constData(), 1, size_t(body.size()), stdout);
+                fprintf(stdout, "----- end %s -----\n", test.name.toUtf8().constData());
+                fflush(stdout);
+            }
+        }
     }
 
     mergeLogs(logFiles, mergedLog);

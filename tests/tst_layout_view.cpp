@@ -14,6 +14,7 @@
 #include <QSettings>
 #include <QSignalSpy>
 #include <QToolButton>
+#include <QCoreApplication>
 #include <QWheelEvent>
 
 #include "layoutview.h"
@@ -311,16 +312,30 @@ void LayoutViewTest::fieldMode_keeps2d_and3dOpensExternalSignal()
     QVERIFY(!view.isFieldVolume());
 
     QSignalSpy spy(&view, &LayoutView::fieldExternalVolumeRequested);
+    QVERIFY(spy.isValid());
     // Simulate the 3D toolbutton while Field is on.
     auto *modeBtn = view.findChild<QToolButton *>(QStringLiteral("layoutViewModeBtn"));
     QVERIFY(modeBtn);
     QCOMPARE(modeBtn->text(), QStringLiteral("3D"));
-    modeBtn->setChecked(true);
+    QVERIFY(!modeBtn->isChecked());
+    // Prefer click(): some platforms coalesce setChecked with prior syncFloatingControls.
+    QTest::mouseClick(modeBtn, Qt::LeftButton);
+    QCoreApplication::processEvents();
+    if (spy.count() == 0) {
+        // Fallback for headless/offscreen where click may not toggle.
+        modeBtn->setChecked(true);
+        QCoreApplication::processEvents();
+    }
     QCOMPARE(spy.count(), 1);
     QVERIFY(!view.isView3d());
     QVERIFY(view.isFieldMode());
     QCOMPARE(modeBtn->text(), QStringLiteral("3D"));
     QVERIFY(!modeBtn->isChecked());
+
+    // Iso3D while Field is on must stay Top2D (volume is external only).
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    QVERIFY(!view.isView3d());
+    QVERIFY(view.isFieldMode());
 
     LayoutView::FieldOverlay ov;
     QImage img(32, 32, QImage::Format_ARGB32);

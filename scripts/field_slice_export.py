@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Export a Z-clip field heatmap (+ optional in-plane arrows) for EMStudio Layout Field view.
+"""Export a Z-clip field heatmap (+ optional in-plane arrows) or a 3D volume
+render for EMStudio Layout Field view.
 
-Reads Palace .pvd / OpenEMS VTK / Elmer .vtu via PyVista, writes:
-  <outdir>/field_slice_meta.json
-  <outdir>/field_slice.png
+Reads Palace .pvd / OpenEMS VTK / Elmer .vtu via PyVista, writes either:
+  <outdir>/field_slice_meta.json + field_slice.png     (2D Z-clip)
+  <outdir>/field_volume_meta.json + field_volume.png   (--volume / Field+3D)
 
-Coordinates in meta are micrometres, GDS-style Y-up (same as LayoutView polygons).
+Coordinates in 2D meta are micrometres, GDS-style Y-up (same as LayoutView polygons).
+Volume meta places the screenshot in image-pixel space for full-pane display.
 """
 
 from __future__ import annotations
@@ -848,14 +850,690 @@ def export_slice(
     return meta
 
 
+def _volume_clip_paths(outdir: str):
+    # Clipped VTU from Elmer/Palace is usually UnstructuredGrid → .vtu (not .vtp).
+    return (
+        os.path.join(outdir, "field_volume_clip.vtu"),
+        os.path.join(outdir, "field_volume_clip.json"),
+    )
+
+
+def _volume_clip_fingerprint(
+    mesh_path: str,
+    clip_um: float,
+    axis: str,
+    log_scale: bool,
+    plot_name: str,
+    scale: float,
+) -> dict:
+    try:
+        mtime = os.path.getmtime(mesh_path)
+    except OSError:
+        mtime = 0.0
+    return {
+        "mesh": os.path.abspath(mesh_path),
+        "mtime": mtime,
+        "clip_um": round(float(clip_um), 9),
+        "axis": axis,
+        "log_scale": bool(log_scale),
+        "plot_name": plot_name,
+        "scale": float(scale),
+    }
+
+
+def _try_load_volume_clip(outdir: str, fingerprint: dict):
+    """Return (clipped_mesh, meta_side) if cache matches, else (None, None)."""
+    clip_path, fp_path = _volume_clip_paths(outdir)
+    if not (os.path.isfile(clip_path) and os.path.isfile(fp_path)):
+        return None, None
+    try:
+        with open(fp_path, encoding="utf-8") as f:
+            saved = json.load(f)
+        if saved != fingerprint:
+            return None, None
+        pv = _try_import_pyvista()
+        return pv.read(clip_path), saved
+    except Exception:
+        return None, None
+
+
+def _save_volume_clip(outdir: str, clipped, fingerprint: dict) -> None:
+    clip_path, fp_path = _volume_clip_paths(outdir)
+    try:
+        clipped.save(clip_path)
+        with open(fp_path, "w", encoding="utf-8") as f:
+            json.dump(fingerprint, f, indent=2)
+            f.write("\n")
+    except Exception as exc:
+        print(f"field_volume_export: clip cache save skipped: {exc}", file=sys.stderr)
+
+
+def _render_volume_png(
+    clipped,
+    plot_name: str,
+    log_scale: bool,
+    opacity: float,
+    azimuth_deg: float,
+    elevation_deg: float,
+    resolution: int,
+    png_path: str,
+    plotter=None,
+    cam_zoom: float = 1.0,
+):
+    """Offscreen screenshot — white background, pale cold regions, hot in color.
+
+    If \\a plotter is reused (volume serve), only camera + mesh are updated.
+    \\a cam_zoom > 1 moves closer; UI shows the PNG fitted 1:1 (no pixel stretch).
+    """
+    pv = _try_import_pyvista()
+    import numpy as np
+
+    res = max(int(resolution), 96)
+    if res % 2:
+        res += 1
+
+    # Prefer surface — far fewer cells than tet volume, much faster to draw.
+    try:
+        draw = clipped.extract_surface()
+        if getattr(draw, "n_points", 0) < 8:
+            draw = clipped
+    except Exception:
+        draw = clipped
+
+    own_plotter = plotter is None
+    if own_plotter:
+        pl = pv.Plotter(off_screen=True, window_size=(res, res))
+    else:
+        pl = plotter
+        try:
+            pl.clear()
+        except Exception:
+            pass
+        try:
+            if tuple(pl.window_size) != (res, res):
+                pl.window_size = [res, res]
+        except Exception:
+            pass
+
+    pl.set_background("white")
+    try:
+        pl.renderer.SetBackground(1.0, 1.0, 1.0)
+    except Exception:
+        pass
+
+    # White→cyan→yellow→red so cold bulk reads as a pale/white solid, not black.
+    try:
+        from matplotlib.colors import LinearSegmentedColormap
+
+        cmap = LinearSegmentedColormap.from_list(
+            "emstudio_field",
+            [
+                (1.0, 1.0, 1.0),
+                (0.75, 0.88, 1.0),
+                (0.35, 0.75, 0.95),
+                (0.2, 0.85, 0.45),
+                (1.0, 0.85, 0.15),
+                (0.95, 0.25, 0.1),
+            ],
+        )
+    except Exception:
+        cmap = "coolwarm"
+
+    add_kwargs = dict(
+        scalars=plot_name,
+        cmap=cmap,
+        opacity=float(np.clip(opacity, 0.35, 1.0)),
+        show_scalar_bar=True,
+        scalar_bar_args={
+            "title": plot_name,
+            "n_labels": 3,
+            "color": "black",
+        },
+        smooth_shading=True,
+        ambient=0.65,
+        diffuse=0.35,
+        specular=0.08,
+        show_edges=False,
+    )
+    if log_scale:
+        add_kwargs["log_scale"] = True
+
+    pl.add_mesh(draw, **add_kwargs)
+    try:
+        pl.add_axes(line_width=2, labels_off=False, color="black")
+    except Exception:
+        pass
+
+    # Frame the active field, not the whole air-box (otherwise the DUT is a speck).
+    focus_bounds = None
+    try:
+        pts = np.asarray(draw.points, dtype=float)
+        vals = np.asarray(draw.point_data[plot_name], dtype=float).ravel()
+        if pts.shape[0] == vals.shape[0] and vals.size >= 16:
+            finite = np.isfinite(vals)
+            if finite.any():
+                thr = float(np.percentile(vals[finite], 60))
+                hot = finite & (vals >= thr)
+                if hot.sum() < 12:
+                    thr = float(np.percentile(vals[finite], 40))
+                    hot = finite & (vals >= thr)
+                if hot.sum() >= 8:
+                    hp = pts[hot]
+                    pad = 0.08 * np.maximum(hp.max(axis=0) - hp.min(axis=0), 1e-9)
+                    lo = hp.min(axis=0) - pad
+                    hi = hp.max(axis=0) + pad
+                    focus_bounds = [
+                        float(lo[0]), float(hi[0]),
+                        float(lo[1]), float(hi[1]),
+                        float(lo[2]), float(hi[2]),
+                    ]
+    except Exception:
+        focus_bounds = None
+
+    pl.camera_position = "iso"
+    try:
+        pl.camera.azimuth = float(azimuth_deg)
+        pl.camera.elevation = float(elevation_deg)
+    except Exception:
+        pass
+    try:
+        if focus_bounds is not None:
+            pl.reset_camera(bounds=focus_bounds)
+        else:
+            pl.reset_camera()
+    except Exception:
+        pl.reset_camera()
+    try:
+        pl.camera.azimuth = float(azimuth_deg)
+        pl.camera.elevation = float(elevation_deg)
+        z = float(cam_zoom) if cam_zoom and cam_zoom > 0 else 1.0
+        z = max(0.25, min(z, 12.0))
+        # Base 1.6 fills the pane; user zoom multiplies on top.
+        pl.camera.zoom(1.6 * z)
+    except Exception:
+        pass
+
+    # Force pixel size on screenshot — resizing the Plotter alone is unreliable on Windows.
+    try:
+        pl.screenshot(png_path, transparent_background=False, window_size=(res, res))
+    except TypeError:
+        pl.screenshot(png_path, transparent_background=False)
+    if own_plotter:
+        pl.close()
+    return res
+
+
+def _serve_volume_loop(initial: dict) -> int:
+    """Long-lived worker: keep mesh + Plotter warm for fast orbit updates.
+
+    stdin/stdout: one JSON object per line.
+      load   → {"cmd":"load","input":...,"outdir":...}
+      render → {"cmd":"render","azimuth":..,"elevation":..,"z_um":..,"auto_z":..,"log":..,"resolution":..}
+      quit   → {"cmd":"quit"}
+    """
+    pv = _try_import_pyvista()
+    import numpy as np
+
+    state = {
+        "mesh_path": None,
+        "outdir": None,
+        "data_mesh": None,
+        "scale": 1.0,
+        "bounds_um": None,  # mxmin..zmax
+        "plot_name": None,
+        "names": [],
+        "clipped": None,
+        "clip_key": None,
+        "plotter": None,
+    }
+
+    def reply(obj: dict) -> None:
+        sys.stdout.write(json.dumps(obj, separators=(",", ":")) + "\n")
+        sys.stdout.flush()
+
+    def log(msg: str) -> None:
+        print(f"field_volume_serve: {msg}", file=sys.stderr, flush=True)
+
+    def do_load(req: dict) -> None:
+        mesh_path = req["input"]
+        outdir = req["outdir"]
+        os.makedirs(outdir, exist_ok=True)
+        mesh = pv.read(mesh_path)
+        if hasattr(mesh, "n_blocks"):
+            for i in range(mesh.n_blocks):
+                block = mesh[i]
+                if block is not None and getattr(block, "n_points", 0) > 0:
+                    mesh = block
+                    break
+        if mesh.n_points == 0:
+            raise RuntimeError("mesh has no points")
+        scale = req.get("scale_to_um")
+        if scale is None:
+            scale = _guess_scale_to_um(list(mesh.bounds))
+        else:
+            scale = float(scale)
+        names = _array_names(mesh)
+        scalar_name = _pick_scalar(names, req.get("quantity"))
+        if not scalar_name:
+            raise RuntimeError(f"no scalar arrays; arrays={names}")
+        if scalar_name in mesh.point_data:
+            data_mesh = mesh
+        elif scalar_name in mesh.cell_data:
+            data_mesh = mesh.cell_data_to_point_data()
+        else:
+            data_mesh = mesh
+        mesh_um = data_mesh.copy(deep=True)
+        mesh_um.points = np.asarray(mesh_um.points, dtype=float) * scale
+        arr = np.asarray(mesh_um.point_data[scalar_name], dtype=float)
+        if arr.ndim > 1:
+            mag = np.linalg.norm(arr.reshape(len(arr), -1), axis=1)
+            plot_name = f"|{scalar_name}|"
+            mesh_um.point_data[plot_name] = mag
+        else:
+            plot_name = scalar_name
+        bounds = _mesh_bounds_um(mesh, scale)
+        if state["plotter"] is not None:
+            try:
+                state["plotter"].close()
+            except Exception:
+                pass
+            state["plotter"] = None
+        state.update(
+            mesh_path=os.path.abspath(mesh_path),
+            outdir=outdir,
+            data_mesh=mesh_um,
+            scale=scale,
+            bounds_um=bounds,
+            plot_name=plot_name,
+            names=names,
+            clipped=None,
+            clip_key=None,
+        )
+        # Warm an offscreen plotter once (expensive on Windows).
+        state["plotter"] = pv.Plotter(off_screen=True, window_size=(768, 768))
+        state["plotter"].set_background("white")
+        reply(
+            {
+                "ok": True,
+                "cmd": "load",
+                "zmin_um": bounds[4],
+                "zmax_um": bounds[5],
+                "quantity": plot_name,
+            }
+        )
+
+    def do_render(req: dict) -> None:
+        if state["data_mesh"] is None:
+            raise RuntimeError("not loaded")
+        mxmin, mxmax, mymin, mymax, zmin, zmax = state["bounds_um"]
+        axis = str(req.get("clip_axis", "Z")).upper()
+        if axis not in ("X", "Y", "Z"):
+            axis = "Z"
+        if axis == "X":
+            amin, amax = mxmin, mxmax
+        elif axis == "Y":
+            amin, amax = mymin, mymax
+        else:
+            amin, amax = zmin, zmax
+        auto_z = bool(req.get("auto_z", False))
+        z_um = req.get("z_um")
+        clip_um = float(z_um) if z_um is not None else 0.5 * (amin + amax)
+        if auto_z or z_um is None:
+            seed = (mxmin, mxmax, mymin, mymax)
+            # data_mesh already in µm
+            tmp = state["data_mesh"].copy(deep=False)
+            # _auto_z_um expects native*scale; points already µm → scale=1
+            clip_um = _auto_z_um(
+                tmp, state["plot_name"], 1.0, zmin, zmax, *seed
+            )
+        clip_um = min(max(float(clip_um), amin), amax)
+        log_scale = bool(req.get("log", False))
+        clip_key = (axis, round(clip_um, 9), log_scale)
+        if state["clipped"] is None or state["clip_key"] != clip_key:
+            normals = {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0), "Z": (0.0, 0.0, 1.0)}
+            cx = 0.5 * (mxmin + mxmax)
+            cy = 0.5 * (mymin + mymax)
+            cz = 0.5 * (zmin + zmax)
+            origin = {
+                "X": (clip_um, cy, cz),
+                "Y": (cx, clip_um, cz),
+                "Z": (cx, cy, clip_um),
+            }[axis]
+            clipped = state["data_mesh"].clip(
+                normal=normals[axis], origin=origin, inplace=False
+            )
+            if clipped is None or getattr(clipped, "n_points", 0) == 0:
+                raise RuntimeError(f"empty clip at {axis}={clip_um:.4g} µm")
+            state["clipped"] = clipped
+            state["clip_key"] = clip_key
+            # Disk cache for one-shot fallbacks.
+            fp = _volume_clip_fingerprint(
+                state["mesh_path"],
+                clip_um,
+                axis,
+                log_scale,
+                state["plot_name"],
+                state["scale"],
+            )
+            _save_volume_clip(state["outdir"], clipped, fp)
+
+        res = int(req.get("resolution", 288))
+        az = float(req.get("azimuth", 45.0))
+        el = float(req.get("elevation", 30.0))
+        cam_zoom = float(req.get("zoom", 1.0))
+        png_path = os.path.join(state["outdir"], "field_volume.png")
+        res = _render_volume_png(
+            state["clipped"],
+            state["plot_name"],
+            log_scale,
+            float(req.get("opacity", 1.0)),
+            az,
+            el,
+            res,
+            png_path,
+            plotter=state["plotter"],
+            cam_zoom=cam_zoom,
+        )
+        cz = 0.5 * (zmin + zmax)
+        meta = {
+            "png": "field_volume.png",
+            "volume": True,
+            "quantity": state["plot_name"],
+            "z_um": float(clip_um) if axis == "Z" else float(cz),
+            "clip_um": float(clip_um),
+            "clip_axis": axis,
+            "zmin_um": float(zmin),
+            "zmax_um": float(zmax),
+            "xmin_um": 0.0,
+            "xmax_um": float(res),
+            "ymin_um": 0.0,
+            "ymax_um": float(res),
+            "log_scale": log_scale,
+            "show_arrows": False,
+            "azimuth_deg": az,
+            "elevation_deg": el,
+            "scale_to_um": float(state["scale"]),
+            "arrays": state["names"],
+            "source": os.path.basename(state["mesh_path"]),
+            "status": "",
+        }
+        meta_path = os.path.join(state["outdir"], "field_volume_meta.json")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=2)
+            f.write("\n")
+        reply({"ok": True, "cmd": "render", "meta": meta})
+
+    # Optional initial load from argv flags.
+    if initial.get("input") and initial.get("outdir"):
+        try:
+            do_load(initial)
+        except Exception as exc:
+            reply({"ok": False, "cmd": "load", "error": str(exc)})
+            return 1
+
+    reply({"ok": True, "cmd": "ready"})
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            req = json.loads(line)
+        except Exception as exc:
+            reply({"ok": False, "error": f"bad json: {exc}"})
+            continue
+        cmd = req.get("cmd", "")
+        try:
+            if cmd == "quit":
+                reply({"ok": True, "cmd": "quit"})
+                break
+            if cmd == "load":
+                do_load(req)
+            elif cmd == "render":
+                do_render(req)
+            elif cmd == "ping":
+                reply({"ok": True, "cmd": "ping"})
+            else:
+                reply({"ok": False, "error": f"unknown cmd {cmd!r}"})
+        except Exception as exc:
+            reply({"ok": False, "cmd": cmd, "error": str(exc)})
+
+    if state["plotter"] is not None:
+        try:
+            state["plotter"].close()
+        except Exception:
+            pass
+    return 0
+
+
+def export_volume(
+    mesh_path: str,
+    outdir: str,
+    z_um: Optional[float],
+    resolution: int,
+    log_scale: bool,
+    quantity: Optional[str],
+    scale_to_um: Optional[float],
+    azimuth_deg: float = 45.0,
+    elevation_deg: float = 30.0,
+    opacity: float = 1.0,
+    auto_z: bool = False,
+    roi_xmin_um: Optional[float] = None,
+    roi_xmax_um: Optional[float] = None,
+    roi_ymin_um: Optional[float] = None,
+    roi_ymax_um: Optional[float] = None,
+    clip_axis: str = "Z",
+    camera_only: bool = False,
+):
+    """Offscreen 3D volume render with one axis-aligned clip (Field+3D in Layout).
+
+    Writes field_volume.png + field_volume_meta.json. Caches the clipped mesh so
+    orbit / camera updates skip VTU reload + clip (major speedup).
+    """
+    pv = _try_import_pyvista()
+    try:
+        import numpy as np
+    except Exception as exc:
+        _die(f"numpy required: {exc}\n  pip install numpy pillow")
+
+    if not os.path.isfile(mesh_path):
+        _die(f"input not found: {mesh_path}")
+    os.makedirs(outdir, exist_ok=True)
+
+    png_name = "field_volume.png"
+    png_path = os.path.join(outdir, png_name)
+    meta_path = os.path.join(outdir, "field_volume_meta.json")
+
+    # Camera-only fast path: reuse last clip + previous meta bounds.
+    if camera_only and os.path.isfile(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                prev = json.load(f)
+            clip_path, _ = _volume_clip_paths(outdir)
+            if os.path.isfile(clip_path) and prev.get("volume"):
+                clipped = pv.read(clip_path)
+                plot_name = prev.get("quantity") or "scalars"
+                if plot_name not in clipped.point_data and clipped.array_names:
+                    plot_name = clipped.array_names[0]
+                res = _render_volume_png(
+                    clipped,
+                    plot_name,
+                    bool(prev.get("log_scale", log_scale)),
+                    opacity,
+                    azimuth_deg,
+                    elevation_deg,
+                    resolution,
+                    png_path,
+                )
+                prev["png"] = png_name
+                prev["azimuth_deg"] = float(azimuth_deg)
+                prev["elevation_deg"] = float(elevation_deg)
+                prev["xmin_um"] = 0.0
+                prev["xmax_um"] = float(res)
+                prev["ymin_um"] = 0.0
+                prev["ymax_um"] = float(res)
+                prev["status"] = ""
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump(prev, f, indent=2)
+                    f.write("\n")
+                print(f"field_volume_export: camera-only wrote {png_path}")
+                return prev
+        except Exception as exc:
+            print(f"field_volume_export: camera-only miss ({exc}), full rebuild", file=sys.stderr)
+
+    mesh = pv.read(mesh_path)
+    if hasattr(mesh, "n_blocks"):
+        for i in range(mesh.n_blocks):
+            block = mesh[i]
+            if block is not None and getattr(block, "n_points", 0) > 0:
+                mesh = block
+                break
+    if mesh.n_points == 0:
+        _die("mesh has no points")
+
+    bounds_native = list(mesh.bounds)
+    scale = scale_to_um if scale_to_um is not None else _guess_scale_to_um(bounds_native)
+    mxmin, mxmax, mymin, mymax, zmin, zmax = _mesh_bounds_um(mesh, scale)
+
+    names = _array_names(mesh)
+    scalar_name = _pick_scalar(names, quantity)
+    if not scalar_name:
+        _die(f"no scalar arrays found in {mesh_path}; arrays={names}")
+
+    if scalar_name in mesh.point_data:
+        data_mesh = mesh
+    elif scalar_name in mesh.cell_data:
+        data_mesh = mesh.cell_data_to_point_data()
+    else:
+        data_mesh = mesh
+
+    layout_roi = None
+    if None not in (roi_xmin_um, roi_xmax_um, roi_ymin_um, roi_ymax_um):
+        lx0, lx1 = sorted((float(roi_xmin_um), float(roi_xmax_um)))
+        ly0, ly1 = sorted((float(roi_ymin_um), float(roi_ymax_um)))
+        layout_roi = (lx0, lx1, ly0, ly1)
+
+    axis = (clip_axis or "Z").upper()
+    if axis not in ("X", "Y", "Z"):
+        axis = "Z"
+
+    if axis == "X":
+        amin, amax = mxmin, mxmax
+    elif axis == "Y":
+        amin, amax = mymin, mymax
+    else:
+        amin, amax = zmin, zmax
+
+    clip_um = z_um if z_um is not None else 0.5 * (amin + amax)
+    if auto_z or z_um is None:
+        seed = layout_roi if layout_roi is not None else (mxmin, mxmax, mymin, mymax)
+        hot_z = _auto_z_um(data_mesh, scalar_name, scale, zmin, zmax, *seed)
+        if axis == "Z":
+            clip_um = hot_z
+        else:
+            pts = np.asarray(data_mesh.points, dtype=float) * scale
+            arr = np.asarray(data_mesh.point_data[scalar_name], dtype=float)
+            mag = np.linalg.norm(arr.reshape(len(arr), -1), axis=1) if arr.ndim > 1 else arr.ravel()
+            idx = int(np.argmax(mag)) if mag.size else 0
+            clip_um = float(pts[idx, 0 if axis == "X" else 1]) if pts.size else clip_um
+    clip_um = min(max(float(clip_um), amin), amax)
+
+    mesh_um = data_mesh.copy(deep=True)
+    mesh_um.points = np.asarray(mesh_um.points, dtype=float) * scale
+
+    arr = np.asarray(mesh_um.point_data[scalar_name], dtype=float)
+    if arr.ndim > 1:
+        mag = np.linalg.norm(arr.reshape(len(arr), -1), axis=1)
+        plot_name = f"|{scalar_name}|"
+        mesh_um.point_data[plot_name] = mag
+    else:
+        plot_name = scalar_name
+
+    fingerprint = _volume_clip_fingerprint(
+        mesh_path, clip_um, axis, log_scale, plot_name, scale
+    )
+    clipped, _ = _try_load_volume_clip(outdir, fingerprint)
+    cache_hit = clipped is not None
+
+    if not cache_hit:
+        normals = {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0), "Z": (0.0, 0.0, 1.0)}
+        cx = 0.5 * (mxmin + mxmax)
+        cy = 0.5 * (mymin + mymax)
+        cz = 0.5 * (zmin + zmax)
+        origin = {
+            "X": (clip_um, cy, cz),
+            "Y": (cx, clip_um, cz),
+            "Z": (cx, cy, clip_um),
+        }[axis]
+        try:
+            clipped = mesh_um.clip(normal=normals[axis], origin=origin, inplace=False)
+        except Exception as exc:
+            _die(f"clip failed: {exc}")
+        if clipped is None or getattr(clipped, "n_points", 0) == 0:
+            _die(f"empty clip at {axis}={clip_um:.4g} µm")
+        _save_volume_clip(outdir, clipped, fingerprint)
+
+    cz = 0.5 * (zmin + zmax)
+    try:
+        res = _render_volume_png(
+            clipped,
+            plot_name,
+            log_scale,
+            opacity,
+            azimuth_deg,
+            elevation_deg,
+            resolution,
+            png_path,
+        )
+    except Exception as exc:
+        _die(
+            f"volume render failed: {exc}\n"
+            "  Offscreen VTK/OpenGL may need a working GPU or OSMesa."
+        )
+
+    if not os.path.isfile(png_path):
+        _die("screenshot was not written")
+
+    meta = {
+        "png": png_name,
+        "volume": True,
+        "quantity": plot_name,
+        "z_um": float(clip_um) if axis == "Z" else float(cz),
+        "clip_um": float(clip_um),
+        "clip_axis": axis,
+        "zmin_um": float(zmin),
+        "zmax_um": float(zmax),
+        "xmin_um": 0.0,
+        "xmax_um": float(res),
+        "ymin_um": 0.0,
+        "ymax_um": float(res),
+        "log_scale": bool(log_scale),
+        "show_arrows": False,
+        "azimuth_deg": float(azimuth_deg),
+        "elevation_deg": float(elevation_deg),
+        "scale_to_um": float(scale),
+        "arrays": names,
+        "source": os.path.basename(mesh_path),
+        "cache_hit": bool(cache_hit),
+        "status": "",
+    }
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2)
+        f.write("\n")
+    print(
+        f"field_volume_export: wrote {png_path}"
+        + (" (clip cache)" if cache_hit else " (full clip)")
+    )
+    return meta
+
+
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(description="EMStudio Layout Field Z-clip exporter")
-    p.add_argument("--input", "-i", required=True, help="Field dump (.pvd/.vtu/.vtk/.vtr)")
+    p = argparse.ArgumentParser(description="EMStudio Layout Field Z-clip / volume exporter")
+    p.add_argument("--input", "-i", required=True, help="Field dump (.pvd/.pvtu/.vtu/.vtk/.vtr)")
     p.add_argument("--outdir", "-o", required=True, help="Output directory for PNG + meta JSON")
-    p.add_argument("--z-um", type=float, default=None, help="Clip Z in micrometres")
-    p.add_argument("--resolution", type=int, default=256, help="Grid resolution per side")
+    p.add_argument("--z-um", type=float, default=None, help="Clip Z (or clip axis) in micrometres")
+    p.add_argument("--resolution", type=int, default=256, help="Grid / render resolution per side")
     p.add_argument("--log", action="store_true", help="Log10 color scale")
-    p.add_argument("--no-arrows", action="store_true", help="Skip vector glyphs")
+    p.add_argument("--no-arrows", action="store_true", help="Skip vector glyphs (2D slice only)")
     p.add_argument("--arrow-count", type=int, default=64)
     p.add_argument("--quantity", default=None, help="Preferred scalar array name")
     p.add_argument("--scale-to-um", type=float, default=None, help="Multiply mesh coords by this to get µm")
@@ -865,24 +1543,66 @@ def main(argv=None) -> int:
     p.add_argument("--ymax-um", type=float, default=None, help="Crop ROI ymax (layout µm, Y-up)")
     p.add_argument("--auto-z", action="store_true",
                    help="Pick Z of strongest scalar (e.g. max temperature) inside ROI")
+    p.add_argument("--volume", action="store_true",
+                   help="3D volume render with axis clip (Field+3D) instead of Z-slice PNG")
+    p.add_argument("--azimuth", type=float, default=45.0, help="Camera azimuth [deg] (volume)")
+    p.add_argument("--elevation", type=float, default=30.0, help="Camera elevation [deg] (volume)")
+    p.add_argument("--opacity", type=float, default=1.0, help="Mesh opacity 0..1 (volume)")
+    p.add_argument("--clip-axis", default="Z", choices=["X", "Y", "Z", "x", "y", "z"],
+                   help="Axis-aligned clip plane (volume)")
+    p.add_argument("--camera-only", action="store_true",
+                   help="Orbit update: reuse cached clip mesh, only re-screenshot")
+    p.add_argument("--volume-serve", action="store_true",
+                   help="Long-lived volume worker (JSON lines on stdin/stdout)")
     args = p.parse_args(argv)
 
-    export_slice(
-        mesh_path=args.input,
-        outdir=args.outdir,
-        z_um=args.z_um,
-        resolution=args.resolution,
-        log_scale=args.log,
-        arrows=not args.no_arrows,
-        arrow_count=args.arrow_count,
-        quantity=args.quantity,
-        scale_to_um=args.scale_to_um,
-        roi_xmin_um=args.xmin_um,
-        roi_xmax_um=args.xmax_um,
-        roi_ymin_um=args.ymin_um,
-        roi_ymax_um=args.ymax_um,
-        auto_z=args.auto_z,
-    )
+    if args.volume_serve:
+        return _serve_volume_loop(
+            {
+                "input": args.input,
+                "outdir": args.outdir,
+                "quantity": args.quantity,
+                "scale_to_um": args.scale_to_um,
+            }
+        )
+
+    if args.volume:
+        export_volume(
+            mesh_path=args.input,
+            outdir=args.outdir,
+            z_um=args.z_um,
+            resolution=max(args.resolution, 256),
+            log_scale=args.log,
+            quantity=args.quantity,
+            scale_to_um=args.scale_to_um,
+            azimuth_deg=args.azimuth,
+            elevation_deg=args.elevation,
+            opacity=args.opacity,
+            auto_z=args.auto_z,
+            roi_xmin_um=args.xmin_um,
+            roi_xmax_um=args.xmax_um,
+            roi_ymin_um=args.ymin_um,
+            roi_ymax_um=args.ymax_um,
+            clip_axis=args.clip_axis,
+            camera_only=args.camera_only,
+        )
+    else:
+        export_slice(
+            mesh_path=args.input,
+            outdir=args.outdir,
+            z_um=args.z_um,
+            resolution=args.resolution,
+            log_scale=args.log,
+            arrows=not args.no_arrows,
+            arrow_count=args.arrow_count,
+            quantity=args.quantity,
+            scale_to_um=args.scale_to_um,
+            roi_xmin_um=args.xmin_um,
+            roi_xmax_um=args.xmax_um,
+            roi_ymin_um=args.ymin_um,
+            roi_ymax_um=args.ymax_um,
+            auto_z=args.auto_z,
+        )
     return 0
 
 

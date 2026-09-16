@@ -9,7 +9,7 @@ fstart	start frequency
 fstop	stop frequency
 fstep	frequency step
 fpoint	optional list [] of discrete frequencies in addition to sweep
-fdump	list [] of discrete frequencies for creating field dump files
+fdump	Palace: list [] of dump frequencies [Hz]. Elmer EM: enable dump at all solved frequencies (any non-empty list, e.g. [settings['fstop']])
 adaptive_sweep	True|False, use efficient and robust interpolation for sweep
 refined_cellsize	refined mesh cell size along conductor edges, in project units
 cells_per_wavelength	how many mesh cells per wavelength, must be 10 or more

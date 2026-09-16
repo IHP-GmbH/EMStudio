@@ -23,6 +23,7 @@
 #include <QFile>
 #include <QDebug>
 #include <QTimer>
+#include <QDateTime>
 #include <QAction>
 #include <QPointer>
 #include <QProcess>
@@ -49,6 +50,8 @@
 #include <QSplitter>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <QFrame>
+#include <QPixmap>
 #include <QSet>
 #include <algorithm>
 
@@ -222,7 +225,7 @@ MainWindow::MainWindow(QWidget *parent)
         connect(m_ui->layoutView, &LayoutView::layerClicked,
                 this, &MainWindow::onLayoutLayerClicked);
         connect(m_ui->layoutView, &LayoutView::layerClicked,
-                this, [this](const QString &name, const QString &) {
+                this, [this](const QString &name, const QString &, int) {
                     if (m_ui->substrateView)
                         m_ui->substrateView->setHighlightedLayer(name);
                 });
@@ -246,7 +249,7 @@ MainWindow::MainWindow(QWidget *parent)
                         m_layoutLayerPanel->clearHighlight();
                 });
         connect(m_ui->layoutView, &LayoutView::layerClicked,
-                this, [this](const QString &name, const QString &) {
+                this, [this](const QString &name, const QString &, int) {
                     if (m_layoutLayerPanel)
                         m_layoutLayerPanel->setHighlightedName(name);
                 });
@@ -257,6 +260,8 @@ MainWindow::MainWindow(QWidget *parent)
                 });
         connect(m_ui->layoutView, &LayoutView::fieldModeChanged,
                 this, &MainWindow::onLayoutFieldModeChanged);
+        connect(m_ui->layoutView, &LayoutView::fieldExternalVolumeRequested,
+                this, &MainWindow::openFieldVolumeExternalViewer);
         connect(m_ui->layoutView, &LayoutView::fieldSliceRequest,
                 this, &MainWindow::onLayoutFieldSliceRequest);
         connect(m_ui->layoutView, &LayoutView::fieldHotZRequest,
@@ -900,8 +905,8 @@ QString MainWindow::resolveResultsDirectory() const
 /*!*******************************************************************************************************************
  * \brief Locates the newest field dump under \a runDir (or current results dir).
  *
- * Prefers thermal VTU for Elmer/Thermal, then Palace \c .pvd, then OpenEMS/VTK
- * meshes (\c .vtr/.vtu/.vtk/.vti).
+ * Prefers thermal VTU/PVTU for Elmer/Thermal, then Palace \c .pvd, then OpenEMS/VTK
+ * meshes (\c .vtr/.vtu/.vtk/.vti). For thermal, \c .pvtu wins over loose \c .vtu pieces.
  *
  * \param runDir Optional results root; empty → \c resolveResultsDirectory().
  * \return Absolute path, or empty if none found.
@@ -936,9 +941,11 @@ QString MainWindow::findFieldDumpPath(const QString &runDir) const
             return vtu;
     }
 
-    // Palace: prefer .pvd collections
+    // Palace: prefer .pvd collections, then combined .pvtu over partition .vtu pieces
     if (const QString pvd = newestMatch(dir, {QStringLiteral("*.pvd")}); !pvd.isEmpty())
         return pvd;
+    if (const QString pvtu = newestMatch(dir, {QStringLiteral("*.pvtu")}); !pvtu.isEmpty())
+        return pvtu;
 
     // OpenEMS / VTK dumps
     if (const QString vtk = newestMatch(dir, {QStringLiteral("*.vtr"), QStringLiteral("*.vtu"),
@@ -1027,12 +1034,267 @@ void MainWindow::onLayoutFieldModeChanged(bool on)
 {
     if (!on) {
         m_fieldDumpSearchDir.clear();
+        stopFieldVolumeServe();
         if (m_ui && m_ui->layoutView)
             m_ui->layoutView->clearFieldOverlay();
         return;
     }
     m_fieldPreferAutoZ = true;
     scheduleFieldOverlayRefresh(true);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Opens an interactive PyVista 3D field window (Field → 3D); layout pane stays 2D.
+ **********************************************************************************************************************/
+void MainWindow::openFieldVolumeExternalViewer()
+{
+    const QString dump = findFieldDumpPath();
+    if (dump.isEmpty()) {
+        appendToSimulationLog(
+            QByteArray("\n[Field 3D] No field dump found. Enable fdump / open a run with .pvd/.vtu.\n"));
+        if (m_ui && m_ui->layoutView) {
+            LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
+            ov.status = tr("No field dump for 3D viewer.");
+            m_ui->layoutView->setFieldOverlay(ov);
+        }
+        return;
+    }
+
+    const QString script = resolveModelTemplatePath(QStringLiteral("field_volume_viewer.py"));
+    if (script.isEmpty() || !QFileInfo::exists(script)) {
+        appendToSimulationLog(
+            QByteArray("\n[Field 3D] Missing scripts/field_volume_viewer.py next to EMStudio.\n"));
+        return;
+    }
+
+    QString pyDetail;
+    const QString python = resolveFieldViewerPython(&pyDetail);
+    if (python.isEmpty()) {
+        appendToSimulationLog(
+            QByteArray("\n[Field 3D] No Python for volume viewer.\n  ")
+            + (pyDetail.isEmpty() ? QByteArray("Set FIELD_VIEWER_PYTHON.") : pyDetail.toUtf8())
+            + "\n  pip install pyvista\n  optional: pip install pyvistaqt PySide6\n");
+        return;
+    }
+
+    // Immediate feedback while PyVista starts (can take several seconds).
+    // Keep splash until the viewer prints ready / fails — not a fixed short timer
+    // (that made it look like "nothing opened").
+    if (m_ui && m_ui->layoutView) {
+        LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
+        ov.status = tr("Opening 3D viewer… (may take a few seconds)");
+        m_ui->layoutView->setFieldOverlay(ov);
+    }
+    closeFieldVolumeViewerSplash();
+    {
+        auto *waitDlg = new QFrame(nullptr, Qt::SplashScreen | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
+        waitDlg->setAttribute(Qt::WA_DeleteOnClose);
+        waitDlg->setObjectName(QStringLiteral("field3dWaitSplash"));
+        waitDlg->setStyleSheet(
+                QStringLiteral(
+                    "QFrame#field3dWaitSplash {"
+                    "  background: #ffffff;"
+                    "  border: 1px solid #6a6a6a;"
+                    "}"
+                    "QLabel { color: #222; background: transparent; }"));
+        auto *lay = new QVBoxLayout(waitDlg);
+        lay->setContentsMargins(20, 16, 20, 16);
+        lay->setSpacing(8);
+        auto *logoLbl = new QLabel(waitDlg);
+        {
+            const QPixmap pm(QStringLiteral(":/logo"));
+            logoLbl->setPixmap(pm.scaledToWidth(220, Qt::SmoothTransformation));
+            logoLbl->setAlignment(Qt::AlignCenter);
+        }
+        lay->addWidget(logoLbl);
+        auto *titleLbl = new QLabel(tr("EMStudio Field 3D"), waitDlg);
+        titleLbl->setAlignment(Qt::AlignCenter);
+        QFont tf = titleLbl->font();
+        tf.setBold(true);
+        tf.setPointSize(qMax(11, tf.pointSize() + 1));
+        titleLbl->setFont(tf);
+        lay->addWidget(titleLbl);
+        auto *msgLbl = new QLabel(
+                tr("Opening… PyVista may take several seconds."), waitDlg);
+        msgLbl->setAlignment(Qt::AlignCenter);
+        lay->addWidget(msgLbl);
+        waitDlg->adjustSize();
+        if (this->window()) {
+            const QRect g = this->window()->frameGeometry();
+            waitDlg->move(g.center() - waitDlg->rect().center());
+        }
+        waitDlg->show();
+        waitDlg->raise();
+        m_fieldVolumeViewerSplash = waitDlg;
+        // Safety net only — normal close is on ready / finished.
+        QTimer::singleShot(90000, this, [this]() { closeFieldVolumeViewerSplash(); });
+    }
+
+    // Logo / window icon for the Python viewer.
+    QString logoPath;
+    QString iconPath;
+    {
+        const QDir dumpDir(QFileInfo(dump).absolutePath());
+        const QString outLogo = dumpDir.filePath(QStringLiteral("emstudio_logo_field3d.png"));
+        if (QFile::exists(outLogo))
+            QFile::remove(outLogo);
+        if (QFile::copy(QStringLiteral(":/logo"), outLogo)) {
+            QFile::setPermissions(outLogo, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                    | QFileDevice::ReadUser | QFileDevice::WriteUser
+                    | QFileDevice::ReadOther);
+            logoPath = outLogo;
+        } else {
+            const QString nearApp = QDir(QCoreApplication::applicationDirPath())
+                    .filePath(QStringLiteral("icons/logo.png"));
+            if (QFileInfo::exists(nearApp))
+                logoPath = nearApp;
+        }
+
+        const QStringList iconCandidates = {
+            QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("appicon.ico")),
+            QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("icons/appicon.ico")),
+            QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("../appicon.ico")),
+        };
+        for (const QString &c : iconCandidates) {
+            if (QFileInfo::exists(c)) {
+                iconPath = c;
+                break;
+            }
+        }
+        if (!iconPath.isEmpty()) {
+            const QString outIco = dumpDir.filePath(QStringLiteral("emstudio_field3d.ico"));
+            if (QFile::exists(outIco))
+                QFile::remove(outIco);
+            if (QFile::copy(iconPath, outIco)) {
+                QFile::setPermissions(outIco, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                        | QFileDevice::ReadUser | QFileDevice::WriteUser
+                        | QFileDevice::ReadOther);
+                iconPath = outIco;
+            }
+        }
+    }
+
+    QStringList args;
+    args << script
+         << QStringLiteral("--input") << dump;
+    if (!logoPath.isEmpty())
+        args << QStringLiteral("--logo") << logoPath;
+    if (!iconPath.isEmpty())
+        args << QStringLiteral("--icon") << iconPath;
+    if (m_ui && m_ui->layoutView) {
+        args << QStringLiteral("--z-um")
+             << QString::number(m_ui->layoutView->fieldClipZUm(), 'g', 12);
+        if (m_ui->layoutView->fieldLogScale())
+            args << QStringLiteral("--log");
+    }
+
+    if (!m_fieldVolumeViewerProcess) {
+        m_fieldVolumeViewerProcess = new QProcess(this);
+        m_fieldVolumeViewerProcess->setProcessChannelMode(QProcess::MergedChannels);
+        connect(m_fieldVolumeViewerProcess, &QProcess::readyReadStandardOutput,
+                this, &MainWindow::onFieldVolumeViewerReadyRead);
+        connect(m_fieldVolumeViewerProcess,
+                QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, &MainWindow::onFieldVolumeViewerFinished);
+    }
+    if (m_fieldVolumeViewerProcess->state() != QProcess::NotRunning) {
+        m_fieldVolumeViewerProcess->kill();
+        m_fieldVolumeViewerProcess->waitForFinished(1500);
+    }
+    m_fieldVolumeViewerOutput.clear();
+
+    // Critical: do not inherit EMStudio's Qt plugin paths — they break VTK/PyVista
+    // in the child (window never appears; process dies quietly).
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    const QStringList scrub = {
+        QStringLiteral("QT_PLUGIN_PATH"),
+        QStringLiteral("QT_QPA_PLATFORM_PLUGIN_PATH"),
+        QStringLiteral("QT_QPA_PLATFORM"),
+        QStringLiteral("QML2_IMPORT_PATH"),
+        QStringLiteral("QML_IMPORT_PATH"),
+        QStringLiteral("QTDIR"),
+        QStringLiteral("QT_INSTALL_PREFIX"),
+    };
+    for (const QString &k : scrub)
+        env.remove(k);
+    m_fieldVolumeViewerProcess->setProcessEnvironment(env);
+    m_fieldVolumeViewerProcess->setWorkingDirectory(QFileInfo(dump).absolutePath());
+    m_fieldVolumeViewerProcess->start(python, args);
+    if (!m_fieldVolumeViewerProcess->waitForStarted(5000)) {
+        closeFieldVolumeViewerSplash();
+        appendToSimulationLog(
+            QByteArray("\n[Field 3D] Failed to start:\n  ")
+            + python.toUtf8() + "\n  " + script.toUtf8() + "\n  "
+            + m_fieldVolumeViewerProcess->errorString().toUtf8() + "\n");
+        if (m_ui && m_ui->layoutView) {
+            LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
+            ov.status = tr("Failed to start 3D viewer.");
+            m_ui->layoutView->setFieldOverlay(ov);
+        }
+        return;
+    }
+    appendToSimulationLog(
+        QByteArray("\n[Field 3D] Starting interactive PyVista window "
+                   "(first open can take several seconds)…\n  ")
+        + python.toUtf8() + "\n  " + dump.toUtf8() + "\n");
+}
+
+void MainWindow::closeFieldVolumeViewerSplash()
+{
+    if (m_fieldVolumeViewerSplash)
+        m_fieldVolumeViewerSplash->close();
+    m_fieldVolumeViewerSplash.clear();
+}
+
+void MainWindow::onFieldVolumeViewerReadyRead()
+{
+    if (!m_fieldVolumeViewerProcess)
+        return;
+    const QByteArray chunk = m_fieldVolumeViewerProcess->readAllStandardOutput();
+    m_fieldVolumeViewerOutput += chunk;
+    const QByteArray lower = chunk.toLower();
+    if (lower.contains("opened backgroundplotter")
+        || lower.contains("showing plotter")) {
+        closeFieldVolumeViewerSplash();
+        if (m_ui && m_ui->layoutView) {
+            LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
+            ov.status = tr("Field 3D window open");
+            m_ui->layoutView->setFieldOverlay(ov);
+        }
+    }
+}
+
+void MainWindow::onFieldVolumeViewerFinished(int exitCode, QProcess::ExitStatus status)
+{
+    closeFieldVolumeViewerSplash();
+    const QByteArray out = m_fieldVolumeViewerOutput
+            + (m_fieldVolumeViewerProcess ? m_fieldVolumeViewerProcess->readAllStandardOutput()
+                                         : QByteArray());
+    m_fieldVolumeViewerOutput = out;
+    const bool ok = (status == QProcess::NormalExit && exitCode == 0);
+    if (ok) {
+        if (m_ui && m_ui->layoutView && m_ui->layoutView->isFieldMode()) {
+            LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
+            if (ov.status.contains(QStringLiteral("Opening 3D"), Qt::CaseInsensitive)
+                || ov.status.contains(QStringLiteral("Field 3D window open"), Qt::CaseInsensitive))
+                ov.status.clear();
+            m_ui->layoutView->setFieldOverlay(ov);
+        }
+        return;
+    }
+    QByteArray msg = out.trimmed();
+    if (msg.size() > 1200)
+        msg = msg.right(1200);
+    appendToSimulationLog(
+        QByteArray("\n[Field 3D] Viewer exited with error (code ")
+        + QByteArray::number(exitCode) + ").\n"
+        + (msg.isEmpty() ? QByteArray("  (no output — check FIELD_VIEWER_PYTHON / pyvista)\n")
+                         : (msg + "\n")));
+    if (m_ui && m_ui->layoutView) {
+        LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
+        ov.status = tr("3D viewer failed — see Simulation log");
+        m_ui->layoutView->setFieldOverlay(ov);
+    }
 }
 
 /*!*******************************************************************************************************************
@@ -1074,6 +1336,10 @@ void MainWindow::scheduleFieldOverlayRefresh(bool force)
         m_fieldRefreshForce = false;
         return;
     }
+    // Coalesce rapid Z / option changes into one export.
+    const int ms = 250;
+    if (m_fieldSliceDebounce->interval() != ms)
+        m_fieldSliceDebounce->setInterval(ms);
     m_fieldSliceDebounce->start();
 }
 
@@ -1112,6 +1378,9 @@ bool MainWindow::loadFieldOverlayFromCache(const QString &metaPath)
     ov.ymaxUm = o.value(QStringLiteral("ymax_um")).toDouble();
     ov.logScale = o.value(QStringLiteral("log_scale")).toBool();
     ov.showArrows = o.value(QStringLiteral("show_arrows")).toBool(true);
+    ov.volume = o.value(QStringLiteral("volume")).toBool(false);
+    if (o.contains(QStringLiteral("clip_um")) && ov.volume)
+        ov.zUm = o.value(QStringLiteral("clip_um")).toDouble(ov.zUm);
 
     const QString pngName = o.value(QStringLiteral("png")).toString(QStringLiteral("field_slice.png"));
     const QString pngPath = QDir(QFileInfo(metaPath).absolutePath()).filePath(pngName);
@@ -1180,12 +1449,15 @@ void MainWindow::refreshFieldOverlay(bool force)
     // Instant paint from last export while a new one is prepared (avoids UI freeze).
     // Do not keep an old overlay when the dump path changed (new model / new run).
     if (!force && m_ui->layoutView->fieldOverlay().valid()
-        && dump == m_fieldLastDumpPath) {
+        && dump == m_fieldLastDumpPath
+        && !m_ui->layoutView->fieldOverlay().volume) {
         return;
     }
     if (!m_ui->layoutView->fieldOverlay().valid() && QFileInfo::exists(metaPath)
         && (m_fieldLastDumpPath.isEmpty() || dump == m_fieldLastDumpPath)) {
-        if (loadFieldOverlayFromCache(metaPath) && !force) {
+        if (loadFieldOverlayFromCache(metaPath)
+            && !m_ui->layoutView->fieldOverlay().volume
+            && !force) {
             m_fieldLastDumpPath = dump;
             m_fieldPreferAutoZ = false;
             return;
@@ -1223,22 +1495,23 @@ void MainWindow::refreshFieldOverlay(bool force)
 
     LayoutView::FieldOverlay busy = m_ui->layoutView->fieldOverlay();
     busy.zUm = zUm;
+    busy.volume = false;
     busy.status = tr("Exporting slice…");
     busy.logScale = logScale;
     busy.showArrows = showArrows;
     m_ui->layoutView->setFieldOverlay(busy);
-
-    QStringList args;
-    args << script
-         << QStringLiteral("--input") << dump
-         << QStringLiteral("--outdir") << outDir
-         << QStringLiteral("--resolution") << QStringLiteral("512");
 
     const bool dumpChanged = (dump != m_fieldLastDumpPath);
     if (dumpChanged)
         m_fieldPreferAutoZ = true;
     m_fieldLastDumpPath = dump;
     m_fieldExportOutDir = outDir;
+
+    QStringList args;
+    args << script
+         << QStringLiteral("--input") << dump
+         << QStringLiteral("--outdir") << outDir
+         << QStringLiteral("--resolution") << QStringLiteral("512");
 
     if (m_fieldPreferAutoZ)
         args << QStringLiteral("--auto-z");
@@ -1273,6 +1546,7 @@ void MainWindow::refreshFieldOverlay(bool force)
 
     const int token = ++m_fieldExportToken;
     m_fieldExportProcess->setProperty("fieldExportToken", token);
+    m_fieldExportProcess->setProperty("fieldExportVolume", false);
     m_fieldExportBusy = true;
     m_fieldExportProcess->setProgram(python);
     m_fieldExportProcess->setArguments(args);
@@ -1289,6 +1563,194 @@ void MainWindow::refreshFieldOverlay(bool force)
             + python.toUtf8() + "\n"
             + "  Set FIELD_VIEWER_PYTHON in Preferences to a valid python.exe.\n");
     }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Starts or reuses the Field volume PyVista worker (warm Plotter for orbit).
+ **********************************************************************************************************************/
+bool MainWindow::ensureFieldVolumeServe(const QString &python,
+                                        const QString &script,
+                                        const QString &dump,
+                                        const QString &outDir,
+                                        QString *errorOut)
+{
+    const QString dumpAbs = QFileInfo(dump).absoluteFilePath();
+    if (m_fieldVolumeServeProcess
+        && m_fieldVolumeServeProcess->state() != QProcess::NotRunning
+        && m_fieldVolumeServeReady
+        && m_fieldVolumeServeDump == dumpAbs) {
+        return true;
+    }
+
+    stopFieldVolumeServe();
+
+    if (!m_fieldVolumeServeProcess) {
+        m_fieldVolumeServeProcess = new QProcess(this);
+        connect(m_fieldVolumeServeProcess, &QProcess::readyReadStandardOutput,
+                this, &MainWindow::onFieldVolumeServeReadyRead);
+        connect(m_fieldVolumeServeProcess,
+                QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, &MainWindow::onFieldVolumeServeFinished);
+    }
+
+    m_fieldVolumeServeStdout.clear();
+    m_fieldVolumeServeReady = false;
+    m_fieldVolumeServeDump = dumpAbs;
+
+    QStringList args;
+    args << script
+         << QStringLiteral("--volume-serve")
+         << QStringLiteral("--input") << dumpAbs
+         << QStringLiteral("--outdir") << outDir;
+
+    m_fieldVolumeServeProcess->setProgram(python);
+    m_fieldVolumeServeProcess->setArguments(args);
+    m_fieldVolumeServeProcess->setWorkingDirectory(outDir);
+    m_fieldVolumeServeProcess->setProcessChannelMode(QProcess::SeparateChannels);
+    m_fieldVolumeServeProcess->start();
+    if (!m_fieldVolumeServeProcess->waitForStarted(5000)) {
+        if (errorOut)
+            *errorOut = tr("Failed to start volume worker:\n%1").arg(python);
+        stopFieldVolumeServe();
+        return false;
+    }
+
+    // Wait until load+ready (first VTK import can take several seconds).
+    const qint64 deadline = QDateTime::currentMSecsSinceEpoch() + 45000;
+    while (!m_fieldVolumeServeReady
+           && m_fieldVolumeServeProcess->state() != QProcess::NotRunning
+           && QDateTime::currentMSecsSinceEpoch() < deadline) {
+        m_fieldVolumeServeProcess->waitForReadyRead(200);
+        onFieldVolumeServeReadyRead();
+    }
+    if (!m_fieldVolumeServeReady) {
+        const QByteArray err = m_fieldVolumeServeProcess->readAllStandardError();
+        if (errorOut) {
+            QString msg = QString::fromUtf8(err).trimmed();
+            if (msg.size() > 220)
+                msg = msg.right(220);
+            *errorOut = msg.isEmpty()
+                    ? tr("Volume worker did not become ready.")
+                    : msg;
+        }
+        stopFieldVolumeServe();
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::stopFieldVolumeServe()
+{
+    m_fieldVolumeServeReady = false;
+    m_fieldVolumeServeDump.clear();
+    m_fieldVolumeServeStdout.clear();
+    if (!m_fieldVolumeServeProcess)
+        return;
+    if (m_fieldVolumeServeProcess->state() != QProcess::NotRunning) {
+        m_fieldVolumeServeProcess->write("{\"cmd\":\"quit\"}\n");
+        m_fieldVolumeServeProcess->waitForBytesWritten(300);
+        if (!m_fieldVolumeServeProcess->waitForFinished(800)) {
+            m_fieldVolumeServeProcess->kill();
+            m_fieldVolumeServeProcess->waitForFinished(500);
+        }
+    }
+}
+
+void MainWindow::requestFieldVolumeRender(bool autoZ, qreal zUm, bool logScale,
+                                          qreal azimuth, qreal elevation, qreal camZoom,
+                                          int resolution)
+{
+    if (!m_fieldVolumeServeProcess
+        || m_fieldVolumeServeProcess->state() == QProcess::NotRunning
+        || !m_fieldVolumeServeReady) {
+        return;
+    }
+
+    QJsonObject req;
+    req.insert(QStringLiteral("cmd"), QStringLiteral("render"));
+    req.insert(QStringLiteral("azimuth"), azimuth);
+    req.insert(QStringLiteral("elevation"), elevation);
+    req.insert(QStringLiteral("zoom"), camZoom);
+    req.insert(QStringLiteral("log"), logScale);
+    req.insert(QStringLiteral("resolution"), resolution);
+    req.insert(QStringLiteral("clip_axis"), QStringLiteral("Z"));
+    req.insert(QStringLiteral("auto_z"), autoZ);
+    if (!autoZ)
+        req.insert(QStringLiteral("z_um"), zUm);
+
+    const int token = ++m_fieldVolumeServeToken;
+    m_fieldVolumeServeProcess->setProperty("fieldVolumeToken", token);
+    m_fieldExportBusy = true;
+    const QByteArray line = QJsonDocument(req).toJson(QJsonDocument::Compact) + '\n';
+    m_fieldVolumeServeProcess->write(line);
+}
+
+void MainWindow::onFieldVolumeServeReadyRead()
+{
+    if (!m_fieldVolumeServeProcess)
+        return;
+    m_fieldVolumeServeStdout += m_fieldVolumeServeProcess->readAllStandardOutput();
+    while (true) {
+        const int nl = m_fieldVolumeServeStdout.indexOf('\n');
+        if (nl < 0)
+            break;
+        const QByteArray line = m_fieldVolumeServeStdout.left(nl).trimmed();
+        m_fieldVolumeServeStdout.remove(0, nl + 1);
+        if (line.isEmpty())
+            continue;
+        const QJsonDocument doc = QJsonDocument::fromJson(line);
+        if (!doc.isObject())
+            continue;
+        const QJsonObject o = doc.object();
+        const QString cmd = o.value(QStringLiteral("cmd")).toString();
+        const bool ok = o.value(QStringLiteral("ok")).toBool();
+
+        if (cmd == QLatin1String("ready") || cmd == QLatin1String("load")) {
+            if (ok)
+                m_fieldVolumeServeReady = true;
+            else if (m_ui && m_ui->layoutView) {
+                LayoutView::FieldOverlay pending = m_ui->layoutView->fieldOverlay();
+                pending.status = o.value(QStringLiteral("error")).toString(
+                    tr("Volume load failed"));
+                m_ui->layoutView->setFieldOverlay(pending);
+            }
+            continue;
+        }
+        if (cmd != QLatin1String("render"))
+            continue;
+
+        const int token = m_fieldVolumeServeProcess->property("fieldVolumeToken").toInt();
+        if (token != m_fieldVolumeServeToken)
+            continue; // superseded orbit frame
+        m_fieldExportBusy = false;
+
+        if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode()
+            || !m_ui->layoutView->isFieldVolume()) {
+            continue;
+        }
+
+        if (!ok) {
+            LayoutView::FieldOverlay pending = m_ui->layoutView->fieldOverlay();
+            pending.status = o.value(QStringLiteral("error")).toString(
+                tr("Volume render failed"));
+            m_ui->layoutView->setFieldOverlay(pending);
+            continue;
+        }
+
+        const QString metaPath = QDir(m_fieldExportOutDir)
+                .filePath(QStringLiteral("field_volume_meta.json"));
+        if (loadFieldOverlayFromCache(metaPath)) {
+            m_fieldPreferAutoZ = false;
+            m_fieldLastVolumeClipZUm = m_ui->layoutView->fieldOverlay().zUm;
+            m_fieldLastVolumeLog = m_ui->layoutView->fieldOverlay().logScale;
+        }
+    }
+}
+
+void MainWindow::onFieldVolumeServeFinished(int /*exitCode*/, QProcess::ExitStatus /*status*/)
+{
+    m_fieldVolumeServeReady = false;
+    m_fieldExportBusy = false;
 }
 
 /*!*******************************************************************************************************************
@@ -1343,12 +1805,19 @@ void MainWindow::onFieldExportFinished(int exitCode, QProcess::ExitStatus status
         return;
     }
 
-    const QString metaPath = QDir(outDir).filePath(QStringLiteral("field_slice_meta.json"));
+    const bool volume = m_fieldExportProcess->property("fieldExportVolume").toBool();
+    const QString metaName = volume ? QStringLiteral("field_volume_meta.json")
+                                    : QStringLiteral("field_slice_meta.json");
+    const QString metaPath = QDir(outDir).filePath(metaName);
     if (!loadFieldOverlayFromCache(metaPath)) {
-        pending.status = tr("Could not load field_slice_meta.json");
+        pending.status = tr("Could not load %1").arg(metaName);
         m_ui->layoutView->setFieldOverlay(pending);
     } else {
         m_fieldPreferAutoZ = false;
+        if (volume) {
+            m_fieldLastVolumeClipZUm = m_ui->layoutView->fieldOverlay().zUm;
+            m_fieldLastVolumeLog = m_ui->layoutView->fieldOverlay().logScale;
+        }
     }
 }
 
@@ -2572,33 +3041,71 @@ void MainWindow::onSubstrateLayerClicked(const QString &name, const QString &kin
  * \brief Handles a layer click from the Layout preview (same path as SubstrateView).
  *
  * Forwards to \c onSubstrateLayerClicked so an open StackupEditor selects the item.
+ * Port picks also select the matching row in the Ports table (bidirectional with table→layout).
  *
- * \param name Stack / layer name from the clicked polygon.
- * \param kind Layer kind string (conductor, via, port, …).
+ * \param name     Stack / layer name from the clicked polygon.
+ * \param kind     Layer kind string (conductor, via, port, …).
+ * \param gdsLayer GDS layer number from the layout item (-1 if unknown).
  **********************************************************************************************************************/
-void MainWindow::onLayoutLayerClicked(const QString &name, const QString &kind)
+void MainWindow::onLayoutLayerClicked(const QString &name, const QString &kind, int gdsLayer)
 {
     onSubstrateLayerClicked(name, kind);
 
-    if (!m_ui->tblPorts || kind != QLatin1String("port"))
-        return;
-    if (!name.startsWith(QLatin1Char('P')))
-        return;
-    bool ok = false;
-    const int num = name.mid(1).toInt(&ok);
-    if (!ok || num <= 0)
+    if (!m_ui || !m_ui->tblPorts)
         return;
 
+    const bool looksPort = (kind.compare(QLatin1String("port"), Qt::CaseInsensitive) == 0)
+            || name.startsWith(QLatin1Char('P'))
+            || (gdsLayer >= 201 && gdsLayer <= 299);
+    if (!looksPort)
+        return;
+
+    int portNum = -1;
+    if (name.startsWith(QLatin1Char('P'))) {
+        bool ok = false;
+        portNum = name.mid(1).toInt(&ok);
+        if (!ok)
+            portNum = -1;
+    }
+    if (portNum < 0 && gdsLayer >= 201 && gdsLayer <= 299)
+        portNum = gdsLayer - 200;
+
     m_blockPortSelectSync = true;
+    int foundRow = -1;
     for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
-        auto *it = m_ui->tblPorts->item(r, 0);
-        if (!it)
-            continue;
-        if (it->text().trimmed().toInt() == num) {
-            m_ui->tblPorts->setCurrentCell(r, 0);
-            m_ui->tblPorts->selectRow(r);
+        auto *numItem = m_ui->tblPorts->item(r, 0);
+        auto *srcBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 3));
+        if (portNum > 0 && numItem) {
+            bool ok = false;
+            if (numItem->text().trimmed().toInt(&ok) == portNum && ok) {
+                foundRow = r;
+                break;
+            }
+        }
+        if (gdsLayer >= 0 && srcBox) {
+            const QString src = srcBox->currentText().trimmed();
+            bool okSrc = false;
+            const int srcGds = src.toInt(&okSrc);
+            if (okSrc && srcGds == gdsLayer) {
+                foundRow = r;
+                break;
+            }
+            if (!okSrc && m_subNameToGds.value(src, -1) == gdsLayer) {
+                foundRow = r;
+                break;
+            }
+        }
+        if (srcBox && !name.isEmpty()
+            && srcBox->currentText().trimmed().compare(name, Qt::CaseInsensitive) == 0) {
+            foundRow = r;
             break;
         }
+    }
+    if (foundRow >= 0) {
+        m_ui->tblPorts->setCurrentCell(foundRow, 0);
+        m_ui->tblPorts->selectRow(foundRow);
+        if (QTableWidgetItem *it = m_ui->tblPorts->item(foundRow, 0))
+            m_ui->tblPorts->scrollToItem(it, QAbstractItemView::PositionAtCenter);
     }
     m_blockPortSelectSync = false;
 }
@@ -2785,12 +3292,20 @@ void MainWindow::refreshLayoutPreview()
             }
             ports.insert(gds, pi);
 
-            // Also key by Pn (201…) so markers match GDS port layers if Source differs.
+            // Layout labels / highlight sync use P{n} from the Ports table number,
+            // not GDS-200 (source may be any marker layer).
             if (auto *numItem = m_ui->tblPorts->item(r, 0)) {
                 bool okPort = false;
                 const int portNum = numItem->text().trimmed().toInt(&okPort);
-                if (okPort && portNum >= 1 && portNum <= 99)
+                if (okPort && portNum >= 1 && portNum <= 99) {
                     ports.insert(200 + portNum, pi);
+                    LayoutView::LayerStyle pst;
+                    pst.name = QStringLiteral("P%1").arg(portNum);
+                    pst.kind = QStringLiteral("port");
+                    pst.color = QColor(220, 40, 180);
+                    pst.order = 10000 + gds;
+                    styles.insert(gds, pst);
+                }
             }
         }
     }
@@ -2930,7 +3445,25 @@ void MainWindow::setupLayoutLayerPanel()
                     m_ui->layoutView->setHighlightedLayer(name);
                 if (m_ui->substrateView)
                     m_ui->substrateView->setHighlightedLayer(name);
-                onSubstrateLayerClicked(name, kind);
+                // Same path as a click in the layout view (incl. Ports-table sync).
+                int gds = -1;
+                if (m_layoutLayerPanel) {
+                    // Prefer numeric GDS encoded in L{n} / panel entries via sub-map.
+                    if (name.startsWith(QLatin1Char('L'))) {
+                        bool ok = false;
+                        gds = name.mid(1).toInt(&ok);
+                        if (!ok)
+                            gds = -1;
+                    } else if (name.startsWith(QLatin1Char('P'))) {
+                        bool ok = false;
+                        const int n = name.mid(1).toInt(&ok);
+                        if (ok && n >= 1 && n <= 99)
+                            gds = 200 + n;
+                    } else {
+                        gds = m_subNameToGds.value(name, -1);
+                    }
+                }
+                onLayoutLayerClicked(name, kind, gds);
             });
     connect(m_layoutLayerPanel, &LayoutLayerPanel::showCoordinatesToggled,
             this, [this](bool on) {

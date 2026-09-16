@@ -220,6 +220,12 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
             continue;
 
         applyTipIfAny(prop, key, tips);
+        if (key.compare(QLatin1String("fdump"), Qt::CaseInsensitive) == 0
+            && isElmerEmKey(currentSimToolKey())) {
+            prop->setToolTip(tr("Enable field dump at all frequencies.\n"
+                                "Elmer has no per-frequency SaveStep like Palace — any non-empty "
+                                "fdump dumps fields at every solved frequency (sweep + fpoint)."));
+        }
 
         if (info.propType == QVariant::Double)
             setupDoubleAttributes(prop, info);
@@ -477,8 +483,6 @@ bool MainWindow::shouldSkipPalaceSettingKey(const QString &key) const
  **********************************************************************************************************************/
 MainWindow::PalacePropInfo MainWindow::inferPalacePropertyInfo(const QString &key, const QVariant &val) const
 {
-    Q_UNUSED(key);
-
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     const QMetaType::Type t = static_cast<QMetaType::Type>(val.typeId());
     const bool isString = (t == QMetaType::QString);
@@ -486,6 +490,7 @@ MainWindow::PalacePropInfo MainWindow::inferPalacePropertyInfo(const QString &ke
     const bool isIntish = (t == QMetaType::Int) || (t == QMetaType::UInt) ||
                           (t == QMetaType::LongLong) || (t == QMetaType::ULongLong);
     const bool isDouble = (t == QMetaType::Double);
+    const bool isList   = (t == QMetaType::QStringList) || (t == QMetaType::QVariantList);
 #else
     const QVariant::Type t = val.type();
     const bool isString = (t == QVariant::String);
@@ -493,7 +498,31 @@ MainWindow::PalacePropInfo MainWindow::inferPalacePropertyInfo(const QString &ke
     const bool isIntish = (t == QVariant::Int) || (t == QVariant::UInt) ||
                           (t == QVariant::LongLong) || (t == QVariant::ULongLong);
     const bool isDouble = (t == QVariant::Double);
+    const bool isList   = (t == QVariant::StringList) || (t == QVariant::List);
 #endif
+
+    // Elmer EM: fdump is an on/off dump enable (dumps every solved frequency), not a Hz list.
+    if (key.compare(QLatin1String("fdump"), Qt::CaseInsensitive) == 0
+        && isElmerEmKey(currentSimToolKey())) {
+        PalacePropInfo info;
+        info.propType = QVariant::Bool;
+        info.decimals = 0;
+        info.step = 0.0;
+        bool enabled = false;
+        if (isBool) {
+            enabled = val.toBool();
+        } else if (isList) {
+            enabled = !val.toList().isEmpty() || !val.toStringList().isEmpty();
+        } else {
+            const QString s = val.toString().trimmed();
+            enabled = !s.isEmpty()
+                    && s != QLatin1String("[]")
+                    && s != QLatin1String("None")
+                    && s.compare(QLatin1String("False"), Qt::CaseInsensitive) != 0;
+        }
+        info.value = enabled;
+        return info;
+    }
 
     PalacePropInfo info;
     info.propType  = QVariant::String;

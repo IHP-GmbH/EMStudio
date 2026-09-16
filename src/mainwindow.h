@@ -39,6 +39,7 @@ class QLineEdit;
 class QComboBox;
 class QTableWidget;
 class QTimer;
+class QFrame;
 class QtProperty;
 class QListWidgetItem;
 class QtVariantProperty;
@@ -294,7 +295,7 @@ private slots:
     void                            onStackupEditorSaved(const QString &path);
     void                            onSubstrateLayerClicked(const QString &name, const QString &kind);
     /*! Slot: layout-preview polygon click → stack selection (same as substrate click). */
-    void                            onLayoutLayerClicked(const QString &name, const QString &kind);
+    void                            onLayoutLayerClicked(const QString &name, const QString &kind, int gdsLayer = -1);
     void                            onPortsTableSelectionChanged();
     void                            on_txtSubstrate_textEdited(const QString &arg1);
     void                            on_txtSubstrate_textChanged(const QString &arg1);
@@ -430,6 +431,13 @@ private:
      **********************************************************************************************************************/
     void                            onLayoutFieldModeChanged(bool on);
     /*!*******************************************************************************************************************
+     * \brief Slot: Field+3D — launch interactive PyVista volume window (layout pane stays 2D).
+     **********************************************************************************************************************/
+    void                            openFieldVolumeExternalViewer();
+    void                            onFieldVolumeViewerReadyRead();
+    void                            onFieldVolumeViewerFinished(int exitCode, QProcess::ExitStatus status);
+    void                            closeFieldVolumeViewerSplash();
+    /*!*******************************************************************************************************************
      * \brief Slot: LayoutView Z / Log / Arrows request — queue a forced re-export.
      **********************************************************************************************************************/
     void                            onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
@@ -447,6 +455,18 @@ private:
      * Ignores superseded tokens and CrashExit (killed for a newer Z).
      **********************************************************************************************************************/
     void                            onFieldExportFinished(int exitCode, QProcess::ExitStatus status);
+    /*! Long-lived PyVista volume worker (stdin/stdout JSON); keeps Plotter warm for orbit. */
+    bool                            ensureFieldVolumeServe(const QString &python,
+                                                           const QString &script,
+                                                           const QString &dump,
+                                                           const QString &outDir,
+                                                           QString *errorOut);
+    void                            stopFieldVolumeServe();
+    void                            requestFieldVolumeRender(bool autoZ, qreal zUm, bool logScale,
+                                                            qreal azimuth, qreal elevation, qreal camZoom,
+                                                            int resolution);
+    void                            onFieldVolumeServeReadyRead();
+    void                            onFieldVolumeServeFinished(int exitCode, QProcess::ExitStatus status);
     /*!*******************************************************************************************************************
      * \brief After Elmer Thermal success: switch to Substrate and open Field at max-Z.
      **********************************************************************************************************************/
@@ -640,9 +660,19 @@ private:
     int                             m_fieldExportToken = 0;
     QString                         m_fieldLastDumpPath;
     QString                         m_fieldExportOutDir;
+    qreal                           m_fieldLastVolumeClipZUm = 0.0; //!< Last volume clip Z (camera-only gate)
+    bool                            m_fieldLastVolumeLog = false;
     QString                         m_layoutPreviewKey; //!< gds|topcell|xml — reset Field when model changes
     QString                         m_fieldDumpSearchDir; //!< Prefer this dir after a thermal run
     QProcess                       *m_fieldExportProcess = nullptr;
+    QProcess                       *m_fieldVolumeViewerProcess = nullptr;
+    QPointer<QFrame>                m_fieldVolumeViewerSplash;
+    QByteArray                      m_fieldVolumeViewerOutput;
+    QProcess                       *m_fieldVolumeServeProcess = nullptr;
+    QString                         m_fieldVolumeServeDump;
+    QByteArray                      m_fieldVolumeServeStdout;
+    int                             m_fieldVolumeServeToken = 0;
+    bool                            m_fieldVolumeServeReady = false;
 
     bool                            m_headless = false;
     bool                            m_blockPortChanges;

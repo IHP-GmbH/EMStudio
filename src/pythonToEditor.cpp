@@ -364,8 +364,6 @@ void MainWindow::applyOneSettingToScript(QString &script,
                                          const QVariant &val,
                                          const QString &simKeyLower)
 {
-    Q_UNUSED(simKeyLower);
-
     if (keyIsExcludedForEm(key))
         return;
 
@@ -378,7 +376,20 @@ void MainWindow::applyOneSettingToScript(QString &script,
     const auto mode = itMode.value();
 
     QString pyValue;
-    if (isFilePathSetting(key, val)) {
+    // Elmer EM: checkbox → non-empty fdump list reusing an already-solved frequency
+    // (dumps every solved frequency; same codegen as setupEM).
+    if (key.compare(QLatin1String("fdump"), Qt::CaseInsensitive) == 0
+        && isElmerEmKey(simKeyLower)
+        && val.type() == QVariant::Bool) {
+        if (val.toBool()) {
+            if (m_simSettings.contains(QStringLiteral("fstop")))
+                pyValue = QStringLiteral("[settings['fstop']]");
+            else
+                pyValue = QStringLiteral("[settings['fpoint'][0]]");
+        } else {
+            pyValue = QStringLiteral("[]");
+        }
+    } else if (isFilePathSetting(key, val)) {
         pyValue = toPythonQuotedPath(val.toString());
     } else {
         if (!variantToPythonLiteral(val, &pyValue))

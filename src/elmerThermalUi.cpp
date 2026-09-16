@@ -130,6 +130,25 @@ QString MainWindow::findThermalResultsVtu(const QString &runDir) const
     if (runDir.isEmpty())
         return {};
 
+    // Prefer a .pvtu collection (MPI / multi-partition) over loose .vtu pieces,
+    // matching setupEM / ParaView behaviour so Field opens one combined dataset.
+    auto collect = [](const QString &root, const QStringList &filters, int maxHits) -> QStringList {
+        QStringList found;
+        QDir base(root);
+        if (base.exists()) {
+            const QFileInfoList local = base.entryInfoList(filters, QDir::Files, QDir::Name);
+            for (const QFileInfo &fi : local)
+                found << fi.absoluteFilePath();
+        }
+        if (found.isEmpty()) {
+            QDirIterator it(root, filters, QDir::Files, QDirIterator::Subdirectories);
+            int guard = 0;
+            while (it.hasNext() && guard++ < maxHits)
+                found << it.next();
+        }
+        return found;
+    };
+
     auto pickBest = [](const QStringList &files) -> QString {
         if (files.isEmpty())
             return {};
@@ -141,24 +160,11 @@ QString MainWindow::findThermalResultsVtu(const QString &runDir) const
         return files.first();
     };
 
-    QStringList found;
-    QDir base(runDir);
-    if (base.exists()) {
-        const QFileInfoList local = base.entryInfoList(QStringList{QStringLiteral("*.vtu")},
-                                                       QDir::Files, QDir::Name);
-        for (const QFileInfo &fi : local)
-            found << fi.absoluteFilePath();
+    const QString pvtu = pickBest(collect(runDir, {QStringLiteral("*.pvtu")}, 64));
+    if (!pvtu.isEmpty())
+        return pvtu;
 
-        if (found.isEmpty()) {
-            QDirIterator it(runDir, QStringList{QStringLiteral("*.vtu")},
-                            QDir::Files, QDirIterator::Subdirectories);
-            int guard = 0;
-            while (it.hasNext() && guard++ < 64)
-                found << it.next();
-        }
-    }
-
-    return pickBest(found);
+    return pickBest(collect(runDir, {QStringLiteral("*.vtu")}, 64));
 }
 
 /*!*******************************************************************************************************************
@@ -182,8 +188,8 @@ void MainWindow::openThermalResultsInFieldView(const QString &runDir)
     const QString vtu = findThermalResultsVtu(dir);
     if (vtu.isEmpty()) {
         appendToSimulationLog(
-            QStringLiteral("\n[Field] No thermal .vtu found under:\n  %1\n"
-                           "  Expected thermal_results*.vtu after a successful Elmer Thermal run.\n")
+            QStringLiteral("\n[Field] No thermal .vtu/.pvtu found under:\n  %1\n"
+                           "  Expected thermal_results*.pvtu or thermal_results*.vtu after a successful Elmer Thermal run.\n")
                 .arg(dir.isEmpty() ? QStringLiteral("(empty)") : dir)
                 .toUtf8());
     } else {

@@ -35,7 +35,7 @@
  * Polygons are colored from the stackup materials when a GDS layer maps to a named layer;
  * unmapped layers (e.g. port markers 201/202) are shown with a distinct port style.
  * Floating 2D/3D and Field controls (top-right): Iso3D extrudes from stack
- * \c zmin/\c zmax; Field shows a Z-clip heatmap overlay (mutually exclusive with 3D).
+ * \c zmin/\c zmax; Field shows a Z-clip heatmap (pane stays 2D; 3D opens PyVista).
  * Choices are stored under QSettings LayoutPreview/view3d and viewField.
  *
  * Interaction mirrors SubstrateView:
@@ -103,13 +103,13 @@ public:
         qreal mag = 1.0;
     };
 
-    /*! Heatmap + optional arrows from \c field_slice_export.py cache. */
+    /*! Heatmap / volume frame from \c field_slice_export.py cache. */
     struct FieldOverlay
     {
-        QImage  image; //!< RGBA heatmap
+        QImage  image; //!< RGBA heatmap (2D) or volume screenshot (3D)
         qreal   xminUm = 0.0;
         qreal   xmaxUm = 0.0;
-        qreal   yminUm = 0.0; //!< GDS Y-up
+        qreal   yminUm = 0.0; //!< GDS Y-up (2D) or image Y (volume)
         qreal   ymaxUm = 0.0;
         qreal   zUm = 0.0;
         qreal   zMinUm = 0.0;
@@ -119,6 +119,7 @@ public:
         QVector<FieldArrow> arrows;
         bool    logScale = false;
         bool    showArrows = true;
+        bool    volume = false; //!< True for Field+3D offscreen volume PNG
         bool    valid() const { return !image.isNull() && xmaxUm > xminUm && ymaxUm > yminUm; }
     };
 
@@ -145,16 +146,27 @@ public:
     bool                        isView3d() const { return m_viewMode == ViewMode::Iso3D; }
 
     /*!*******************************************************************************************************************
-     * \brief Enables or disables Field mode (Z-clip heatmap overlay).
+     * \brief Enables or disables Field mode (Z-clip heatmap or volume).
      *
-     * Mutually exclusive with Iso3D: turning Field on forces Top2D. Persists
-     * under QSettings LayoutPreview/viewField and emits \c fieldModeChanged.
+     * Field = Z-slice overlay on layout (always Top2D in this pane). 3D while
+     * Field is on emits \c fieldExternalVolumeRequested. Persists
+     * LayoutPreview/viewField and emits \c fieldModeChanged.
      *
-     * \param on True to show the Field panel and request a slice export.
+     * \param on True to show the Field panel and request an export.
      **********************************************************************************************************************/
     void                        setFieldMode(bool on);
-    /*! True while Field mode is active (Iso3D button disabled). */
+    /*! True while Field mode is active. */
     bool                        isFieldMode() const { return m_fieldOn; }
+    /*! Field+3D no longer uses an in-pane volume; always false (2D pane). */
+    bool                        isFieldVolume() const { return false; }
+    /*! Current orbit yaw [deg] (shared by Iso3D layout and Field volume camera). */
+    qreal                       orbitYawDeg() const { return m_yawDeg; }
+    /*! Current orbit pitch [deg]. */
+    qreal                       orbitPitchDeg() const { return m_pitchDeg; }
+    /*! Field-volume camera zoom (>1 = closer). Pixel zoom of the PNG is disabled. */
+    qreal                       volumeCameraZoom() const { return m_volumeCamZoom; }
+    /*! Preferred volume render size [px] from the current viewport (HiDPI-aware). */
+    int                         volumeRenderResolution() const;
     /*!*******************************************************************************************************************
      * \brief Replaces the current Field overlay and refreshes the floating panel.
      *
@@ -184,12 +196,14 @@ public:
     QRectF                      layoutContentBoundsUm() const;
 
 signals:
-    /*! Emitted when the user clicks a polygon; \a name / \a kind match stack item tagging. */
-    void                        layerClicked(const QString &name, const QString &kind);
+    /*! Emitted when the user clicks a polygon; \a gdsLayer is the GDS number (-1 if unknown). */
+    void                        layerClicked(const QString &name, const QString &kind, int gdsLayer);
     /*! Emitted when Esc (or equivalent) clears the layout highlight. */
     void                        highlightCleared();
     /*! Field mode toggled (MainWindow should load / clear field dumps). */
     void                        fieldModeChanged(bool on);
+    /*! Field is on and user pressed 3D — open external PyVista volume window. */
+    void                        fieldExternalVolumeRequested();
     /*! Z-clip or display options changed; MainWindow should re-export the slice. */
     void                        fieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
     /*! User asked to jump to the hottest Z (max |E| / temperature in layout ROI). */
@@ -202,6 +216,7 @@ signals:
 protected:
     void                        drawBackground(QPainter *painter, const QRectF &rect) override;
     void                        drawForeground(QPainter *painter, const QRectF &rect) override;
+    bool                        event(QEvent *event) override;
     void                        wheelEvent(QWheelEvent *event) override;
     bool                        viewportEvent(QEvent *event) override;
     void                        keyPressEvent(QKeyEvent *event) override;
@@ -234,12 +249,19 @@ private:
      * \brief Adds the Field heatmap pixmap under layout polygons (scene Y-down).
      **********************************************************************************************************************/
     void                        addFieldOverlayItems();
+    /*! Full-pane volume screenshot (Field+3D); scene = image pixel rectangle. */
+    void                        addFieldVolumeItems();
     /*! Syncs Z slider / Log / Arrows widgets from \c m_field without re-export. */
     void                        updateFieldControlsFromOverlay();
     /*! Shows/hides Field panel, updates status line, repositions floating controls. */
     void                        syncFloatingControls();
     /*! Emits \c fieldSliceRequest from current slider / checkbox state. */
     void                        emitFieldSliceRequest();
+    /*! Volume camera zoom changed — re-render only after settle (wheel stop / pinch end). */
+    void                        scheduleVolumeCameraRefresh();
+    void                        wipeFieldSceneForModeSwitch(bool toVolume);
+    /*! Apply a multiplicative camera zoom step (Field volume); schedules settle refresh. */
+    void                        applyVolumeCamZoomFactor(qreal factor);
     void                        addPortArrow(const QPointF &origin,
                                              const QPointF &dirScene,
                                              const QColor &color,
@@ -302,6 +324,7 @@ private:
     class QCheckBox            *m_fieldLogChk = nullptr;
     class QCheckBox            *m_fieldArrowsChk = nullptr;
     class QLabel               *m_fieldStatusLbl = nullptr;
+    class QTimer               *m_volumeCamSettle = nullptr; //!< Debounce volume zoom re-render
     ViewMode                    m_viewMode = ViewMode::Top2D;
     bool                        m_fieldOn = false;
     FieldOverlay                m_field;
@@ -325,6 +348,7 @@ private:
     QPoint                      m_pressPos;
     qreal                       m_yawDeg = 45.0;   //!< Orbit around stack Z [deg]
     qreal                       m_pitchDeg = 30.0; //!< Orbit pitch [deg], clamped
+    qreal                       m_volumeCamZoom = 1.0; //!< Field+3D camera zoom (re-render, not pixmap scale)
     qreal                       m_orbitCx = 0.0;
     qreal                       m_orbitCy = 0.0;
     qreal                       m_orbitCz = 0.0;

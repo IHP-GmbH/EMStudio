@@ -260,6 +260,14 @@ add_custom_command(TARGET EMStudio POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/keywords"
         "$<TARGET_FILE_DIR:EMStudio>/keywords"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:EMStudio>/icons"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/icons/logo.png"
+        "$<TARGET_FILE_DIR:EMStudio>/icons/logo.png"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/appicon.ico"
+        "$<TARGET_FILE_DIR:EMStudio>/appicon.ico"
     COMMAND ${CMAKE_COMMAND} -E copy
         "${CMAKE_SOURCE_DIR}/qt.conf"
         "$<TARGET_FILE_DIR:EMStudio>/qt.conf"

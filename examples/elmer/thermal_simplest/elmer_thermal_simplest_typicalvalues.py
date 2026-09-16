@@ -122,5 +122,8 @@ settings['elmer_thermal'] = True
 settings['elmer_thermal'] = True
 settings['elmer_thermal'] = True
 settings['elmer_thermal'] = True
+settings['elmer_thermal'] = True
+settings['elmer_thermal'] = True
+settings['elmer_thermal'] = True
 config_name, data_dir = simulation_setup.create_elmer_thermal (settings)
 

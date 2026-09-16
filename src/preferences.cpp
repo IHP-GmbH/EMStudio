@@ -322,7 +322,7 @@ void Preferences::setupPreferencesPanel()
                                       QLatin1String("FIELD_VIEWER_PYTHON"));
     fieldPythonProp->setWhatsThis("file");
     fieldPythonProp->setToolTip(tr(
-        "Optional host Python used by Layout Field view (scripts/field_slice_export.py).\n"
+        "Optional host Python used by Layout Field view (field_slice_export.py / field_volume_viewer.py).\n"
         "Needs PyVista (+ Pillow). Leave empty to reuse OpenEMS / Elmer / Palace Python paths.\n"
         "Field mode shows a Z-clip heatmap (|E| or Temperature) under the layout metals."));
     fieldPythonProp->setValue(m_preferences.value(QStringLiteral("FIELD_VIEWER_PYTHON"), QString()));

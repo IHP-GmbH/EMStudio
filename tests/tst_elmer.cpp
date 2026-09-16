@@ -244,6 +244,32 @@ void ElmerTest::findThermalResultsVtu_prefersThermalResultsPrefix()
     QCOMPARE(QFileInfo(found).fileName(), QStringLiteral("thermal_results_t0001.vtu"));
 }
 
+void ElmerTest::findThermalResultsVtu_prefersPvtuOverVtu()
+{
+    MainWindow w;
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    const QString piece = dir.filePath(QStringLiteral("thermal_results_t0001.vtu"));
+    const QString combined = dir.filePath(QStringLiteral("thermal_results.pvtu"));
+    {
+        QFile f(piece);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("piece");
+        f.close();
+    }
+    {
+        QFile f(combined);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("combined");
+        f.close();
+    }
+
+    const QString found = w.testFindThermalResultsVtu(dir.path());
+    QCOMPARE(QFileInfo(found).suffix().toLower(), QStringLiteral("pvtu"));
+    QCOMPARE(QFileInfo(found).fileName(), QStringLiteral("thermal_results.pvtu"));
+}
+
 void ElmerTest::substrateOffset_expressionResolvesWithVariables()
 {
     QTemporaryDir dir;

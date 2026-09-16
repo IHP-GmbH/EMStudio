@@ -56,6 +56,9 @@ settings['fstart']  = 0e9  # @brief start frequency [Hz]
 settings['fstop']   = 100e9 # @brief stop frequency [Hz]
 settings['fstep']   = 5e9 # @brief frequency step [Hz], adaptive frequency sweep is used 
 
+settings['fpoint']  = [] # @brief optional: list of discrete frequencies for S-param, in addition to sweep, default is []
+settings['fdump']   = [] # @brief Enable field dump (Elmer: any non-empty value dumps at every solved frequency). Example: [settings['fstop']]
+
 # optional: boundary condition ABC, PEC or PMC at X-,X+,Y-mY+,Z-,Z+ Default is absorbing boundary.
 settings['boundary']=['ABC','ABC','ABC','ABC','ABC','ABC']
 

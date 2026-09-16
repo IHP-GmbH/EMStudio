@@ -43,6 +43,7 @@
 #include <QSlider>
 #include <QCheckBox>
 #include <QLabel>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGraphicsPixmapItem>
@@ -75,7 +76,9 @@ LayoutView::LayoutView(QWidget *parent)
     setMouseTracking(true);
     viewport()->setMouseTracking(true);
     viewport()->setCursor(Qt::ArrowCursor);
+    viewport()->setAttribute(Qt::WA_AcceptTouchEvents, true);
     grabGesture(Qt::PinchGesture);
+    viewport()->grabGesture(Qt::PinchGesture);
 
     m_modeBtn = new QToolButton(this);
     m_modeBtn->setObjectName(QStringLiteral("layoutViewModeBtn"));
@@ -112,7 +115,8 @@ LayoutView::LayoutView(QWidget *parent)
     m_fieldBtn->setText(QStringLiteral("Field"));
     m_fieldBtn->setStyleSheet(m_modeBtn->styleSheet());
     m_fieldBtn->setToolTip(tr("Field view: Z-clip heatmap + optional arrows.\n"
-                              "Disables 3D while active. Requires a field dump (fdump / VTK / VTU)."));
+                              "While Field is on, 3D opens an interactive PyVista volume window.\n"
+                              "Requires a field dump (fdump / VTK / VTU)."));
     connect(m_fieldBtn, &QToolButton::toggled, this, &LayoutView::onFieldButtonToggled);
 
     m_fieldPanel = new QWidget(this);
@@ -258,6 +262,15 @@ void LayoutView::rebuildScene(bool refit)
     clearMeasure();
     m_scene->clear();
     m_scene->setSceneRect(QRectF());
+
+    if (isFieldVolume()) {
+        addFieldVolumeItems();
+        m_highlightedName = keepHighlight;
+        if (refit && !m_zoomLocked)
+            fitPreferredContent();
+        repositionFloatingControls();
+        return;
+    }
 
     if (m_viewMode == ViewMode::Iso3D)
         rebuildScene3D(refit);
@@ -461,10 +474,51 @@ void LayoutView::rebuildScene2D(bool refit)
             QString dir = m_ports.value(it.poly.layer).direction.trimmed().toLower();
             if (dir.isEmpty())
                 dir = QStringLiteral("x");
+
+            // Via port with finite XY area: gds2palace collapses the shorter axis to its
+            // *min* edge (not the geometric center). Draw that effective sheet as a dashed line.
+            QPointF arrowOrigin = bb.center();
+            if (dir.contains(QLatin1Char('z')) && bb.width() > 1e-4 && bb.height() > 1e-4) {
+                // bb is in scene coords (Y-down). Recover GDS extents from drawn points.
+                qreal gdsXmin = drawn.first().x();
+                qreal gdsXmax = gdsXmin;
+                qreal gdsYmin = -drawn.first().y();
+                qreal gdsYmax = gdsYmin;
+                for (const QPointF &pt : drawn) {
+                    gdsXmin = qMin(gdsXmin, pt.x());
+                    gdsXmax = qMax(gdsXmax, pt.x());
+                    const qreal gy = -pt.y();
+                    gdsYmin = qMin(gdsYmin, gy);
+                    gdsYmax = qMax(gdsYmax, gy);
+                }
+                const qreal sizeX = gdsXmax - gdsXmin;
+                const qreal sizeY = gdsYmax - gdsYmin;
+                QLineF sheet;
+                if (sizeY > sizeX)
+                    sheet = QLineF(QPointF(gdsXmin, -gdsYmin), QPointF(gdsXmin, -gdsYmax));
+                else
+                    sheet = QLineF(QPointF(gdsXmin, -gdsYmin), QPointF(gdsXmax, -gdsYmin));
+
+                QPen centerPen(it.style.color);
+                centerPen.setCosmetic(true);
+                centerPen.setWidth(4);
+                centerPen.setStyle(Qt::DashLine);
+                auto *centerLine = m_scene->addLine(sheet, centerPen);
+                centerLine->setData(kRoleName, it.style.name);
+                centerLine->setData(kRoleKind, QStringLiteral("port"));
+                centerLine->setData(kRoleGds, it.poly.layer);
+                centerLine->setData(kRoleIsPort, true);
+                centerLine->setData(kRolePen, it.style.color);
+                centerLine->setToolTip(tr("Effective via-port sheet — gds2palace pins the shorter axis to its min edge"));
+                centerLine->setVisible(vis);
+                centerLine->setZValue(double(it.style.order) + 0.35);
+                arrowOrigin = sheet.pointAt(0.5);
+            }
+
             if (dir.contains(QLatin1Char('z'))) {
                 const QString zl = dir.startsWith(QLatin1Char('-'))
                         ? QStringLiteral("-z") : QStringLiteral("z");
-                addPortInwardArrow(bb.center(), contentCenter, it.style.color, it.style.name,
+                addPortInwardArrow(arrowOrigin, contentCenter, it.style.color, it.style.name,
                                    QStringLiteral("port"), it.poly.layer, vis,
                                    double(it.style.order) + 0.4, zl);
             } else {
@@ -481,7 +535,7 @@ void LayoutView::rebuildScene2D(bool refit)
                     dirScene = QPointF(1, 0);
                     dirLabel = QStringLiteral("x");
                 }
-                addPortArrow(bb.center(), dirScene, it.style.color, it.style.name,
+                addPortArrow(arrowOrigin, dirScene, it.style.color, it.style.name,
                              QStringLiteral("port"), it.poly.layer, vis,
                              double(it.style.order) + 0.4, dirLabel);
             }
@@ -927,39 +981,48 @@ void LayoutView::resetOrbitAngles()
 {
     m_yawDeg = 45.0;
     m_pitchDeg = 30.0;
+    m_volumeCamZoom = 1.0;
+}
+
+int LayoutView::volumeRenderResolution() const
+{
+    const qreal dpr = devicePixelRatioF() > 0.0 ? devicePixelRatioF() : 1.0;
+    // Prefer a bit over viewport so fit-down stays sharp (avoids blurry upscale).
+    const int side = qRound(qMax(viewport()->width(), viewport()->height()) * dpr * 1.25);
+    return qBound(720, side, 1600);
 }
 
 void LayoutView::setViewMode(ViewMode mode)
 {
-    if (mode == ViewMode::Iso3D && m_fieldOn)
-        setFieldMode(false);
-
     if (m_viewMode == mode) {
         syncFloatingControls();
         return;
     }
+    // Field stays as a 2D Z-slice in this pane; volume is an external window.
+    if (mode == ViewMode::Iso3D && m_fieldOn)
+        mode = ViewMode::Top2D;
+
     m_viewMode = mode;
     if (mode == ViewMode::Iso3D)
         resetOrbitAngles();
-    if (m_modeBtn) {
-        const QSignalBlocker block(m_modeBtn);
-        m_modeBtn->setChecked(mode == ViewMode::Iso3D);
-        m_modeBtn->setText(mode == ViewMode::Iso3D ? QStringLiteral("3D") : QStringLiteral("2D"));
-        m_modeBtn->setToolTip(mode == ViewMode::Iso3D
-                                  ? tr("3D view (click for top view).\n"
-                                       "Drag: orbit · Click: select · Two-finger scroll: orbit\n"
-                                       "Alt+drag / Middle: pan · Pinch / Ctrl+scroll: zoom · R: reset")
-                                  : tr("Top view (click for 3D).\n"
-                                       "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom · F: fit layout · Home: full field"));
-    }
     saveViewModeToSettings();
     syncFloatingControls();
-    if (!m_polys.isEmpty())
+    if (!m_polys.isEmpty() || m_field.valid() || !m_field.status.isEmpty() || m_fieldOn)
         rebuildScene(true);
 }
 
 void LayoutView::onModeButtonToggled(bool on)
 {
+    if (on && m_fieldOn) {
+        // Keep the layout pane on the 2D Field slice; open external volume viewer.
+        const QSignalBlocker block(m_modeBtn);
+        m_modeBtn->setChecked(false);
+        m_modeBtn->setText(QStringLiteral("3D"));
+        m_modeBtn->setToolTip(tr("Open interactive PyVista volume window (layout stays 2D).\n"
+                                "Drag: pan · Pinch / Ctrl+scroll: zoom · F: fit · Home: full"));
+        emit fieldExternalVolumeRequested();
+        return;
+    }
     setViewMode(on ? ViewMode::Iso3D : ViewMode::Top2D);
 }
 
@@ -974,8 +1037,8 @@ void LayoutView::onFieldButtonToggled(bool on)
 /*!*******************************************************************************************************************
  * \brief Enables or disables Field mode (Z-clip heatmap overlay).
  *
- * Mutually exclusive with Iso3D. Persists LayoutPreview/viewField and emits
- * \c fieldModeChanged so MainWindow can start / stop slice exports.
+ * Layout pane stays Top2D; Iso3D geometry preview is turned off while Field is
+ * on. Persists LayoutPreview/viewField and emits \c fieldModeChanged.
  *
  * \param on True to enter Field mode.
  **********************************************************************************************************************/
@@ -988,16 +1051,8 @@ void LayoutView::setFieldMode(bool on)
     m_fieldOn = on;
     if (m_fieldOn)
         m_zoomLocked = false;
-    if (m_fieldOn && m_viewMode == ViewMode::Iso3D) {
+    if (m_fieldOn && m_viewMode == ViewMode::Iso3D)
         m_viewMode = ViewMode::Top2D;
-        if (m_modeBtn) {
-            const QSignalBlocker block(m_modeBtn);
-            m_modeBtn->setChecked(false);
-            m_modeBtn->setText(QStringLiteral("2D"));
-            m_modeBtn->setToolTip(tr("Top view (click for 3D).\n"
-                                     "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom"));
-        }
-    }
     if (m_fieldBtn) {
         const QSignalBlocker block(m_fieldBtn);
         m_fieldBtn->setChecked(m_fieldOn);
@@ -1005,9 +1060,8 @@ void LayoutView::setFieldMode(bool on)
     saveViewModeToSettings();
     syncFloatingControls();
     emit fieldModeChanged(m_fieldOn);
-    if (!m_polys.isEmpty() || m_field.valid() || !m_field.status.isEmpty())
+    if (!m_polys.isEmpty() || m_field.valid() || !m_field.status.isEmpty() || m_fieldOn)
         rebuildScene(true);
-    // Export is triggered once from MainWindow::onLayoutFieldModeChanged (debounced).
 }
 
 /*!*******************************************************************************************************************
@@ -1025,7 +1079,8 @@ void LayoutView::setFieldOverlay(const FieldOverlay &overlay)
             && qFuzzyCompare(overlay.yminUm, m_field.yminUm)
             && qFuzzyCompare(overlay.ymaxUm, m_field.ymaxUm)
             && (overlay.showArrows == m_field.showArrows)
-            && (overlay.arrows.size() == m_field.arrows.size());
+            && (overlay.arrows.size() == m_field.arrows.size())
+            && (overlay.volume == m_field.volume);
     const bool statusOnly = sameImage && sameFrame && m_field.valid();
     const bool sliderDown = m_fieldZSlider && m_fieldZSlider->isSliderDown();
 
@@ -1039,8 +1094,8 @@ void LayoutView::setFieldOverlay(const FieldOverlay &overlay)
     syncFloatingControls();
     if (m_fieldOn && !statusOnly) {
         rebuildScene(false);
-        // First Field image / unlocked view: frame on layout; scene keeps full mesh for zoom-out.
-        if (!m_zoomLocked)
+        // Volume screenshots must stay fitted 1:1 (zoom = camera re-render).
+        if (m_field.volume || isFieldVolume() || !m_zoomLocked)
             fitPreferredContent();
     }
 }
@@ -1120,7 +1175,7 @@ QRectF LayoutView::layoutContentBoundsUm() const
  **********************************************************************************************************************/
 void LayoutView::addFieldOverlayItems()
 {
-    if (!m_fieldOn || !m_field.valid())
+    if (!m_fieldOn || !m_field.valid() || m_field.volume)
         return;
 
     const QPixmap pix = QPixmap::fromImage(m_field.image);
@@ -1138,6 +1193,33 @@ void LayoutView::addFieldOverlayItems()
     item->setZValue(-100000);
     item->setOpacity(0.72);
     item->setAcceptedMouseButtons(Qt::NoButton);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Places the Field+3D volume screenshot as the sole scene content.
+ **********************************************************************************************************************/
+void LayoutView::addFieldVolumeItems()
+{
+    if (!m_fieldOn)
+        return;
+    if (!m_field.valid()) {
+        // Keep a tiny scene so fit/status still work while exporting.
+        m_scene->setSceneRect(QRectF(0, 0, 10, 10));
+        return;
+    }
+
+    const QPixmap pix = QPixmap::fromImage(m_field.image);
+    if (pix.isNull())
+        return;
+
+    auto *item = m_scene->addPixmap(pix);
+    item->setPos(0, 0);
+    item->setZValue(0);
+    item->setOpacity(1.0);
+    item->setAcceptedMouseButtons(Qt::NoButton);
+    // Fast = sharper when the PNG is at/above viewport size (Smooth blurs upscales).
+    item->setTransformationMode(Qt::FastTransformation);
+    m_scene->setSceneRect(QRectF(pix.rect()));
 }
 
 /*!*******************************************************************************************************************
@@ -1165,8 +1247,34 @@ void LayoutView::updateFieldControlsFromOverlay()
  **********************************************************************************************************************/
 void LayoutView::syncFloatingControls()
 {
-    if (m_modeBtn)
-        m_modeBtn->setEnabled(!m_fieldOn);
+    if (m_modeBtn) {
+        m_modeBtn->setEnabled(true);
+        const QSignalBlocker block(m_modeBtn);
+        if (m_fieldOn) {
+            // Field pane is always Top2D; the button launches the external viewer.
+            m_modeBtn->setChecked(false);
+            m_modeBtn->setText(QStringLiteral("3D"));
+            m_modeBtn->setToolTip(tr("Open interactive PyVista volume window (layout stays 2D).\n"
+                                     "Drag: pan · Pinch / Ctrl+scroll: zoom · F: fit · Home: full"));
+        } else {
+            m_modeBtn->setChecked(m_viewMode == ViewMode::Iso3D);
+            m_modeBtn->setText(m_viewMode == ViewMode::Iso3D ? QStringLiteral("3D")
+                                                            : QStringLiteral("2D"));
+            m_modeBtn->setToolTip(m_viewMode == ViewMode::Iso3D
+                                      ? tr("3D view (click for top view).\n"
+                                           "Drag: orbit · Click: select · Two-finger scroll: orbit\n"
+                                           "Alt+drag / Middle: pan · Pinch / Ctrl+scroll: zoom · R: reset")
+                                      : tr("Top view (click for 3D).\n"
+                                           "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom · F: fit layout · Home: full field"));
+        }
+    }
+    if (m_fieldArrowsChk)
+        m_fieldArrowsChk->setVisible(m_fieldOn && !isFieldVolume());
+    if (m_fieldHotZBtn) {
+        m_fieldHotZBtn->setToolTip(isFieldVolume()
+                                       ? tr("Jump clip to hottest Z (max temperature or |E|).")
+                                       : tr("Jump to hottest Z (max temperature or |E| in the layout ROI)."));
+    }
     if (m_fieldPanel)
         m_fieldPanel->setVisible(m_fieldOn);
     if (m_fieldStatusLbl) {
@@ -1175,17 +1283,26 @@ void LayoutView::syncFloatingControls()
         if (!m_field.status.isEmpty() && !exporting)
             full = m_field.status;
         else if (m_field.valid()) {
-            full = tr("%1 @ Z=%2 µm")
-                       .arg(m_field.quantity.isEmpty()
-                                ? QStringLiteral("Field")
-                                : m_field.quantity)
-                       .arg(m_field.zUm, 0, 'g', 4);
+            if (isFieldVolume() || m_field.volume) {
+                full = tr("%1 volume @ Z=%2 µm")
+                           .arg(m_field.quantity.isEmpty()
+                                    ? QStringLiteral("Field")
+                                    : m_field.quantity)
+                           .arg(m_field.zUm, 0, 'g', 4);
+            } else {
+                full = tr("%1 @ Z=%2 µm")
+                           .arg(m_field.quantity.isEmpty()
+                                    ? QStringLiteral("Field")
+                                    : m_field.quantity)
+                           .arg(m_field.zUm, 0, 'g', 4);
+            }
             if (exporting)
                 full += tr(" (updating…)");
         } else if (!m_field.status.isEmpty())
             full = m_field.status;
         else if (m_fieldOn)
-            full = tr("Loading field slice…");
+            full = isFieldVolume() ? tr("Loading field volume…")
+                                   : tr("Loading field slice…");
 
         // One compact line in the panel; full text on hover (and Simulation log).
         QString shortTxt = full;
@@ -1208,6 +1325,54 @@ void LayoutView::syncFloatingControls()
 void LayoutView::emitFieldSliceRequest()
 {
     emit fieldSliceRequest(fieldClipZUm(), fieldLogScale(), fieldShowArrows());
+}
+
+/*!*******************************************************************************************************************
+ * \brief Coalesce volume zoom into one re-render after the user stops scrolling / pinching.
+ **********************************************************************************************************************/
+void LayoutView::scheduleVolumeCameraRefresh()
+{
+    if (!isFieldVolume())
+        return;
+    if (m_fieldStatusLbl)
+        m_fieldStatusLbl->setText(tr("Zoom… release to update"));
+    if (!m_volumeCamSettle) {
+        m_volumeCamSettle = new QTimer(this);
+        m_volumeCamSettle->setSingleShot(true);
+        m_volumeCamSettle->setInterval(380);
+        connect(m_volumeCamSettle, &QTimer::timeout, this, [this]() {
+            if (isFieldVolume())
+                emitFieldSliceRequest();
+        });
+    }
+    m_volumeCamSettle->start();
+}
+
+void LayoutView::applyVolumeCamZoomFactor(qreal factor)
+{
+    if (!isFieldVolume() || factor <= 0.0 || qFuzzyCompare(factor, 1.0))
+        return;
+    m_volumeCamZoom = qBound(0.35, m_volumeCamZoom * factor, 8.0);
+    scheduleVolumeCameraRefresh();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Clears the previous Field frame when switching 2D ↔ volume so the old picture does not linger.
+ **********************************************************************************************************************/
+void LayoutView::wipeFieldSceneForModeSwitch(bool toVolume)
+{
+    FieldOverlay blank;
+    blank.volume = toVolume;
+    blank.zUm = m_field.zUm;
+    blank.zMinUm = m_field.zMinUm;
+    blank.zMaxUm = m_field.zMaxUm;
+    blank.logScale = fieldLogScale();
+    blank.showArrows = false;
+    blank.status = toVolume ? tr("Exporting volume…") : tr("Exporting slice…");
+    // Bypass setFieldOverlay status-only short-circuit: force empty image + rebuild.
+    m_field = blank;
+    syncFloatingControls();
+    rebuildScene(true);
 }
 
 /*!*******************************************************************************************************************
@@ -1268,8 +1433,12 @@ void LayoutView::onFieldControlsChanged()
 
 void LayoutView::repositionFloatingControls()
 {
-    const int m = 8;
-    int x = width() - m;
+    const int m = 10;
+    // Keep clear of the vertical scrollbar so 2D/3D is not clipped.
+    int sb = 0;
+    if (verticalScrollBar() && verticalScrollBar()->isVisible())
+        sb = verticalScrollBar()->width();
+    int x = width() - m - sb;
     if (m_modeBtn) {
         x -= m_modeBtn->width();
         m_modeBtn->move(x, m);
@@ -1283,7 +1452,7 @@ void LayoutView::repositionFloatingControls()
     }
     if (m_fieldPanel && m_fieldPanel->isVisible()) {
         m_fieldPanel->adjustSize();
-        const int px = width() - m_fieldPanel->width() - m;
+        const int px = width() - m_fieldPanel->width() - m - sb;
         m_fieldPanel->move(qMax(m, px), m + 30);
         m_fieldPanel->raise();
     }
@@ -1297,14 +1466,14 @@ void LayoutView::loadViewModeFromSettings()
     const bool vField = settings.value(QStringLiteral("viewField"), false).toBool();
     settings.endGroup();
     m_fieldOn = vField;
-    m_viewMode = (v3d && !m_fieldOn) ? ViewMode::Iso3D : ViewMode::Top2D;
+    m_viewMode = v3d ? ViewMode::Iso3D : ViewMode::Top2D;
 }
 
 void LayoutView::saveViewModeToSettings() const
 {
     QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
     settings.beginGroup(QStringLiteral("LayoutPreview"));
-    settings.setValue(QStringLiteral("view3d"), m_viewMode == ViewMode::Iso3D && !m_fieldOn);
+    settings.setValue(QStringLiteral("view3d"), m_viewMode == ViewMode::Iso3D);
     settings.setValue(QStringLiteral("viewField"), m_fieldOn);
     settings.endGroup();
 }
@@ -1447,7 +1616,13 @@ void LayoutView::applyHighlight()
  **********************************************************************************************************************/
 void LayoutView::fitPreferredContent()
 {
-    if (m_fieldOn && m_field.valid()) {
+    if (isFieldVolume()) {
+        // Volume is a screenshot — always show 1:1 fit; zoom is camera re-render.
+        resetTransform();
+        fitFullContent();
+        return;
+    }
+    if (m_fieldOn && m_field.valid() && !m_field.volume) {
         // Prefer visible metals so a large hidden sheet does not force a wide frame.
         QRectF layoutUm;
         bool any = false;
@@ -1535,6 +1710,12 @@ void LayoutView::wheelEvent(QWheelEvent *event)
     auto applyOrbit = [&](qreal dx, qreal dy) {
         m_yawDeg += dx;
         m_pitchDeg = qBound(-85.0, m_pitchDeg - dy, 85.0);
+        if (isFieldVolume()) {
+            // Keep last volume frame while orbiting; export on release / debounce.
+            if (m_fieldStatusLbl)
+                m_fieldStatusLbl->setText(tr("Orbit… release to update"));
+            return;
+        }
         if (!m_polys.isEmpty())
             rebuildScene(false);
     };
@@ -1544,10 +1725,38 @@ void LayoutView::wheelEvent(QWheelEvent *event)
         verticalScrollBar()->setValue(verticalScrollBar()->value() - dy);
     };
 
+    // Field volume: wheel / trackpad scroll = camera zoom (settle → one re-render).
+    // Orbit is left-drag / right-drag only.
+    if (isFieldVolume()) {
+        qreal dy = angle.y();
+        if (qFuzzyIsNull(dy))
+            dy = pixel.y();
+        // Trackpad horizontal flick → orbit preview (no immediate re-render).
+        if (!ctrl && !pixel.isNull() && qAbs(pixel.x()) > qAbs(pixel.y()) * 1.5) {
+            applyOrbit(pixel.x() * 0.35, pixel.y() * 0.35);
+            event->accept();
+            return;
+        }
+        if (qFuzzyIsNull(dy) && !angle.isNull() && qAbs(angle.x()) > qAbs(angle.y()) * 1.5) {
+            applyOrbit(angle.x() * 0.08, 0);
+            event->accept();
+            return;
+        }
+        if (qFuzzyIsNull(dy)) {
+            event->accept();
+            return;
+        }
+        // Proportional to delta — trackpads send many small steps; fixed 1.12 felt broken.
+        const double factor = std::pow(1.0035, static_cast<double>(dy));
+        applyVolumeCamZoomFactor(factor);
+        event->accept();
+        return;
+    }
+
     // Ctrl+scroll / pinch path below → zoom. Otherwise navigate.
     if (!ctrl) {
         if (m_viewMode == ViewMode::Iso3D) {
-            // Trackpad / wheel → orbit (so navigation works without Right/Ctrl).
+            // Trackpad / wheel → orbit (geometry 3D only).
             if (!pixel.isNull())
                 applyOrbit(pixel.x() * 0.35, pixel.y() * 0.35);
             else if (!angle.isNull())
@@ -1589,6 +1798,39 @@ void LayoutView::wheelEvent(QWheelEvent *event)
     event->accept();
 }
 
+bool LayoutView::event(QEvent *event)
+{
+    // Windows Precision Touchpad pinch often lands on the view (not viewport).
+    if (isFieldVolume() && event->type() == QEvent::NativeGesture) {
+        auto *ne = static_cast<QNativeGestureEvent *>(event);
+        if (ne->gestureType() == Qt::ZoomNativeGesture && !qFuzzyIsNull(ne->value())) {
+            applyVolumeCamZoomFactor(1.0 + ne->value());
+            return true;
+        }
+    }
+    if (isFieldVolume() && event->type() == QEvent::Gesture) {
+        auto *ge = static_cast<QGestureEvent *>(event);
+        if (QPinchGesture *pinch = static_cast<QPinchGesture *>(ge->gesture(Qt::PinchGesture))) {
+            if (pinch->changeFlags() & QPinchGesture::ScaleFactorChanged) {
+                const qreal factor = pinch->scaleFactor();
+                if (factor > 0.0 && !qFuzzyCompare(factor, 1.0)) {
+                    m_volumeCamZoom = qBound(0.35, m_volumeCamZoom * factor, 8.0);
+                    if (m_fieldStatusLbl)
+                        m_fieldStatusLbl->setText(tr("Zoom… release to update"));
+                }
+            }
+            if (pinch->state() == Qt::GestureFinished
+                || pinch->state() == Qt::GestureCanceled) {
+                if (m_volumeCamSettle)
+                    m_volumeCamSettle->stop();
+                emitFieldSliceRequest();
+            }
+            return true;
+        }
+    }
+    return QGraphicsView::event(event);
+}
+
 bool LayoutView::viewportEvent(QEvent *event)
 {
     if (event->type() == QEvent::Gesture) {
@@ -1597,26 +1839,45 @@ bool LayoutView::viewportEvent(QEvent *event)
             if (pinch->changeFlags() & QPinchGesture::ScaleFactorChanged) {
                 const qreal factor = pinch->scaleFactor();
                 if (factor > 0.0 && !qFuzzyCompare(factor, 1.0)) {
-                    m_zoomLocked = true;
-                    const QGraphicsView::ViewportAnchor oldAnchor = transformationAnchor();
-                    setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
-                    scale(factor, factor);
-                    setTransformationAnchor(oldAnchor);
+                    if (isFieldVolume()) {
+                        m_volumeCamZoom = qBound(0.35, m_volumeCamZoom * factor, 8.0);
+                        if (m_fieldStatusLbl)
+                            m_fieldStatusLbl->setText(tr("Zoom… release to update"));
+                    } else {
+                        m_zoomLocked = true;
+                        const QGraphicsView::ViewportAnchor oldAnchor = transformationAnchor();
+                        setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+                        scale(factor, factor);
+                        setTransformationAnchor(oldAnchor);
+                    }
                 }
-                return true;
             }
+            if (isFieldVolume()
+                && (pinch->state() == Qt::GestureFinished
+                    || pinch->state() == Qt::GestureCanceled)) {
+                if (m_volumeCamSettle)
+                    m_volumeCamSettle->stop();
+                emitFieldSliceRequest();
+            }
+            return true;
         }
     }
     if (event->type() == QEvent::NativeGesture) {
         auto *ne = static_cast<QNativeGestureEvent *>(event);
         if (ne->gestureType() == Qt::ZoomNativeGesture) {
-            const qreal factor = 1.0 + ne->value();
-            if (!qFuzzyIsNull(ne->value()) && factor > 0.0) {
-                m_zoomLocked = true;
-                const QGraphicsView::ViewportAnchor oldAnchor = transformationAnchor();
-                setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
-                scale(factor, factor);
-                setTransformationAnchor(oldAnchor);
+            if (!qFuzzyIsNull(ne->value())) {
+                if (isFieldVolume()) {
+                    applyVolumeCamZoomFactor(1.0 + ne->value());
+                } else {
+                    const qreal factor = 1.0 + ne->value();
+                    if (factor > 0.0) {
+                        m_zoomLocked = true;
+                        const QGraphicsView::ViewportAnchor oldAnchor = transformationAnchor();
+                        setTransformationAnchor(QGraphicsView::AnchorUnderMouse);
+                        scale(factor, factor);
+                        setTransformationAnchor(oldAnchor);
+                    }
+                }
                 return true;
             }
         }
@@ -1641,8 +1902,11 @@ void LayoutView::keyPressEvent(QKeyEvent *event)
     if (event->key() == Qt::Key_R && m_viewMode == ViewMode::Iso3D) {
         resetOrbitAngles();
         m_zoomLocked = false;
-        if (!m_polys.isEmpty())
+        if (isFieldVolume()) {
+            emitFieldSliceRequest();
+        } else if (!m_polys.isEmpty()) {
             rebuildScene(true);
+        }
         event->accept();
         return;
     }
@@ -1760,8 +2024,12 @@ void LayoutView::mouseMoveEvent(QMouseEvent *event)
         m_yawDeg += delta.x() * 0.4;
         m_pitchDeg = qBound(-85.0, m_pitchDeg - delta.y() * 0.4, 85.0);
         m_zoomLocked = true;
-        if (!m_polys.isEmpty())
+        if (isFieldVolume()) {
+            if (m_fieldStatusLbl)
+                m_fieldStatusLbl->setText(tr("Orbit… release to update"));
+        } else if (!m_polys.isEmpty()) {
             rebuildScene(false);
+        }
         event->accept();
         return;
     }
@@ -1795,7 +2063,7 @@ void LayoutView::mouseReleaseEvent(QMouseEvent *event)
     if (event->button() == Qt::LeftButton && m_leftPressPending) {
         m_leftPressPending = false;
         // Click without drag → select shape under press point.
-        struct Hit { QString name; QString kind; };
+        struct Hit { QString name; QString kind; int gds = -1; };
         QVector<Hit> stack;
         QSet<QString> seen;
         for (QGraphicsItem *it : items(m_pressPos)) {
@@ -1803,7 +2071,8 @@ void LayoutView::mouseReleaseEvent(QMouseEvent *event)
             if (name.isEmpty() || seen.contains(name))
                 continue;
             seen.insert(name);
-            stack.append({name, it->data(kRoleKind).toString()});
+            const int gds = it->data(kRoleGds).isValid() ? it->data(kRoleGds).toInt() : -1;
+            stack.append({name, it->data(kRoleKind).toString(), gds});
         }
         if (!stack.isEmpty()) {
             int idx = 0;
@@ -1815,7 +2084,7 @@ void LayoutView::mouseReleaseEvent(QMouseEvent *event)
             }
             const Hit &pick = stack.at(idx);
             setHighlightedLayer(pick.name);
-            emit layerClicked(pick.name, pick.kind);
+            emit layerClicked(pick.name, pick.kind, pick.gds);
         }
         event->accept();
         return;
@@ -1825,6 +2094,8 @@ void LayoutView::mouseReleaseEvent(QMouseEvent *event)
         && (event->button() == Qt::RightButton || event->button() == Qt::LeftButton)) {
         m_orbiting = false;
         viewport()->setCursor(Qt::ArrowCursor);
+        if (isFieldVolume())
+            emitFieldSliceRequest();
         event->accept();
         return;
     }

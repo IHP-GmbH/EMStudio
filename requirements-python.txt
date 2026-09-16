@@ -23,6 +23,14 @@ scikit-rf
 # External tool: https://github.com/iic-jku/snp2le  (Python ≥ 3.10, PySide6)
 snp2le>=0.1.9
 
+# --- Optional: Layout Field view (Preferences → FIELD_VIEWER_PYTHON) ---------
+# Host Windows python.exe for Substrate Field 2D slices + Field→3D volume window:
+#   python -m pip install pyvista pillow
+#   python -m pip install scipy              # optional smoother sampling
+#   python -m pip install pyvistaqt PySide6  # optional Qt BackgroundPlotter
+# pyvista
+# pillow
+
 # --- Optional: Volker's GUI helpers (not required by EMStudio itself) -------
 # setupEM>=0.5.1          # stackupEditor / resultViewer / setupThermal (PySide6)
 # matplotlib              # only if you use setupEM Result Viewer externally

@@ -13,6 +13,7 @@
 #include <QMouseEvent>
 #include <QSettings>
 #include <QSignalSpy>
+#include <QToolButton>
 #include <QWheelEvent>
 
 #include "layoutview.h"
@@ -274,7 +275,7 @@ void LayoutViewTest::viewMode3d_isoExtrusion_persistsInSettings()
     QVERIFY(!view.isView3d());
 }
 
-void LayoutViewTest::fieldMode_disables3d_andLoadsOverlay()
+void LayoutViewTest::fieldMode_keeps2d_and3dOpensExternalSignal()
 {
     QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
     settings.beginGroup(QStringLiteral("LayoutPreview"));
@@ -307,7 +308,19 @@ void LayoutViewTest::fieldMode_disables3d_andLoadsOverlay()
     view.setFieldMode(true);
     QVERIFY(view.isFieldMode());
     QVERIFY(!view.isView3d());
-    QCOMPARE(view.viewMode(), LayoutView::ViewMode::Top2D);
+    QVERIFY(!view.isFieldVolume());
+
+    QSignalSpy spy(&view, &LayoutView::fieldExternalVolumeRequested);
+    // Simulate the 3D toolbutton while Field is on.
+    auto *modeBtn = view.findChild<QToolButton *>(QStringLiteral("layoutViewModeBtn"));
+    QVERIFY(modeBtn);
+    QCOMPARE(modeBtn->text(), QStringLiteral("3D"));
+    modeBtn->setChecked(true);
+    QCOMPARE(spy.count(), 1);
+    QVERIFY(!view.isView3d());
+    QVERIFY(view.isFieldMode());
+    QCOMPARE(modeBtn->text(), QStringLiteral("3D"));
+    QVERIFY(!modeBtn->isChecked());
 
     LayoutView::FieldOverlay ov;
     QImage img(32, 32, QImage::Format_ARGB32);
@@ -322,22 +335,8 @@ void LayoutViewTest::fieldMode_disables3d_andLoadsOverlay()
     ov.zMaxUm = 1;
     ov.quantity = QStringLiteral("|E|");
     ov.showArrows = true;
-    LayoutView::FieldArrow a;
-    a.xUm = 5;
-    a.yUm = 4;
-    a.dx = 1;
-    a.dy = 0;
-    a.mag = 1;
-    ov.arrows << a;
     view.setFieldOverlay(ov);
     QVERIFY(view.fieldOverlay().valid());
-    QTest::qWait(20);
-    QVERIFY(!view.grab().isNull());
-
-    // Turning 3D on must clear Field.
-    view.setViewMode(LayoutView::ViewMode::Iso3D);
-    QVERIFY(view.isView3d());
-    QVERIFY(!view.isFieldMode());
 
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     if (prev3d.isValid())

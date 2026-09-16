@@ -265,8 +265,8 @@ The screenshot shows the configuration of EMStudio on a Windows machine, with op
   EMStudio provides templates for openEMS and Palace workflows, so that you can start from scratch with no existing Python model code. The path configured here points to the template directory where `openems_model.py` and `palace_model.py`are located.
 
 - **FIELD_VIEWER_PYTHON**  
-  Optional host Python used only for **Layout Field** view (`scripts/field_slice_export.py`).  
-  Prefer a native Windows `python.exe` with `pyvista` and `pillow` installed.  
+  Optional host Python for **Layout Field**: 2D slices (`scripts/field_slice_export.py`) and the Field→3D volume window (`scripts/field_volume_viewer.py`).  
+  Prefer a native Windows `python.exe` with `pyvista` and `pillow` installed (`pyvistaqt` + `PySide6` optional).  
   If empty, EMStudio falls back to the active tool Python / PATH.
 
 - **OpenEMS Python Path**  
@@ -333,25 +333,32 @@ Floating controls on the layout preview (top-right):
 
 | Control | Role |
 | --- | --- |
-| **2D / 3D** | Top view vs isometric extrusion from stack `zmin`/`zmax` (orbit with drag / scroll). |
-| **Field** | Z-clip heatmap overlay of a field dump (mutually exclusive with Iso3D). |
+| **2D / 3D** | Without Field: top view vs isometric layout extrusion. With **Field** on: the pane stays 2D; **3D** opens a separate interactive PyVista volume window. |
+| **Field** | Z-clip heatmap overlay of a field dump (layout pane stays top-down). |
 
 **Field view** (requires a host Python with PyVista + Pillow):
 
 1. Run a simulation that writes field dumps (`fdump` / VTK / VTU / Palace `.pvd`, or Elmer Thermal `thermal_results*.vtu`).
 2. On the Substrate tab, click **Field** (after a successful **Elmer Thermal** run this happens automatically at max-T Z).
-3. On first open, EMStudio auto-picks a “hot” Z (strongest field / max temperature), then exports a PNG slice via `scripts/field_slice_export.py`.
-4. Drag the **Z** slider (export runs on release), use **Max** to jump back to the hottest Z, optionally enable **Log** scale or **Arrows** (in-plane vectors such as Poynting `S`).
+3. On first open, EMStudio auto-picks a “hot” Z (strongest field / max temperature), then exports a PNG via `scripts/field_slice_export.py`.
+4. Drag the **Z** slider, use **Max**, optional **Log** / **Arrows**.
+
+**Field → 3D** (separate OS window):
+
+1. With Field on, click **3D**. EMStudio shows a short splash, then starts `scripts/field_volume_viewer.py` with the current dump and Z clip.
+2. The layout pane stays on the 2D slice; the volume window is independent (orbit with drag, **Arrows/WASD** pan, **F** reset camera, Z-clip slider).
+3. Geometry extents come from the mesh in the dump (scaled to µm); EMStudio does not invent the Z height.
+4. Same **FIELD_VIEWER_PYTHON** as the 2D exporter. Optional: `pip install pyvistaqt PySide6` for a Qt `BackgroundPlotter` (nicer window / taskbar icon). Without it, the viewer uses VTK `Plotter.show()` and still sets the EMStudio window icon on Windows.
 
 Set **Preferences → Layout Field → FIELD_VIEWER_PYTHON** to a Windows `python.exe` that has:
 
 ```bash
 python -m pip install pyvista pillow
-# optional, smoother sampling:
-python -m pip install scipy
+# optional, smoother sampling / Qt volume window:
+python -m pip install scipy pyvistaqt PySide6
 ```
 
-If PyVista is missing, the Field panel shows a short hint and the Simulation log prints the install command. The colormap is autoscaled per Z-slice (2–98% percentiles), so a nearly flat field far from the DUT can look like a strong rainbow — prefer the auto-Z hotspot or enable **Log**. Nested metal rectangles that look “shifted” are usually different GDS layers, not a broken transform.
+If PyVista is missing, the Field panel shows a short hint and the Simulation log prints the install command. If the 3D viewer fails to start, check the Simulation log (`[Field 3D]`). The colormap is autoscaled per Z-slice (2–98% percentiles), so a nearly flat field far from the DUT can look like a strong rainbow — prefer the auto-Z hotspot or enable **Log**. Nested metal rectangles that look “shifted” are usually different GDS layers, not a broken transform.
 
 Before leaving any tab, save your changes using File > Save or Ctrl+S
 

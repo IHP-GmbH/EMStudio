@@ -967,7 +967,8 @@ QString MainWindow::resolveFieldSliceExportScript() const
 /*!*******************************************************************************************************************
  * \brief Host Python for \c field_slice_export.py (PyVista/Pillow).
  *
- * Order: Preferences FIELD_VIEWER_PYTHON, then the active tool Python, then
+ * Order: Preferences FIELD_VIEWER_PYTHON, then installer-bundled
+ * field_viewer_python/python.exe (Windows), then the active tool Python, then
  * other configured Pythons, then PATH \c python3/\c python.
  *
  * \param[out] detailOut Optional human-readable path or error hint.
@@ -992,10 +993,16 @@ QString MainWindow::resolveFieldViewerPython(QString *detailOut) const
     };
 #endif
 
+    // Installer-bundled embeddable CPython + PyVista (Windows dist/field_viewer_python).
+    const QString bundled = QDir(QCoreApplication::applicationDirPath())
+            .filePath(QStringLiteral("field_viewer_python/python.exe"));
+
     const QString key = currentSimToolKey().toLower();
     QStringList ordered;
     if (usable(fieldPy))
         ordered << fieldPy;
+    if (usable(bundled))
+        ordered << bundled;
     if (key == QLatin1String("openems") && usable(openemsPy))
         ordered << openemsPy;
     else if (isElmerFamilyKey(key) && usable(elmerPy))
@@ -1181,12 +1188,10 @@ void MainWindow::openFieldVolumeExternalViewer()
         args << QStringLiteral("--logo") << logoPath;
     if (!iconPath.isEmpty())
         args << QStringLiteral("--icon") << iconPath;
-    if (m_ui && m_ui->layoutView) {
-        args << QStringLiteral("--z-um")
-             << QString::number(m_ui->layoutView->fieldClipZUm(), 'g', 12);
-        if (m_ui->layoutView->fieldLogScale())
-            args << QStringLiteral("--log");
-    }
+    // Log scale from 2D Field; Z is chosen in the viewer at the top of the layout
+    // (2D mid-plane clip chops upper metal layers).
+    if (m_ui && m_ui->layoutView && m_ui->layoutView->fieldLogScale())
+        args << QStringLiteral("--log");
 
     if (!m_fieldVolumeViewerProcess) {
         m_fieldVolumeViewerProcess = new QProcess(this);
@@ -2984,17 +2989,19 @@ void MainWindow::on_btnEditStackup_clicked()
         return;
     }
 
-    if (m_stackupEditor) {
-        m_stackupEditor->raise();
-        m_stackupEditor->activateWindow();
-        return;
-    }
-
     storeStackupOverridesFromTable();
 
     Substrate substrate;
     if (!substrate.parseXmlFile(path)) {
         error(tr("Failed to parse substrate file:\n%1").arg(path), true);
+        return;
+    }
+
+    if (m_stackupEditor) {
+        m_stackupEditor->setFilePath(path);
+        m_stackupEditor->setSubstrate(substrate);
+        m_stackupEditor->raise();
+        m_stackupEditor->activateWindow();
         return;
     }
 

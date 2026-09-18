@@ -148,6 +148,7 @@ private:
     QStringList referenceCandidates() const;
     void installComboDelegates();
     void applyUniformFonts();
+    void focusUsefulTab();
 
     QTabWidget *m_tabs = nullptr;
     QTableWidget *m_tblVars = nullptr;

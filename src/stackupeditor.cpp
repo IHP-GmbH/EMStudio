@@ -482,6 +482,31 @@ void StackupEditor::setSubstrate(const Substrate &substrate)
     m_lblSchema->setText(tr("schema %1").arg(m_substrate.computeMinimumSchemaVersion()));
     m_blockChangeSignals = false;
     setModified(false);
+    focusUsefulTab();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Switch to the first tab that actually has rows (Layers preferred).
+ *
+ * Many IHP stackups have no Variables; opening on an empty Variables tab looks like
+ * "nothing loaded" until the user clicks the stack cross-section.
+ **********************************************************************************************************************/
+void StackupEditor::focusUsefulTab()
+{
+    if (!m_tabs)
+        return;
+    if (m_tblLayers && m_tblLayers->rowCount() > 0)
+        m_tabs->setCurrentWidget(m_tblLayers);
+    else if (m_tblDiels && m_tblDiels->rowCount() > 0)
+        m_tabs->setCurrentWidget(m_tblDiels);
+    else if (m_tblMats && m_tblMats->rowCount() > 0)
+        m_tabs->setCurrentWidget(m_tblMats);
+    else if (m_tblVars && m_tblVars->rowCount() > 0)
+        m_tabs->setCurrentWidget(m_tblVars);
+    else if (m_tblDerived && m_tblDerived->rowCount() > 0)
+        m_tabs->setCurrentWidget(m_tblDerived);
+    else if (m_tblTables && m_tblTables->rowCount() > 0)
+        m_tabs->setCurrentWidget(m_tblTables);
 }
 
 Substrate StackupEditor::substrate() const

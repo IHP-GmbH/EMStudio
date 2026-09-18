@@ -26,6 +26,6 @@ Volker’s repo ships **one dedicated Elmer package** (thermal). Elmer **EM** (S
 
 Thermal docs: see `thermal_simplest/Elmer_Thermal_Workflow.md` (from Volker).
 
-After a thermal solve, EMStudio opens **Substrate → Field** at the hottest Z. Set Preferences **FIELD_VIEWER_PYTHON** (`pip install pyvista pillow`).
+After a thermal solve, EMStudio opens **Substrate → Field** (2D). If Preferences **FIELD_VIEWER_PYTHON** is set (`pip install pyvista pillow`), it also launches the **Field 3D** PyVista window.
 
 These files are local downloads (`examples/` is gitignored).

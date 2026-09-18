@@ -378,6 +378,13 @@ jobs:
           rem path would break that layout.
           copy ..\qt.conf dist\qt.conf
 
+      - name: Stage Field viewer Python (embeddable + PyVista)
+        shell: pwsh
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass `
+            -File "scripts\stage_field_viewer_python.ps1" `
+            -DestDir "build\dist\field_viewer_python"
+
       - name: Build Windows installer (Inno Setup)
         shell: pwsh
         run: |

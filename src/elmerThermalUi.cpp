@@ -19,6 +19,7 @@
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTextStream>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <algorithm>
@@ -168,9 +169,10 @@ QString MainWindow::findThermalResultsVtu(const QString &runDir) const
 }
 
 /*!*******************************************************************************************************************
- * \brief After a successful Elmer Thermal run: Substrate tab + Field view at hottest Z.
+ * \brief After a successful Elmer Thermal run: Substrate tab + 2D Field, optional Field 3D.
  *
- * Uses Layout Field (PyVista slice export) instead of an external viewer.
+ * Always enables Layout Field (Z-slice) on the Substrate tab. If a host Python for the
+ * Field viewer is configured, also opens the interactive PyVista volume window.
  **********************************************************************************************************************/
 void MainWindow::openThermalResultsInFieldView(const QString &runDir)
 {
@@ -194,7 +196,7 @@ void MainWindow::openThermalResultsInFieldView(const QString &runDir)
                 .toUtf8());
     } else {
         appendToSimulationLog(
-            QStringLiteral("\n[Field] Opening thermal results in Layout Field view:\n  %1\n")
+            QStringLiteral("\n[Field] Opening thermal results in Layout Field (2D) on Substrate:\n  %1\n")
                 .arg(vtu)
                 .toUtf8());
     }
@@ -210,6 +212,23 @@ void MainWindow::openThermalResultsInFieldView(const QString &runDir)
         m_ui->layoutView->setFieldMode(true);
     else
         scheduleFieldOverlayRefresh(true);
+
+    // Optional: also open the external Field 3D PyVista window when Python is available.
+#ifndef EMSTUDIO_TESTING
+    QString pyDetail;
+    const QString python = resolveFieldViewerPython(&pyDetail);
+    if (!vtu.isEmpty() && !python.isEmpty()) {
+        appendToSimulationLog(
+            QByteArray("\n[Field 3D] FIELD_VIEWER_PYTHON available — opening volume viewer after thermal run.\n"));
+        QTimer::singleShot(500, this, [this]() {
+            if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
+                return;
+            openFieldVolumeExternalViewer();
+        });
+    }
+#else
+    Q_UNUSED(vtu);
+#endif
 }
 
 void MainWindow::appendThermalObjectRow(const QString &type,

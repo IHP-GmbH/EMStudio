@@ -138,9 +138,9 @@ and **Elmer Thermal** (steady-state heat conduction).
 - Source / downloads: https://github.com/ElmerCSC/elmerfem
 
 For thermal / EM field visualization after a successful run, EMStudio opens the **Substrate**
-tab and turns on **Field** (Z-clip heatmap). Click **3D** while Field is on for an interactive
-PyVista volume window (no ParaView). Set `FIELD_VIEWER_PYTHON` in Preferences to a host
-Python with PyVista + Pillow (`pip install pyvista pillow`).
+tab and turns on **Field** (2D Z-clip heatmap). If `FIELD_VIEWER_PYTHON` is set, it also
+opens the interactive PyVista **Field 3D** window (no ParaView). You can open 3D later with
+the **3D** button while Field is on.
 
 **Layout Field** (2D Z-clip on the Substrate layout pane):
 
@@ -363,6 +363,9 @@ python -m pip install pyvista pillow
 python -m pip install scipy pyvistaqt PySide6
 ```
 
+The **Windows installer** bundles `field_viewer_python\` (embeddable CPython + those packages)
+next to `EMStudio.exe`. EMStudio prefers that path when Preferences is empty, so Field 2D/3D
+works after a normal install with no extra pip step. Set `FIELD_VIEWER_PYTHON` only to override.
 If PyVista is missing, the Field panel shows a short hint and the Simulation log prints the install command. If the 3D viewer fails to start, check the Simulation log (`[Field 3D]`). The colormap is autoscaled per Z-slice (2–98% percentiles), so a nearly flat field far from the DUT can look like a strong rainbow — prefer the auto-Z hotspot or enable **Log**. Nested metal rectangles that look “shifted” are usually different GDS layers, not a broken transform.
 
 See screenshots under [Elmer (EM and Thermal)](#elmer-em-and-thermal) (`field.png` / `field3d.png`).
@@ -397,7 +400,7 @@ When creating ports entries from scratch, there is a checkbox "Use Substrate Lay
 
 In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area. 
 
-When **Elmer Thermal** is selected as the simulation tool, the Ports tab becomes **Thermal**. Instead of EM ports you define thermal objects (heat sources in Watts and constant-temperature boundaries in Kelvin), each with a GDS marker layer and a target stackup layer. After a successful solve, EMStudio switches to the **Substrate** tab and opens **Field** at max temperature Z (see [Elmer (EM and Thermal)](#elmer-em-and-thermal) and Layout Field above).
+When **Elmer Thermal** is selected as the simulation tool, the Ports tab becomes **Thermal**. Instead of EM ports you define thermal objects (heat sources in Watts and constant-temperature boundaries in Kelvin), each with a GDS marker layer and a target stackup layer. After a successful solve, EMStudio switches to the **Substrate** tab and opens **Field** (2D) at max temperature Z; if `FIELD_VIEWER_PYTHON` is set it also launches **Field 3D** (see [Elmer (EM and Thermal)](#elmer-em-and-thermal) and Layout Field above).
 
 ## Simulate
 
@@ -555,7 +558,7 @@ Typical ingredients:
 1. Set **Simulation Tool** to **Elmer Thermal**  
 2. Configure `ELMER_SOLVER_PATH`, `ELMER_PYTHON` (Python ≥ 3.12 recommended), and `FIELD_VIEWER_PYTHON` (PyVista)  
 3. Open or generate a thermal Python model, set GDS + XML, define Thermal objects  
-4. Run from the Simulate tab — on success, Substrate opens with Field at max-T Z  
+4. Run from the Simulate tab — on success, Substrate opens with Field (2D); Field 3D opens too if `FIELD_VIEWER_PYTHON` is set  
 
 (See the Elmer Thermal screenshot under [Elmer (EM and Thermal)](#elmer-em-and-thermal).)
 

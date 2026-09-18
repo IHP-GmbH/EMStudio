@@ -1,0 +1,13 @@
+# Host Python packages for Layout Field 2D + Field 3D (Windows installer bundle).
+# Staged into build/dist/field_viewer_python by scripts/stage_field_viewer_python.ps1
+#
+#   pyvista          — VTK slices / volume viewer
+#   pillow           — PNG export for 2D Field overlay
+#   scipy            — optional smoother sampling
+#   pyvistaqt+PySide6 — Qt BackgroundPlotter (nicer Field 3D window)
+
+pyvista
+pillow
+scipy
+pyvistaqt
+PySide6

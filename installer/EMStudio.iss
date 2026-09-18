@@ -19,7 +19,9 @@ ChangesEnvironment=yes
 
 [Files]
 ; Main application + Qt runtime + all staged runtime assets from dist
-; IMPORTANT: put scripts/ and keywords/ into build\dist before running ISCC
+; IMPORTANT: put scripts/ and keywords/ into build\dist before running ISCC.
+; CI also stages field_viewer_python\ (embeddable CPython + PyVista) into dist
+; so Field 2D/3D works without a separate Preferences Python install.
 Source: "..\build\dist\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 ; Application icon

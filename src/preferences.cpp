@@ -322,9 +322,9 @@ void Preferences::setupPreferencesPanel()
                                       QLatin1String("FIELD_VIEWER_PYTHON"));
     fieldPythonProp->setWhatsThis("file");
     fieldPythonProp->setToolTip(tr(
-        "Optional host Python used by Layout Field view (field_slice_export.py / field_volume_viewer.py).\n"
-        "Needs PyVista (+ Pillow). Leave empty to reuse OpenEMS / Elmer / Palace Python paths.\n"
-        "Field mode shows a Z-clip heatmap (|E| or Temperature) under the layout metals."));
+        "Optional host Python for Layout Field 2D / Field 3D (PyVista + Pillow).\n"
+        "Windows installer ships field_viewer_python\\ next to EMStudio.exe — leave empty to use it.\n"
+        "Otherwise reuse OpenEMS / Elmer / Palace Python, or set an explicit python.exe."));
     fieldPythonProp->setValue(m_preferences.value(QStringLiteral("FIELD_VIEWER_PYTHON"), QString()));
     layoutFieldGroup->addSubProperty(fieldPythonProp);
 

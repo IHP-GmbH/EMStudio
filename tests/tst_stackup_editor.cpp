@@ -91,6 +91,13 @@ void StackupEditorTest::loadGolden_roundTripAndSelect()
     QVERIFY(!ed.isModified());
     QCOMPARE(ed.filePath(), xmlPath);
 
+    auto *tabs = ed.findChild<QTabWidget *>();
+    QVERIFY(tabs);
+    auto *cur = qobject_cast<QTableWidget *>(tabs->currentWidget());
+    QVERIFY(cur);
+    QVERIFY(cur->rowCount() > 0);
+    QCOMPARE(tabs->tabText(tabs->currentIndex()), QStringLiteral("Layers"));
+
     const Substrate collected = ed.substrate();
     QVERIFY(collected.materials().size() >= sub.materials().size() - 1);
     QVERIFY(!collected.layers().isEmpty());

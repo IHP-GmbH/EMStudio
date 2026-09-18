@@ -400,8 +400,9 @@ private:
     /*!*******************************************************************************************************************
      * \brief Host Python for \c field_slice_export.py (PyVista/Pillow).
      *
-     * Order: Preferences FIELD_VIEWER_PYTHON, then the active tool Python, then
-     * other configured Pythons, then PATH \c python3/\c python.
+     * Order: Preferences FIELD_VIEWER_PYTHON, then installer-bundled
+     * field_viewer_python/python.exe (Windows), then the active tool Python,
+     * other configured Pythons, then PATH python3/python.
      *
      * \param[out] detailOut Optional human-readable path or error hint.
      **********************************************************************************************************************/
@@ -468,7 +469,7 @@ private:
     void                            onFieldVolumeServeReadyRead();
     void                            onFieldVolumeServeFinished(int exitCode, QProcess::ExitStatus status);
     /*!*******************************************************************************************************************
-     * \brief After Elmer Thermal success: switch to Substrate and open Field at max-Z.
+     * \brief After Elmer Thermal success: Substrate + 2D Field; optional Field 3D if Python set.
      **********************************************************************************************************************/
     void                            openThermalResultsInFieldView(const QString &runDir);
     bool                            isElmerFamilyKey(const QString &key) const;

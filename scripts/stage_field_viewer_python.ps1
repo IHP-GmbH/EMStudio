@@ -38,40 +38,44 @@ Invoke-WebRequest -Uri $ZipUrl -OutFile $ZipPath -UseBasicParsing
 Write-Host "Extracting embeddable Python"
 Expand-Archive -Path $ZipPath -DestinationPath $DestDir -Force
 
-# Enable site-packages / pip in embeddable distro (python3xx._pth).
-$Pth = Get-ChildItem -Path $DestDir -Filter "python*._pth" | Select-Object -First 1
-if (-not $Pth) {
-    throw "python*._pth not found in $DestDir"
-}
-$PthText = Get-Content -Raw $Pth.FullName
-if ($PthText -notmatch "(?m)^import site\s*$") {
-    $PthText = $PthText -replace "(?m)^#\s*import site\s*$", "import site"
-    if ($PthText -notmatch "(?m)^import site\s*$") {
-        $PthText = $PthText.TrimEnd() + "`r`nimport site`r`n"
-    }
-    Set-Content -Path $Pth.FullName -Value $PthText -NoNewline
-}
-# Ensure Lib\site-packages is on path for newer embeds.
-Add-Content -Path $Pth.FullName -Value "Lib\site-packages"
-
 $PythonExe = Join-Path $DestDir "python.exe"
 if (-not (Test-Path $PythonExe)) {
     throw "python.exe missing after extract"
 }
 
+# Enable site-packages / pip. Must be ASCII — UTF-16 from Set-Content breaks ._pth.
+$Pth = Get-ChildItem -Path $DestDir -Filter "python*._pth" | Select-Object -First 1
+if (-not $Pth) {
+    throw "python*._pth not found in $DestDir"
+}
+$ZipStem = [System.IO.Path]::GetFileNameWithoutExtension(
+    (Get-ChildItem -Path $DestDir -Filter "python*.zip" | Select-Object -First 1).Name
+)
+$PthBody = @"
+$ZipStem.zip
+.
+Lib\site-packages
+import site
+"@
+[System.IO.File]::WriteAllText($Pth.FullName, ($PthBody -replace "`n", "`r`n"))
+
+$SitePackages = Join-Path $DestDir "Lib\site-packages"
+New-Item -ItemType Directory -Path $SitePackages -Force | Out-Null
+
 $GetPip = Join-Path $env:TEMP "get-pip.py"
 Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $GetPip -UseBasicParsing
 
-Write-Host "Installing pip"
+Write-Host "Installing pip into embeddable Python"
 & $PythonExe $GetPip --no-warn-script-location
 if ($LASTEXITCODE -ne 0) { throw "get-pip failed ($LASTEXITCODE)" }
 
 Write-Host "Installing Field viewer packages from $ReqFile"
 & $PythonExe -m pip install --no-warn-script-location -U pip
+if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed ($LASTEXITCODE)" }
 & $PythonExe -m pip install --no-warn-script-location -r $ReqFile
 if ($LASTEXITCODE -ne 0) { throw "pip install field viewer deps failed ($LASTEXITCODE)" }
 
-# Smoke import (fails early in CI if wheel missing).
+Write-Host "Smoke import"
 & $PythonExe -c "import pyvista, PIL; print('field_viewer_python ok', pyvista.__version__)"
 if ($LASTEXITCODE -ne 0) { throw "smoke import failed" }
 
@@ -80,7 +84,7 @@ EMStudio bundled Python for Layout Field (2D) and Field 3D.
 Do not replace this folder; Preferences FIELD_VIEWER_PYTHON may point here.
 Packages: see requirements-field-viewer.txt in the EMStudio source tree.
 "@
-Set-Content -Path (Join-Path $DestDir "README.txt") -Value $Readme
+[System.IO.File]::WriteAllText((Join-Path $DestDir "README.txt"), $Readme)
 
 Write-Host "Done: $DestDir"
 Get-ChildItem $DestDir | Select-Object Name, Length | Format-Table -AutoSize

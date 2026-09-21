@@ -148,7 +148,8 @@ QChartView *makeChartView(QChart *chart, ResultsViewer *owner)
                 return;
             }
             if (event->key() == Qt::Key_F) {
-                chart()->zoomReset();
+                // Wheel zoom uses setRange (not the zoom stack), so fit from series.
+                fitAxesToSeries();
                 event->accept();
                 return;
             }
@@ -159,24 +160,23 @@ QChartView *makeChartView(QChart *chart, ResultsViewer *owner)
                 return;
             }
 
-            const QRectF area = chart()->plotArea();
-            const qreal stepX = area.width() * 0.1;
-            const qreal stepY = area.height() * 0.1;
+            // Pan by a fraction of the visible axis range (matches setRange zoom).
+            const qreal frac = 0.1;
             switch (event->key()) {
             case Qt::Key_Left:
-                chart()->scroll(-stepX, 0);
+                panAxes(-frac, 0.0);
                 event->accept();
                 return;
             case Qt::Key_Right:
-                chart()->scroll(stepX, 0);
+                panAxes(frac, 0.0);
                 event->accept();
                 return;
             case Qt::Key_Up:
-                chart()->scroll(0, stepY);
+                panAxes(0.0, frac);
                 event->accept();
                 return;
             case Qt::Key_Down:
-                chart()->scroll(0, -stepY);
+                panAxes(0.0, -frac);
                 event->accept();
                 return;
             default:
@@ -195,7 +195,8 @@ QChartView *makeChartView(QChart *chart, ResultsViewer *owner)
                 return;
             }
             const qreal factor = (dy > 0) ? 1.15 : (1.0 / 1.15);
-            zoomToward(event->position().toPoint(), factor);
+            // event position is in view coords; zoomToward wants viewport coords.
+            zoomToward(viewport()->mapFrom(this, event->position().toPoint()), factor);
             event->accept();
         }
 
@@ -205,8 +206,9 @@ QChartView *makeChartView(QChart *chart, ResultsViewer *owner)
                 auto *ge = static_cast<QGestureEvent *>(event);
                 if (QPinchGesture *pinch = static_cast<QPinchGesture *>(ge->gesture(Qt::PinchGesture))) {
                     if (pinch->changeFlags() & QPinchGesture::ScaleFactorChanged) {
-                        // centerPoint is in the receiving widget's coordinates.
-                        zoomToward(pinch->centerPoint(), pinch->scaleFactor());
+                        // centerPoint is in this view's coordinates.
+                        zoomToward(viewport()->mapFrom(this, pinch->centerPoint().toPoint()),
+                                   pinch->scaleFactor());
                         return true;
                     }
                 }
@@ -215,6 +217,7 @@ QChartView *makeChartView(QChart *chart, ResultsViewer *owner)
                 auto *ne = static_cast<QNativeGestureEvent *>(event);
                 if (ne->gestureType() == Qt::ZoomNativeGesture && chart()) {
                     // Trackpad pinch (Windows / macOS): value is a magnification delta.
+                    // localPos is already in the viewport (this event target).
                     const qreal factor = 1.0 + ne->value();
                     if (!qFuzzyIsNull(ne->value()) && factor > 0.0) {
                         zoomToward(ne->localPos(), factor);
@@ -226,16 +229,115 @@ QChartView *makeChartView(QChart *chart, ResultsViewer *owner)
         }
 
     private:
-        void zoomToward(const QPointF &viewPos, qreal factor)
+        void zoomToward(const QPointF &viewportPos, qreal factor)
         {
-            if (!chart() || factor <= 0.0 || qFuzzyCompare(factor, 1.0))
+            QChart *ch = chart();
+            if (!ch || factor <= 0.0 || qFuzzyCompare(factor, 1.0))
                 return;
-            const QPointF chartPos = chart()->mapFromScene(mapToScene(viewPos.toPoint()));
-            const QPointF valueUnderCursor = chart()->mapToValue(chartPos);
-            chart()->zoom(factor);
-            const QPointF newChartPos = chart()->mapToPosition(valueUnderCursor);
-            const QPointF delta = newChartPos - chartPos;
-            chart()->scroll(delta.x(), delta.y());
+
+            const QRectF area = ch->plotArea();
+            if (area.width() < 1.0 || area.height() < 1.0)
+                return;
+
+            const QPointF chartPos = ch->mapFromScene(mapToScene(viewportPos.toPoint()));
+            qreal rx = (chartPos.x() - area.left()) / area.width();
+            qreal ry = (chartPos.y() - area.top()) / area.height();
+            rx = qBound(0.0, rx, 1.0);
+            ry = qBound(0.0, ry, 1.0);
+
+            for (QAbstractAxis *axis : ch->axes(Qt::Horizontal)) {
+                auto *va = qobject_cast<QValueAxis *>(axis);
+                if (!va)
+                    continue;
+                const qreal lo = va->min();
+                const qreal hi = va->max();
+                const qreal anchor = lo + rx * (hi - lo);
+                const qreal newLo = anchor - (anchor - lo) / factor;
+                const qreal newHi = anchor + (hi - anchor) / factor;
+                if (newHi > newLo && qIsFinite(newLo) && qIsFinite(newHi))
+                    va->setRange(newLo, newHi);
+            }
+            for (QAbstractAxis *axis : ch->axes(Qt::Vertical)) {
+                auto *va = qobject_cast<QValueAxis *>(axis);
+                if (!va)
+                    continue;
+                const qreal lo = va->min();
+                const qreal hi = va->max();
+                const qreal anchor = hi - ry * (hi - lo);
+                const qreal newLo = anchor - (anchor - lo) / factor;
+                const qreal newHi = anchor + (hi - anchor) / factor;
+                if (newHi > newLo && qIsFinite(newLo) && qIsFinite(newHi))
+                    va->setRange(newLo, newHi);
+            }
+        }
+
+        void panAxes(qreal fracX, qreal fracY)
+        {
+            QChart *ch = chart();
+            if (!ch)
+                return;
+            for (QAbstractAxis *axis : ch->axes(Qt::Horizontal)) {
+                auto *va = qobject_cast<QValueAxis *>(axis);
+                if (!va)
+                    continue;
+                const qreal span = va->max() - va->min();
+                va->setRange(va->min() + fracX * span, va->max() + fracX * span);
+            }
+            for (QAbstractAxis *axis : ch->axes(Qt::Vertical)) {
+                auto *va = qobject_cast<QValueAxis *>(axis);
+                if (!va)
+                    continue;
+                const qreal span = va->max() - va->min();
+                va->setRange(va->min() + fracY * span, va->max() + fracY * span);
+            }
+        }
+
+        void fitAxesToSeries()
+        {
+            QChart *ch = chart();
+            if (!ch)
+                return;
+            ch->zoomReset();
+
+            bool have = false;
+            qreal x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+            for (QAbstractSeries *s : ch->series()) {
+                auto *xy = qobject_cast<QXYSeries *>(s);
+                if (!xy)
+                    continue;
+                const QList<QPointF> pts = xy->points();
+                for (const QPointF &p : pts) {
+                    if (!have) {
+                        x0 = x1 = p.x();
+                        y0 = y1 = p.y();
+                        have = true;
+                    } else {
+                        x0 = qMin(x0, p.x());
+                        x1 = qMax(x1, p.x());
+                        y0 = qMin(y0, p.y());
+                        y1 = qMax(y1, p.y());
+                    }
+                }
+            }
+            if (!have)
+                return;
+
+            auto padded = [](qreal a, qreal b) -> QPair<qreal, qreal> {
+                if (qFuzzyCompare(a, b))
+                    return {a - 1.0, b + 1.0};
+                const qreal m = (b - a) * 0.05;
+                return {a - m, b + m};
+            };
+            const auto px = padded(x0, x1);
+            const auto py = padded(y0, y1);
+            for (QAbstractAxis *axis : ch->axes(Qt::Horizontal)) {
+                if (auto *va = qobject_cast<QValueAxis *>(axis))
+                    va->setRange(px.first, px.second);
+            }
+            for (QAbstractAxis *axis : ch->axes(Qt::Vertical)) {
+                if (auto *va = qobject_cast<QValueAxis *>(axis))
+                    va->setRange(py.first, py.second);
+            }
         }
 
         ResultsViewer *m_owner = nullptr;

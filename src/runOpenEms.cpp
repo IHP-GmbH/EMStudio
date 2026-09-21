@@ -115,29 +115,13 @@ void MainWindow::runOpenEMS(bool interactive)
     m_simProcess->setProcessEnvironment(env);
     m_simProcess->setWorkingDirectory(runDir);
 
-    auto appendLog = [this](const QByteArray& data)
-    {
-        if (data.isEmpty())
-            return;
-
-        if (m_headless) {
-            fwrite(data.constData(), 1, size_t(data.size()), stdout);
-            fflush(stdout);
-        }
-
-        QSignalBlocker blocker(m_ui->editSimulationLog);
-        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-        m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
-        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-    };
-
-    connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [this, appendLog]() {
+    connect(m_simProcess, &QProcess::readyReadStandardOutput, this, [this]() {
         if (!m_simProcess) return;
-        appendLog(m_simProcess->readAllStandardOutput());
+        appendToSimulationLog(m_simProcess->readAllStandardOutput());
     });
-    connect(m_simProcess, &QProcess::readyReadStandardError, this, [this, appendLog]() {
+    connect(m_simProcess, &QProcess::readyReadStandardError, this, [this]() {
         if (!m_simProcess) return;
-        appendLog(m_simProcess->readAllStandardError());
+        appendToSimulationLog(m_simProcess->readAllStandardError());
     });
 
     connect(m_simProcess,
@@ -145,15 +129,9 @@ void MainWindow::runOpenEMS(bool interactive)
             this,
             [this](int exitCode, QProcess::ExitStatus)
             {
-                const QString msg =
-                    QString("\n[Simulation finished with exit code %1]\n").arg(exitCode);
-
-                {
-                    QSignalBlocker blocker(m_ui->editSimulationLog);
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                    m_ui->editSimulationLog->insertPlainText(msg);
-                    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-                }
+                appendToSimulationLog(
+                    QString("\n[Simulation finished with exit code %1]\n").arg(exitCode).toUtf8());
+                persistSimulationLogSnapshot();
 
                 if (m_simProcess) {
                     m_simProcess->deleteLater();
@@ -164,17 +142,19 @@ void MainWindow::runOpenEMS(bool interactive)
                     QCoreApplication::exit(exitCode);
             });
 
-    m_ui->editSimulationLog->clear();
-    m_ui->editSimulationLog->insertPlainText("Starting OpenEMS simulation...\n");
-    m_ui->editSimulationLog->insertPlainText(
+    clearSimulationLog(true);
+    appendToSimulationLog(QByteArray("Starting OpenEMS simulation...\n"));
+    appendToSimulationLog(
         QString("[RUN] %1 %2\n")
             .arg(QDir::toNativeSeparators(pythonPath),
-                 QDir::toNativeSeparators(scriptPath)));
+                 QDir::toNativeSeparators(scriptPath))
+            .toUtf8());
 
     m_simProcess->start(pythonPath, QStringList() << scriptPath);
 
     if (!m_simProcess->waitForStarted(3000)) {
         error("Failed to start simulation process.", false);
+        persistSimulationLogSnapshot();
 
         if (m_simProcess) {
             m_simProcess->deleteLater();

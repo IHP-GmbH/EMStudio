@@ -116,6 +116,7 @@ LayoutView::LayoutView(QWidget *parent)
     m_fieldBtn->setStyleSheet(m_modeBtn->styleSheet());
     m_fieldBtn->setToolTip(tr("Field view: Z-clip heatmap + optional arrows.\n"
                               "While Field is on, 3D opens an interactive PyVista volume window.\n"
+                              "Click the heatmap to probe the value (Esc clears).\n"
                               "Requires a field dump (fdump / VTK / VTU)."));
     connect(m_fieldBtn, &QToolButton::toggled, this, &LayoutView::onFieldButtonToggled);
 
@@ -164,8 +165,12 @@ LayoutView::LayoutView(QWidget *parent)
     m_fieldLogChk = new QCheckBox(tr("Log"), m_fieldPanel);
     m_fieldArrowsChk = new QCheckBox(tr("Arrows"), m_fieldPanel);
     m_fieldArrowsChk->setChecked(true);
+    m_fieldTempChk = new QCheckBox(tr("Temp"), m_fieldPanel);
+    m_fieldTempChk->setChecked(true);
+    m_fieldTempChk->setToolTip(tr("Click the Field heatmap to place a temperature probe.\nEsc clears the probe."));
     optRow->addWidget(m_fieldLogChk);
     optRow->addWidget(m_fieldArrowsChk);
+    optRow->addWidget(m_fieldTempChk);
     optRow->addStretch(1);
     panelLay->addLayout(optRow);
     m_fieldPanel->setVisible(false);
@@ -176,6 +181,7 @@ LayoutView::LayoutView(QWidget *parent)
     connect(m_fieldHotZBtn, &QToolButton::clicked, this, &LayoutView::onFieldHotZClicked);
     connect(m_fieldLogChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
     connect(m_fieldArrowsChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
+    connect(m_fieldTempChk, &QCheckBox::toggled, this, &LayoutView::onFieldTempToggled);
 
     loadViewModeFromSettings();
     {
@@ -212,6 +218,7 @@ void LayoutView::clear()
     m_ports.clear();
     m_highlightedName.clear();
     m_field = FieldOverlay{};
+    m_fieldProbeActive = false;
     m_zoomLocked = false;
     m_cursorValid = false;
     clearMeasure();
@@ -1049,6 +1056,8 @@ void LayoutView::setFieldMode(bool on)
         return;
     }
     m_fieldOn = on;
+    if (!m_fieldOn)
+        m_fieldProbeActive = false;
     if (m_fieldOn)
         m_zoomLocked = false;
     if (m_fieldOn && m_viewMode == ViewMode::Iso3D)
@@ -1081,10 +1090,24 @@ void LayoutView::setFieldOverlay(const FieldOverlay &overlay)
             && (overlay.showArrows == m_field.showArrows)
             && (overlay.arrows.size() == m_field.arrows.size())
             && (overlay.volume == m_field.volume);
-    const bool statusOnly = sameImage && sameFrame && m_field.valid();
+    const bool sameZ = qFuzzyCompare(overlay.zUm, m_field.zUm);
+    const bool statusOnly = sameImage && sameFrame && sameZ && m_field.valid();
     const bool sliderDown = m_fieldZSlider && m_fieldZSlider->isSliderDown();
 
+    const QPointF probeGds = m_fieldProbeActive ? sceneToGdsUm(m_fieldProbeScene) : QPointF();
+    const bool keepProbe = m_fieldProbeActive && sameFrame && sameZ && overlay.hasSamples();
+
     m_field = overlay;
+
+    if (keepProbe) {
+        qreal v = 0.0;
+        if (sampleFieldAtGdsUm(probeGds.x(), probeGds.y(), &v))
+            m_fieldProbeValue = v;
+        else
+            m_fieldProbeActive = false;
+    } else if (!statusOnly) {
+        m_fieldProbeActive = false;
+    }
 
     // Keep the handle where the user dragged it: a status-only "Exporting…" update
     // still carries the previous slice zUm and must not yank the slider back.
@@ -1098,6 +1121,7 @@ void LayoutView::setFieldOverlay(const FieldOverlay &overlay)
         if (m_field.volume || isFieldVolume() || !m_zoomLocked)
             fitPreferredContent();
     }
+    viewport()->update();
 }
 
 /*!*******************************************************************************************************************
@@ -1106,6 +1130,7 @@ void LayoutView::setFieldOverlay(const FieldOverlay &overlay)
 void LayoutView::clearFieldOverlay()
 {
     m_field = FieldOverlay{};
+    m_fieldProbeActive = false;
     syncFloatingControls();
     if (m_fieldOn)
         rebuildScene(false);
@@ -1138,6 +1163,11 @@ bool LayoutView::fieldLogScale() const
 bool LayoutView::fieldShowArrows() const
 {
     return m_fieldArrowsChk && m_fieldArrowsChk->isChecked();
+}
+
+bool LayoutView::fieldShowTemp() const
+{
+    return m_fieldTempChk && m_fieldTempChk->isChecked();
 }
 
 /*!*******************************************************************************************************************
@@ -1311,7 +1341,10 @@ void LayoutView::syncFloatingControls()
         if (shortTxt.size() > 42)
             shortTxt = shortTxt.left(40) + QStringLiteral("…");
         m_fieldStatusLbl->setText(shortTxt);
-        m_fieldStatusLbl->setToolTip(full);
+        QString tip = full;
+        if (m_field.hasSamples() && !m_field.volume)
+            tip += tr("\nClick layout to probe value (Esc clears).");
+        m_fieldStatusLbl->setToolTip(tip);
         m_fieldStatusLbl->setVisible(!shortTxt.isEmpty());
     }
     if (m_fieldPanel)
@@ -1431,6 +1464,17 @@ void LayoutView::onFieldControlsChanged()
     emitFieldSliceRequest();
 }
 
+void LayoutView::onFieldTempToggled(bool on)
+{
+    if (!on)
+        clearFieldProbe();
+    else
+        viewport()->update();
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    settings.setValue(QStringLiteral("fieldShowTemp"), on);
+}
+
 void LayoutView::repositionFloatingControls()
 {
     const int m = 10;
@@ -1464,9 +1508,14 @@ void LayoutView::loadViewModeFromSettings()
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     const bool v3d = settings.value(QStringLiteral("view3d"), false).toBool();
     const bool vField = settings.value(QStringLiteral("viewField"), false).toBool();
+    const bool showTemp = settings.value(QStringLiteral("fieldShowTemp"), true).toBool();
     settings.endGroup();
     m_fieldOn = vField;
     m_viewMode = v3d ? ViewMode::Iso3D : ViewMode::Top2D;
+    if (m_fieldTempChk) {
+        const QSignalBlocker block(m_fieldTempChk);
+        m_fieldTempChk->setChecked(showTemp);
+    }
 }
 
 void LayoutView::saveViewModeToSettings() const
@@ -1895,6 +1944,7 @@ void LayoutView::keyPressEvent(QKeyEvent *event)
     if (event->key() == Qt::Key_Escape) {
         clearHighlight();
         clearMeasure();
+        clearFieldProbe();
         emit highlightCleared();
         event->accept();
         return;
@@ -2062,6 +2112,11 @@ void LayoutView::mouseReleaseEvent(QMouseEvent *event)
 {
     if (event->button() == Qt::LeftButton && m_leftPressPending) {
         m_leftPressPending = false;
+        const QPointF scenePt = mapToScene(m_pressPos);
+        // Field probe when Temp is enabled; keep shape highlight too.
+        if (m_fieldOn && fieldShowTemp() && m_field.hasSamples() && !m_field.volume)
+            tryPlaceFieldProbe(scenePt);
+
         // Click without drag → select shape under press point.
         struct Hit { QString name; QString kind; int gds = -1; };
         QVector<Hit> stack;
@@ -2085,6 +2140,10 @@ void LayoutView::mouseReleaseEvent(QMouseEvent *event)
             const Hit &pick = stack.at(idx);
             setHighlightedLayer(pick.name);
             emit layerClicked(pick.name, pick.kind, pick.gds);
+            // If probe failed earlier (e.g. NaN), retry at the same click after highlight.
+            if (m_fieldOn && fieldShowTemp() && m_field.hasSamples() && !m_field.volume
+                && !m_fieldProbeActive)
+                tryPlaceFieldProbe(scenePt);
         }
         event->accept();
         return;
@@ -2145,7 +2204,20 @@ void LayoutView::drawForeground(QPainter *painter, const QRectF &/*rect*/)
         painter->drawEllipse(end, r, r);
     }
 
-    if (!m_cursorValid && !m_measureHasStart)
+    if (m_fieldProbeActive && fieldShowTemp()) {
+        QPen pen(QColor(20, 20, 20));
+        pen.setWidth(0);
+        painter->setPen(pen);
+        painter->setBrush(QColor(255, 220, 40));
+        const QPointF a = mapToScene(QPoint(0, 0));
+        const QPointF b = mapToScene(QPoint(6, 0));
+        const qreal r = qMax<qreal>(0.15, QLineF(a, b).length());
+        painter->drawEllipse(m_fieldProbeScene, r, r);
+        painter->setBrush(Qt::NoBrush);
+        painter->drawEllipse(m_fieldProbeScene, r * 1.6, r * 1.6);
+    }
+
+    if (!m_cursorValid && !m_measureHasStart && !(m_fieldProbeActive && fieldShowTemp()))
         return;
 
     painter->save();
@@ -2175,6 +2247,29 @@ void LayoutView::drawForeground(QPainter *painter, const QRectF &/*rect*/)
                      .arg(dy, 0, 'f', 3)
                      .arg(len, 0, 'f', 3);
     }
+    if (m_fieldProbeActive && fieldShowTemp()) {
+        const QPointF g = sceneToGdsUm(m_fieldProbeScene);
+        const QString q = m_field.quantity.isEmpty()
+                ? QStringLiteral("value")
+                : m_field.quantity;
+        const bool thermal = q.contains(QStringLiteral("temp"), Qt::CaseInsensitive)
+                || q.compare(QStringLiteral("t"), Qt::CaseInsensitive) == 0;
+        if (thermal) {
+            const qreal celsius = m_fieldProbeValue - 273.15;
+            lines << QStringLiteral("T=%1 °C  (%2 K)   @ Z=%3 µm")
+                         .arg(celsius, 0, 'f', 2)
+                         .arg(m_fieldProbeValue, 0, 'f', 2)
+                         .arg(m_field.zUm, 0, 'f', 2);
+        } else {
+            lines << QStringLiteral("%1=%2   @ Z=%3 µm")
+                         .arg(q)
+                         .arg(m_fieldProbeValue, 0, 'g', 5)
+                         .arg(m_field.zUm, 0, 'f', 2);
+        }
+        lines << QStringLiteral("X=%1  Y=%2 µm")
+                     .arg(g.x(), 0, 'f', 3)
+                     .arg(g.y(), 0, 'f', 3);
+    }
 
     if (!lines.isEmpty()) {
         int w = 0;
@@ -2186,12 +2281,15 @@ void LayoutView::drawForeground(QPainter *painter, const QRectF &/*rect*/)
         const int pad = 4;
         const int boxW = w + 2 * pad;
         const int boxH = h + 2 * pad;
-        int x = m_cursorView.x() + 14;
-        int y = m_cursorView.y() + 16;
+        QPoint anchor = m_cursorView;
+        if (m_fieldProbeActive && fieldShowTemp() && !m_cursorValid)
+            anchor = mapFromScene(m_fieldProbeScene);
+        int x = anchor.x() + 14;
+        int y = anchor.y() + 16;
         if (x + boxW > width() - 4)
-            x = m_cursorView.x() - boxW - 10;
+            x = anchor.x() - boxW - 10;
         if (y + boxH > height() - 4)
-            y = m_cursorView.y() - boxH - 10;
+            y = anchor.y() - boxH - 10;
         if (x < 4)
             x = 4;
         if (y < 4)
@@ -2220,6 +2318,85 @@ void LayoutView::clearMeasure()
     m_measureEnd = QPointF();
     emit measureChanged(false, 0, 0, 0);
     viewport()->update();
+}
+
+void LayoutView::clearFieldProbe()
+{
+    if (!m_fieldProbeActive)
+        return;
+    m_fieldProbeActive = false;
+    viewport()->update();
+}
+
+bool LayoutView::sampleFieldAtGdsUm(qreal xUm, qreal yUm, qreal *valueOut) const
+{
+    if (!valueOut || !m_field.hasSamples() || !m_field.valid())
+        return false;
+    const qreal w = m_field.xmaxUm - m_field.xminUm;
+    const qreal h = m_field.ymaxUm - m_field.yminUm;
+    if (w <= 0.0 || h <= 0.0)
+        return false;
+    // PNG / sampleGrid: row 0 = ymax, col 0 = xmin.
+    const qreal fx = (xUm - m_field.xminUm) / w * (m_field.sampleNx - 1);
+    const qreal fy = (m_field.ymaxUm - yUm) / h * (m_field.sampleNy - 1);
+    if (fx < 0.0 || fy < 0.0 || fx > m_field.sampleNx - 1 || fy > m_field.sampleNy - 1)
+        return false;
+
+    const int x0 = int(std::floor(fx));
+    const int y0 = int(std::floor(fy));
+    const int x1 = qMin(x0 + 1, m_field.sampleNx - 1);
+    const int y1 = qMin(y0 + 1, m_field.sampleNy - 1);
+    const qreal tx = fx - x0;
+    const qreal ty = fy - y0;
+
+    auto at = [this](int ix, int iy) -> float {
+        return m_field.sampleGrid.at(iy * m_field.sampleNx + ix);
+    };
+    const float v00 = at(x0, y0);
+    const float v10 = at(x1, y0);
+    const float v01 = at(x0, y1);
+    const float v11 = at(x1, y1);
+    // Prefer bilinear when all corners are finite; otherwise nearest finite neighbor.
+    if (std::isfinite(v00) && std::isfinite(v10) && std::isfinite(v01) && std::isfinite(v11)) {
+        const qreal v0 = v00 * (1.0 - tx) + v10 * tx;
+        const qreal v1 = v01 * (1.0 - tx) + v11 * tx;
+        *valueOut = v0 * (1.0 - ty) + v1 * ty;
+        return std::isfinite(*valueOut);
+    }
+    const int ix = qBound(0, int(std::round(fx)), m_field.sampleNx - 1);
+    const int iy = qBound(0, int(std::round(fy)), m_field.sampleNy - 1);
+    // Search a small window for a finite sample (outside-mesh NaNs).
+    for (int rad = 0; rad <= 3; ++rad) {
+        for (int dy = -rad; dy <= rad; ++dy) {
+            for (int dx = -rad; dx <= rad; ++dx) {
+                const int jx = ix + dx;
+                const int jy = iy + dy;
+                if (jx < 0 || jy < 0 || jx >= m_field.sampleNx || jy >= m_field.sampleNy)
+                    continue;
+                const float v = at(jx, jy);
+                if (std::isfinite(v)) {
+                    *valueOut = v;
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool LayoutView::tryPlaceFieldProbe(const QPointF &scenePt)
+{
+    if (!m_fieldOn || !m_field.hasSamples() || m_field.volume)
+        return false;
+    const QPointF g = sceneToGdsUm(scenePt);
+    qreal v = 0.0;
+    if (!sampleFieldAtGdsUm(g.x(), g.y(), &v))
+        return false;
+    m_fieldProbeActive = true;
+    m_fieldProbeScene = scenePt;
+    m_fieldProbeValue = v;
+    viewport()->update();
+    return true;
 }
 
 void LayoutView::emitMeasure()

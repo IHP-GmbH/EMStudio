@@ -129,7 +129,7 @@ void MainWindow::runPalace(bool interactive)
     }
 
     m_palacePythonOutput.clear();
-    m_ui->editSimulationLog->clear();
+    clearSimulationLog(true);
 
     logPalaceStartupInfo(ctx);
 
@@ -310,43 +310,49 @@ void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
 {
 #ifdef Q_OS_WIN
     if (!ctx.useWsl) {
-        m_ui->editSimulationLog->insertPlainText(
-            QStringLiteral("Starting gds2palace Python preprocessing (Windows native)...\n"));
+        appendToSimulationLog(
+            QByteArray("Starting gds2palace Python preprocessing (Windows native)...\n"));
     } else if (ctx.runMode == 1) {
-        m_ui->editSimulationLog->insertPlainText(
-            QString("Starting Palace Python preprocessing in WSL (%1) [launcher mode]...\n").arg(ctx.distro));
+        appendToSimulationLog(
+            QString("Starting Palace Python preprocessing in WSL (%1) [launcher mode]...\n")
+                .arg(ctx.distro).toUtf8());
     } else {
-        m_ui->editSimulationLog->insertPlainText(
-            QString("Starting Palace Python preprocessing in WSL (%1)...\n").arg(ctx.distro));
+        appendToSimulationLog(
+            QString("Starting Palace Python preprocessing in WSL (%1)...\n")
+                .arg(ctx.distro).toUtf8());
     }
 #else
     if (isElmerFamilyKey(ctx.simKeyLower))
-        m_ui->editSimulationLog->insertPlainText(
-            QStringLiteral("Starting gds2palace Python preprocessing (native)...\n"));
+        appendToSimulationLog(
+            QByteArray("Starting gds2palace Python preprocessing (native)...\n"));
     else if (ctx.runMode == 1)
-        m_ui->editSimulationLog->insertPlainText("Starting Palace Python preprocessing (launcher mode)...\n");
+        appendToSimulationLog(
+            QByteArray("Starting Palace Python preprocessing (launcher mode)...\n"));
     else
-        m_ui->editSimulationLog->insertPlainText("Starting Palace Python preprocessing (native)...\n");
+        appendToSimulationLog(
+            QByteArray("Starting Palace Python preprocessing (native)...\n"));
 #endif
 
-    m_ui->editSimulationLog->insertPlainText(QString("[Using Python: %1]\n").arg(ctx.pythonCmd));
-    m_ui->editSimulationLog->insertPlainText(QString("[Initial Palace run directory guess: %1]\n").arg(ctx.runDirGuessWin));
+    appendToSimulationLog(QString("[Using Python: %1]\n").arg(ctx.pythonCmd).toUtf8());
+    appendToSimulationLog(
+        QString("[Initial Palace run directory guess: %1]\n").arg(ctx.runDirGuessWin).toUtf8());
 
     if (isElmerFamilyKey(ctx.simKeyLower)) {
         const QString solverPath =
             m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH")).toString().trimmed();
         if (!solverPath.isEmpty()) {
-            m_ui->editSimulationLog->insertPlainText(
-                QString("[Elmer tools from: %1]\n").arg(QDir::toNativeSeparators(solverPath)));
+            appendToSimulationLog(
+                QString("[Elmer tools from: %1]\n")
+                    .arg(QDir::toNativeSeparators(solverPath)).toUtf8());
         } else {
-            m_ui->editSimulationLog->insertPlainText(
-                "[Warning] ELMER_SOLVER_PATH is not set.\n");
+            appendToSimulationLog(QByteArray("[Warning] ELMER_SOLVER_PATH is not set.\n"));
         }
     }
 
     if (ctx.runMode == 1 && ctx.useWsl) {
-        m_ui->editSimulationLog->insertPlainText(
-            QString("[Launcher script: %1]\n").arg(QDir::toNativeSeparators(ctx.launcherWin)));
+        appendToSimulationLog(
+            QString("[Launcher script: %1]\n")
+                .arg(QDir::toNativeSeparators(ctx.launcherWin)).toUtf8());
     }
 }
 
@@ -427,6 +433,7 @@ void MainWindow::connectPalaceProcessIo()
  *
  * Inserts the given byte array at the end of the simulation log editor
  * without disturbing user selection or triggering additional signals.
+ * When a disk capture is active, the same bytes are appended to the log file.
  *
  * \param data Raw UTF-8 encoded output from a running process.
  **********************************************************************************************************************/
@@ -440,10 +447,178 @@ void MainWindow::appendToSimulationLog(const QByteArray &data)
         fflush(stdout);
     }
 
-    QSignalBlocker blocker(m_ui->editSimulationLog);
-    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
-    m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
-    m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+    if (m_ui && m_ui->editSimulationLog) {
+        QSignalBlocker blocker(m_ui->editSimulationLog);
+        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+        m_ui->editSimulationLog->insertPlainText(QString::fromUtf8(data));
+        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+    }
+
+    if (!m_simulationLogPath.isEmpty()) {
+        QFile f(m_simulationLogPath);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text))
+            f.write(data);
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Resolves the preferred path for \c emstudio_simulation.log.
+ *
+ * Prefers an existing Palace/Elmer \c *_data results folder next to the model,
+ * then the active RunDir, then the model directory itself.
+ *
+ * \param modelFile Optional model path; empty uses the current script path.
+ * \return Absolute log file path, or empty if no model path is known.
+ **********************************************************************************************************************/
+QString MainWindow::simulationLogFilePath(const QString &modelFile) const
+{
+    QString script = modelFile.trimmed();
+    if (script.isEmpty())
+        script = currentPythonScriptPath().trimmed();
+    if (script.isEmpty())
+        return {};
+
+    const QFileInfo fi(script);
+    const QDir modelDir(fi.absolutePath());
+    const QString base = fi.completeBaseName();
+
+    const QString palaceData = modelDir.filePath(
+        QStringLiteral("palace_model/%1_data").arg(base));
+    if (QDir(palaceData).exists())
+        return QDir(palaceData).filePath(QStringLiteral("emstudio_simulation.log"));
+
+    const QString elmerData = modelDir.filePath(
+        QStringLiteral("elmer_model/%1_data").arg(base));
+    if (QDir(elmerData).exists())
+        return QDir(elmerData).filePath(QStringLiteral("emstudio_simulation.log"));
+
+    const QString runDir = m_simSettings.value(QStringLiteral("RunDir")).toString().trimmed();
+    if (!runDir.isEmpty() && QDir(runDir).exists())
+        return QDir(runDir).filePath(QStringLiteral("emstudio_simulation.log"));
+
+    return modelDir.filePath(QStringLiteral("emstudio_simulation.log"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Builds candidate paths for a saved simulation log near \a modelFile.
+ **********************************************************************************************************************/
+QStringList MainWindow::simulationLogCandidates(const QString &modelFile) const
+{
+    QStringList out;
+    const QFileInfo fi(modelFile);
+    if (modelFile.trimmed().isEmpty())
+        return out;
+
+    const QDir modelDir(fi.absolutePath());
+    const QString base = fi.completeBaseName();
+
+    auto addDir = [&](const QString &dir) {
+        if (dir.isEmpty() || !QDir(dir).exists())
+            return;
+        const QString path = QDir(dir).filePath(QStringLiteral("emstudio_simulation.log"));
+        if (!out.contains(path))
+            out.append(path);
+    };
+
+    addDir(modelDir.filePath(QStringLiteral("palace_model/%1_data").arg(base)));
+    addDir(modelDir.filePath(QStringLiteral("elmer_model/%1_data").arg(base)));
+    addDir(modelDir.filePath(QStringLiteral("palace_model")));
+    addDir(modelDir.filePath(QStringLiteral("elmer_model")));
+    addDir(modelDir.absolutePath());
+    return out;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Clears the simulation log UI and optionally starts a new disk capture.
+ *
+ * \param startDiskCapture When true, truncates/creates \c emstudio_simulation.log for live appends.
+ **********************************************************************************************************************/
+void MainWindow::clearSimulationLog(bool startDiskCapture)
+{
+    m_simulationLogPath.clear();
+    if (m_ui && m_ui->editSimulationLog)
+        m_ui->editSimulationLog->clear();
+
+    if (!startDiskCapture)
+        return;
+
+    m_simulationLogPath = simulationLogFilePath();
+    if (m_simulationLogPath.isEmpty())
+        return;
+
+    QDir().mkpath(QFileInfo(m_simulationLogPath).absolutePath());
+    QFile f(m_simulationLogPath);
+    f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Writes the current simulation log text to disk.
+ *
+ * Always updates the active capture path (if any) and also writes into the
+ * preferred results/model location so a later model load can find it.
+ **********************************************************************************************************************/
+void MainWindow::persistSimulationLogSnapshot()
+{
+    if (!m_ui || !m_ui->editSimulationLog)
+        return;
+
+    const QByteArray text = m_ui->editSimulationLog->toPlainText().toUtf8();
+    if (text.isEmpty())
+        return;
+
+    auto writeTo = [&](const QString &path) {
+        if (path.isEmpty())
+            return;
+        QDir().mkpath(QFileInfo(path).absolutePath());
+        QFile f(path);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+            f.write(text);
+    };
+
+    if (!m_simulationLogPath.isEmpty())
+        writeTo(m_simulationLogPath);
+
+    const QString preferred = simulationLogFilePath();
+    if (!preferred.isEmpty() && preferred != m_simulationLogPath)
+        writeTo(preferred);
+
+    // Ensure a copy next to the model as a reliable fallback for load.
+    const QString script = currentPythonScriptPath().trimmed();
+    if (!script.isEmpty()) {
+        const QString besideModel =
+            QFileInfo(script).absoluteDir().filePath(QStringLiteral("emstudio_simulation.log"));
+        if (besideModel != preferred && besideModel != m_simulationLogPath)
+            writeTo(besideModel);
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Loads a saved simulation log into the UI if one exists for \a modelFile.
+ *
+ * \return True if a non-empty log was loaded.
+ **********************************************************************************************************************/
+bool MainWindow::loadSimulationLogFromDisk(const QString &modelFile)
+{
+    m_simulationLogPath.clear();
+    if (!m_ui || !m_ui->editSimulationLog)
+        return false;
+
+    for (const QString &path : simulationLogCandidates(modelFile)) {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+            continue;
+        const QByteArray data = f.readAll();
+        if (data.trimmed().isEmpty())
+            continue;
+
+        QSignalBlocker blocker(m_ui->editSimulationLog);
+        m_ui->editSimulationLog->setPlainText(QString::fromUtf8(data));
+        m_ui->editSimulationLog->moveCursor(QTextCursor::End);
+        return true;
+    }
+
+    m_ui->editSimulationLog->clear();
+    return false;
 }
 
 /*!*******************************************************************************************************************
@@ -465,6 +640,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
             appendToSimulationLog(
                 QString("\n[Palace Python preprocessing finished with exit code %1]\n")
                     .arg(exitCode).toUtf8());
+            persistSimulationLogSnapshot();
 
             if (m_simProcess) {
                 m_simProcess->deleteLater();
@@ -485,6 +661,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
             const QString scriptPath = m_simSettings.value("RunPythonScript").toString().trimmed();
             if (scriptPath.isEmpty() || !QFileInfo::exists(scriptPath)) {
                 error(QString("Python file '%1' does not exist.").arg(scriptPath), true);
+                persistSimulationLogSnapshot();
 
                 if (m_simProcess) {
                     m_simProcess->deleteLater();
@@ -508,6 +685,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
         QString err;
         if (!buildPalaceRunContext(ctx, err)) {
             error(err, true);
+            persistSimulationLogSnapshot();
 
             if (m_simProcess) {
                 m_simProcess->deleteLater();
@@ -604,6 +782,8 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
                 }
             }
         }
+
+        persistSimulationLogSnapshot();
 
         if (m_headless)
             QCoreApplication::exit(exitCode);
@@ -867,6 +1047,8 @@ void MainWindow::failPalaceSolver(const QString &message, bool showDialog)
 {
     if (!message.isEmpty())
         error(message, showDialog);
+
+    persistSimulationLogSnapshot();
 
     if (m_simProcess) {
         m_simProcess->deleteLater();

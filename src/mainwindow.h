@@ -294,7 +294,6 @@ private slots:
     void                            on_cbShowStackupOverrides_toggled(bool checked);
     void                            onStackupEditorSaved(const QString &path);
     void                            onSubstrateLayerClicked(const QString &name, const QString &kind);
-    /*! Slot: layout-preview polygon click → stack selection (same as substrate click). */
     void                            onLayoutLayerClicked(const QString &name, const QString &kind, int gdsLayer = -1);
     void                            onPortsTableSelectionChanged();
     void                            on_txtSubstrate_textEdited(const QString &arg1);
@@ -397,66 +396,19 @@ private:
                                                            const QString &targetLayer);
     QString                         findThermalResultsVtu(const QString &runDir) const;
     QString                         findFieldDumpPath(const QString &runDir = QString()) const;
-    /*!*******************************************************************************************************************
-     * \brief Host Python for \c field_slice_export.py (PyVista/Pillow).
-     *
-     * Order: Preferences FIELD_VIEWER_PYTHON, then installer-bundled
-     * field_viewer_python/python.exe (Windows), then the active tool Python,
-     * other configured Pythons, then PATH python3/python.
-     *
-     * \param[out] detailOut Optional human-readable path or error hint.
-     **********************************************************************************************************************/
     QString                         resolveFieldViewerPython(QString *detailOut = nullptr) const;
-    /*! Absolute path to \c scripts/field_slice_export.py next to the app / sources. */
     QString                         resolveFieldSliceExportScript() const;
-    /*!*******************************************************************************************************************
-     * \brief Starts (or reuses cache for) a Field Z-slice export into LayoutView.
-     *
-     * Runs asynchronously via \c QProcess; kills any in-flight export when a newer
-     * request arrives. Passes layout content bounds as ROI when available.
-     *
-     * \param force True to ignore a still-valid on-screen overlay and re-export.
-     **********************************************************************************************************************/
     void                            refreshFieldOverlay(bool force = false);
-    /*!*******************************************************************************************************************
-     * \brief Loads \c field_slice_meta.json + PNG into LayoutView.
-     *
-     * Reads the PNG via \c QImage::loadFromData so a concurrent writer cannot
-     * leave a half-decoded pixmap. Returns false if meta/PNG cannot be loaded.
-     *
-     * \param metaPath Absolute path to \c field_slice_meta.json.
-     **********************************************************************************************************************/
     bool                            loadFieldOverlayFromCache(const QString &metaPath);
-    /*!*******************************************************************************************************************
-     * \brief Slot: LayoutView Field mode toggled — clear or schedule first export.
-     **********************************************************************************************************************/
     void                            onLayoutFieldModeChanged(bool on);
-    /*!*******************************************************************************************************************
-     * \brief Slot: Field+3D — launch interactive PyVista volume window (layout pane stays 2D).
-     **********************************************************************************************************************/
     void                            openFieldVolumeExternalViewer();
     void                            onFieldVolumeViewerReadyRead();
     void                            onFieldVolumeViewerFinished(int exitCode, QProcess::ExitStatus status);
     void                            closeFieldVolumeViewerSplash();
-    /*!*******************************************************************************************************************
-     * \brief Slot: LayoutView Z / Log / Arrows request — queue a forced re-export.
-     **********************************************************************************************************************/
     void                            onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
-    /*!*******************************************************************************************************************
-     * \brief Slot: jump to hottest Z (auto-Z / max temperature or |E| in layout ROI).
-     **********************************************************************************************************************/
     void                            onLayoutFieldHotZRequest();
-    /*!*******************************************************************************************************************
-     * \brief Debounces Field exports so rapid UI changes coalesce into one run.
-     **********************************************************************************************************************/
     void                            scheduleFieldOverlayRefresh(bool force = false);
-    /*!*******************************************************************************************************************
-     * \brief Slot: async Field export process finished — load cache or show error.
-     *
-     * Ignores superseded tokens and CrashExit (killed for a newer Z).
-     **********************************************************************************************************************/
     void                            onFieldExportFinished(int exitCode, QProcess::ExitStatus status);
-    /*! Long-lived PyVista volume worker (stdin/stdout JSON); keeps Plotter warm for orbit. */
     bool                            ensureFieldVolumeServe(const QString &python,
                                                            const QString &script,
                                                            const QString &dump,
@@ -468,9 +420,6 @@ private:
                                                             int resolution);
     void                            onFieldVolumeServeReadyRead();
     void                            onFieldVolumeServeFinished(int exitCode, QProcess::ExitStatus status);
-    /*!*******************************************************************************************************************
-     * \brief After Elmer Thermal success: Substrate + 2D Field; optional Field 3D if Python set.
-     **********************************************************************************************************************/
     void                            openThermalResultsInFieldView(const QString &runDir);
     bool                            isElmerFamilyKey(const QString &key) const;
     bool                            isElmerThermalKey(const QString &key) const;
@@ -496,7 +445,6 @@ private:
 
     void                            updateSubLayerNamesCheckboxState();
     void                            rebuildLayerMapping();
-    /*! Reload LayoutView from current GDS path, top cell, and substrate styles. */
     void                            refreshLayoutPreview();
     void                            setupLayoutLayerPanel();
     QVector<SanityFinding>          collectSanityFindings() const;
@@ -599,6 +547,12 @@ private:
     QString                         detectPhysicalCoreCountLinux() const;
 
     void                            appendToSimulationLog(const QByteArray &data);
+    QString                         simulationLogFilePath(const QString &modelFile = QString()) const;
+    QStringList                     simulationLogCandidates(const QString &modelFile) const;
+    void                            clearSimulationLog(bool startDiskCapture);
+    void                            persistSimulationLogSnapshot();
+    bool                            loadSimulationLogFromDisk(const QString &modelFile);
+
     QString                         detectRunDirFromLog() const;
 
     QString                         guessDefaultPalaceRunDir(const QString &modelFile, const QString &baseName) const;
@@ -661,10 +615,10 @@ private:
     int                             m_fieldExportToken = 0;
     QString                         m_fieldLastDumpPath;
     QString                         m_fieldExportOutDir;
-    qreal                           m_fieldLastVolumeClipZUm = 0.0; //!< Last volume clip Z (camera-only gate)
+    qreal                           m_fieldLastVolumeClipZUm = 0.0;
     bool                            m_fieldLastVolumeLog = false;
-    QString                         m_layoutPreviewKey; //!< gds|topcell|xml — reset Field when model changes
-    QString                         m_fieldDumpSearchDir; //!< Prefer this dir after a thermal run
+    QString                         m_layoutPreviewKey;
+    QString                         m_fieldDumpSearchDir;
     QProcess                       *m_fieldExportProcess = nullptr;
     QProcess                       *m_fieldVolumeViewerProcess = nullptr;
     QPointer<QFrame>                m_fieldVolumeViewerSplash;
@@ -676,6 +630,7 @@ private:
     bool                            m_fieldVolumeServeReady = false;
 
     bool                            m_headless = false;
+    QString                         m_simulationLogPath;
     bool                            m_blockPortChanges;
     bool                            m_blockPortSelectSync = false;
 

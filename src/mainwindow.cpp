@@ -22,6 +22,7 @@
 #include <QMenu>
 #include <QFile>
 #include <QDebug>
+#include <cstring>
 #include <QTimer>
 #include <QDateTime>
 #include <QAction>
@@ -1400,6 +1401,33 @@ bool MainWindow::loadFieldOverlayFromCache(const QString &metaPath)
     }
     if (ov.image.isNull())
         return false;
+
+    const QString valuesName = o.value(QStringLiteral("values"))
+            .toString(QStringLiteral("field_slice_values.bin"));
+    const QString valuesPath = QDir(QFileInfo(metaPath).absolutePath()).filePath(valuesName);
+    if (QFileInfo::exists(valuesPath)) {
+        QFile vf(valuesPath);
+        if (vf.open(QIODevice::ReadOnly)) {
+            QByteArray magic = vf.read(4);
+            if (magic == QByteArrayLiteral("EMFV")) {
+                quint32 ver = 0, ny = 0, nx = 0;
+                if (vf.read(reinterpret_cast<char *>(&ver), 4) == 4
+                    && vf.read(reinterpret_cast<char *>(&ny), 4) == 4
+                    && vf.read(reinterpret_cast<char *>(&nx), 4) == 4
+                    && ver == 1 && ny > 1 && nx > 1
+                    && ny < 20000 && nx < 20000) {
+                    const qint64 need = qint64(ny) * qint64(nx) * 4;
+                    QByteArray raw = vf.read(need);
+                    if (raw.size() == need) {
+                        ov.sampleNy = int(ny);
+                        ov.sampleNx = int(nx);
+                        ov.sampleGrid.resize(int(ny * nx));
+                        memcpy(ov.sampleGrid.data(), raw.constData(), size_t(need));
+                    }
+                }
+            }
+        }
+    }
 
     const QJsonArray arrows = o.value(QStringLiteral("arrows")).toArray();
     ov.arrows.reserve(arrows.size());
@@ -4856,7 +4884,8 @@ void MainWindow::loadPythonModel(const QString &fileName)
     if (fileName.isEmpty())
         return;
 
-    m_ui->editSimulationLog->clear();
+    // Restore last run log for this model if present; otherwise clear.
+    loadSimulationLogFromDisk(fileName);
 
     const QFileInfo fi(fileName);
     m_preferences["PALACE_MODEL_DIR"]  = fi.absolutePath();

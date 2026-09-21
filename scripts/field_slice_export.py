@@ -287,6 +287,33 @@ def _cache_fingerprint(mesh_path: str, layout_roi, resolution: int) -> str:
     return "|".join(parts)
 
 
+def _atomic_save_values(img_vals, values_path: str) -> None:
+    """Write float32 sample grid (PNG orientation: row 0 = ymax) for click probe."""
+    import struct
+    import tempfile
+    import numpy as np
+
+    arr = np.asarray(img_vals, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError("values grid must be 2D")
+    ny, nx = int(arr.shape[0]), int(arr.shape[1])
+    folder = os.path.dirname(values_path) or "."
+    fd, tmp = tempfile.mkstemp(prefix="field_vals_", suffix=".bin", dir=folder)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(b"EMFV")
+            f.write(struct.pack("<III", 1, ny, nx))
+            f.write(np.ascontiguousarray(arr).tobytes(order="C"))
+        os.replace(tmp, values_path)
+    except Exception:
+        try:
+            if os.path.isfile(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _atomic_save_png(rgba, png_path: str) -> None:
     """Write PNG via temp file + replace to avoid torn reads in the GUI."""
     from PIL import Image
@@ -350,17 +377,36 @@ def _write_slice_outputs(
     import numpy as np
 
     ny, nx = img_vals.shape
-    local = img_vals.ravel()
+    local = img_vals[np.isfinite(img_vals)].ravel()
     local_plot = np.log10(np.maximum(local, 1e-30)) if log_scale else local
-    local_span = float(np.percentile(local_plot, 98) - np.percentile(local_plot, 2)) if local_plot.size else 0.0
-    global_span = (global_vmax - global_vmin) if (global_vmin is not None and global_vmax is not None) else 0.0
-    if global_span > 1e-30 and local_span < 0.15 * global_span:
+    local_span = (
+        float(np.percentile(local_plot, 98) - np.percentile(local_plot, 2))
+        if local_plot.size
+        else 0.0
+    )
+    global_span = (
+        (global_vmax - global_vmin)
+        if (global_vmin is not None and global_vmax is not None)
+        else 0.0
+    )
+    # Prefer full-mesh clim when available (thermal / volume cache). Fall back to
+    # slice-local only if the slice is nearly flat vs the global range (EM).
+    use_local = (
+        global_span <= 1e-30
+        or (local_span > 0 and local_span < 0.15 * global_span
+            and not _is_thermal_quantity(scalar_name))
+    )
+    if use_local:
         rgba, vmin, vmax = _colormap_rgba(img_vals, log_scale, None, None)
     else:
         rgba, vmin, vmax = _colormap_rgba(img_vals, log_scale, global_vmin, global_vmax)
     rgba = rgba.reshape(ny, nx, 4)
     png_path = os.path.join(outdir, "field_slice.png")
     _atomic_save_png(rgba, png_path)
+    try:
+        _atomic_save_values(img_vals, os.path.join(outdir, "field_slice_values.bin"))
+    except Exception as exc:
+        print(f"field_slice_export: values grid skipped: {exc}", file=sys.stderr)
 
     meta = {
         "version": 1,
@@ -373,6 +419,7 @@ def _write_slice_outputs(
         "ymin_um": ymin,
         "ymax_um": ymax,
         "png": "field_slice.png",
+        "values": "field_slice_values.bin",
         "log_scale": bool(log_scale),
         "show_arrows": bool(arrows),
         "vmin": vmin,
@@ -552,7 +599,26 @@ def _sample_z_grid(pv, data_mesh, scalar_name: str, scale: float, xs, ys, z_um: 
     except Exception:
         grid = None
 
-    # 2) ImageData / PolyData probe fallback
+    # 2) Probe fallbacks. Prefer PolyData (same meshgrid order as griddata);
+    #    ImageData is fine too once reshaped with VTK's X-fastest layout.
+    if grid is None:
+        try:
+            pts2 = np.column_stack([xx.ravel(), yy.ravel(), np.full(xx.size, z_native)])
+            sampled = pv.PolyData(pts2).sample(data_mesh)
+            if scalar_name not in sampled.point_data:
+                raise RuntimeError(f"array {scalar_name!r} missing after sample")
+            mag = _as_magnitude(sampled.point_data[scalar_name])
+            if mag.size != nx * ny:
+                raise RuntimeError(f"sample size mismatch: got {mag.size}, expected {nx * ny}")
+            # xx.ravel() is C-order over meshgrid(xy) → rows=y, cols=x
+            grid = mag.reshape(ny, nx).astype(float)
+            if "vtkValidPointMask" in sampled.point_data:
+                mask = np.asarray(sampled.point_data["vtkValidPointMask"]).ravel().reshape(ny, nx)
+                grid = grid.copy()
+                grid[mask == 0] = np.nan
+        except Exception:
+            grid = None
+
     if grid is None:
         try:
             dx = (float(xs[-1]) - float(xs[0])) / max(nx - 1, 1) / scale
@@ -565,32 +631,71 @@ def _sample_z_grid(pv, data_mesh, scalar_name: str, scale: float, xs, ys, z_um: 
             mag = _as_magnitude(sampled.point_data[scalar_name])
             if mag.size != nx * ny:
                 raise RuntimeError(f"sample size mismatch: got {mag.size}, expected {nx * ny}")
-            grid = mag.reshape(nx, ny).T.astype(float)
+            # VTK: X varies fastest → row=iy, col=ix is reshape(ny, nx).
+            # (reshape(nx, ny).T is wrong and rotates the field ~90° when nx≈ny.)
+            grid = mag.reshape((ny, nx)).astype(float)
             if "vtkValidPointMask" in sampled.point_data:
-                mask = np.asarray(sampled.point_data["vtkValidPointMask"]).ravel().reshape(nx, ny).T
+                mask = (
+                    np.asarray(sampled.point_data["vtkValidPointMask"])
+                    .ravel()
+                    .reshape((ny, nx))
+                )
                 grid = grid.copy()
                 grid[mask == 0] = np.nan
-        except Exception:
-            pts2 = np.column_stack([xx.ravel(), yy.ravel(), np.full(xx.size, z_native)])
-            sampled = pv.PolyData(pts2).sample(data_mesh)
-            if scalar_name not in sampled.point_data:
-                raise RuntimeError(f"array {scalar_name!r} missing after sample")
-            mag = _as_magnitude(sampled.point_data[scalar_name])
-            if mag.size != nx * ny:
-                raise RuntimeError(f"sample size mismatch: got {mag.size}, expected {nx * ny}")
-            grid = mag.reshape(ny, nx).astype(float)
-            if "vtkValidPointMask" in sampled.point_data:
-                mask = np.asarray(sampled.point_data["vtkValidPointMask"]).ravel().reshape(ny, nx)
-                grid = grid.copy()
-                grid[mask == 0] = np.nan
+        except Exception as exc:
+            raise RuntimeError(f"slice sample failed: {exc}") from exc
 
     grid = _smooth_grid(grid, sigma=3.5)
     return grid, mask
 
 
+def _fix_xy_axis_swap(grid, xs, ys, xmin, xmax, ymin, ymax, layout_roi):
+    """Swap sample XY for thermal slices (mesh buffer was transposed vs GDS).
+
+    Layout Field consistently showed a vertical heat blob on a horizontal DUT;
+    transpose the sample grid and swap axis vectors/bounds so the overlay matches
+    the GDS layout. \\a layout_roi is unused (kept for call-site compatibility).
+    """
+    import numpy as np
+
+    del layout_roi
+    if grid is None:
+        return grid, xs, ys, xmin, xmax, ymin, ymax
+    grid = np.ascontiguousarray(np.asarray(grid, dtype=float).T)
+    xs, ys = ys, xs
+    xmin, xmax, ymin, ymax = ymin, ymax, xmin, xmax
+    print(
+        "field_slice_export: transposed thermal slice XY to match GDS layout",
+        file=sys.stderr,
+    )
+    return grid, xs, ys, xmin, xmax, ymin, ymax
+
+
 def _is_thermal_quantity(name: str) -> bool:
     nl = (name or "").lower()
     return nl in ("temperature", "temp", "t") or ("temp" in nl)
+
+
+def _mesh_scalar_clim(data_mesh, scalar_name: str, log_scale: bool = False):
+    """Color limits from the full mesh (same idea as Field 3D) — no fixed Kelvin.
+
+    Returns (vmin, vmax) in the space used by ``_colormap_rgba`` after any log
+    transform, or (None, None) if the array is missing/empty.
+    """
+    import numpy as np
+
+    if scalar_name not in getattr(data_mesh, "point_data", {}):
+        return None, None
+    arr = _as_magnitude(data_mesh.point_data[scalar_name])
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return None, None
+    ref = np.log10(np.maximum(arr, 1e-30)) if log_scale else arr
+    lo = float(np.min(ref))
+    hi = float(np.max(ref))
+    if not math.isfinite(lo) or not math.isfinite(hi) or hi <= lo:
+        return None, None
+    return lo, hi
 
 
 def _frame_from_layout(layout_roi, mxmin, mxmax, mymin, mymax, pad_frac=0.35, max_aspect=2.5):
@@ -735,6 +840,13 @@ def export_slice(
     except Exception as exc:
         _die(f"slice sample failed: {exc}")
 
+    if _is_thermal_quantity(scalar_name):
+        grid_vals, xs, ys, xmin, xmax, ymin, ymax = _fix_xy_axis_swap(
+            grid_vals, xs, ys, xmin, xmax, ymin, ymax, layout_roi
+        )
+        # nx/ny follow xs/ys after a possible transpose.
+        nx, ny = len(xs), len(ys)
+
     # Color scale from this slice (valid points only) — avoids posterized global range.
     valid = grid_vals[np.isfinite(grid_vals)]
     if valid.size == 0:
@@ -765,12 +877,28 @@ def export_slice(
     img_vals = np.flipud(grid_vals)
     # Transparent where NaN (outside mesh).
     finite = np.isfinite(img_vals)
-    fill = float(np.nanpercentile(img_vals, 2)) if finite.any() else 0.0
-    img_filled = np.where(finite, img_vals, fill)
+    is_thermal = _is_thermal_quantity(scalar_name)
 
-    local_vmin = float(np.nanpercentile(img_vals, 2))
-    local_vmax = float(np.nanpercentile(img_vals, 98))
-    rgba, vmin, vmax = _colormap_rgba(img_filled, log_scale, local_vmin, local_vmax)
+    # Thermal: use full-mesh min/max (like Field 3D) so a hot Z-slice does not
+    # flatten into an all-red blob. EM: keep slice-local percentiles.
+    mesh_vmin, mesh_vmax = (None, None)
+    if is_thermal:
+        mesh_vmin, mesh_vmax = _mesh_scalar_clim(data_mesh, scalar_name, log_scale)
+
+    if mesh_vmin is not None and mesh_vmax is not None:
+        # Outside-mesh fill in *raw* value space (colormap applies log itself).
+        raw = _as_magnitude(data_mesh.point_data[scalar_name])
+        raw = raw[np.isfinite(raw)]
+        fill = float(np.min(raw)) if raw.size else 0.0
+        img_filled = np.where(finite, img_vals, fill)
+        rgba, vmin, vmax = _colormap_rgba(img_filled, log_scale, mesh_vmin, mesh_vmax)
+    else:
+        fill = float(np.nanpercentile(img_vals, 2)) if finite.any() else 0.0
+        img_filled = np.where(finite, img_vals, fill)
+        local_vmin = float(np.nanpercentile(img_vals, 2))
+        local_vmax = float(np.nanpercentile(img_vals, 98))
+        rgba, vmin, vmax = _colormap_rgba(img_filled, log_scale, local_vmin, local_vmax)
+
     rgba = rgba.reshape(img_vals.shape[0], img_vals.shape[1], 4)
     # Restore alpha for out-of-mesh samples.
     alpha = rgba[:, :, 3].astype(np.float32)
@@ -780,9 +908,14 @@ def export_slice(
 
     png_path = os.path.join(outdir, "field_slice.png")
     _atomic_save_png(rgba, png_path)
+    values_path = os.path.join(outdir, "field_slice_values.bin")
+    try:
+        # Same orientation as the PNG (row 0 = ymax) for click-to-probe in LayoutView.
+        _atomic_save_values(img_vals, values_path)
+    except Exception as exc:
+        print(f"field_slice_export: values grid skipped: {exc}", file=sys.stderr)
 
     arrow_list = []
-    is_thermal = scalar_name.lower() in ("temperature", "temp", "t") or "temp" in scalar_name.lower()
     if arrows and not is_thermal:
         vec_name = _pick_vector(names)
         if vec_name:
@@ -833,6 +966,7 @@ def export_slice(
         "ymin_um": ymin,
         "ymax_um": ymax,
         "png": "field_slice.png",
+        "values": "field_slice_values.bin",
         "log_scale": bool(log_scale),
         "show_arrows": bool(arrows),
         "vmin": vmin,

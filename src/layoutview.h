@@ -117,10 +117,19 @@ public:
         QString quantity;
         QString status; //!< Empty when overlay is valid; else user-facing message
         QVector<FieldArrow> arrows;
+        /*! Scalar grid matching \c image (row 0 = ymax); enables click-to-probe. */
+        QVector<float> sampleGrid;
+        int     sampleNx = 0;
+        int     sampleNy = 0;
         bool    logScale = false;
         bool    showArrows = true;
         bool    volume = false; //!< True for Field+3D offscreen volume PNG
         bool    valid() const { return !image.isNull() && xmaxUm > xminUm && ymaxUm > yminUm; }
+        bool    hasSamples() const
+        {
+            return sampleNx > 1 && sampleNy > 1
+                    && sampleGrid.size() == sampleNx * sampleNy;
+        }
     };
 
     explicit LayoutView(QWidget *parent = nullptr);
@@ -138,6 +147,8 @@ public:
     qreal                       layerOpacity(int gdsLayer) const;
 
     void                        clearMeasure();
+    /*! Clears Field click-probe marker and readout. */
+    void                        clearFieldProbe();
     void                        setShowCoordinates(bool on);
     bool                        showCoordinates() const;
 
@@ -187,6 +198,8 @@ public:
     bool                        fieldLogScale() const;
     /*! True when the Field panel Arrows checkbox is checked. */
     bool                        fieldShowArrows() const;
+    /*! True when the Field panel Temp checkbox is checked (click-probe visible). */
+    bool                        fieldShowTemp() const;
     /*!*******************************************************************************************************************
      * \brief GDS µm Y-up bounding box of non-port layout polygons (for field crop).
      *
@@ -232,6 +245,7 @@ private slots:
     void                        onFieldButtonToggled(bool on);
     /*! Log / Arrows changed; may re-export or only redraw arrows. */
     void                        onFieldControlsChanged();
+    void                        onFieldTempToggled(bool on);
     /*! Live Z readout while dragging; export deferred until release. */
     void                        onFieldZSliderPreview(int value);
     /*! Slider released → emit \c fieldSliceRequest for a new export. */
@@ -293,6 +307,10 @@ private:
                                                    const QString &dirLabel);
     static QPointF              sceneToGdsUm(const QPointF &scenePt);
     void                        emitMeasure();
+    /*! Bilinear sample of \c m_field.sampleGrid at GDS µm (Y-up). */
+    bool                        sampleFieldAtGdsUm(qreal xUm, qreal yUm, qreal *valueOut) const;
+    /*! Place / replace Field probe at scene point (Field 2D with samples only). */
+    bool                        tryPlaceFieldProbe(const QPointF &scenePt);
     static void                 setPixelOffset(QGraphicsItem *item, qreal dxPx, qreal dyPx);
 
     void                        rebuildScene(bool refit = true);
@@ -323,6 +341,7 @@ private:
     class QToolButton          *m_fieldHotZBtn = nullptr;
     class QCheckBox            *m_fieldLogChk = nullptr;
     class QCheckBox            *m_fieldArrowsChk = nullptr;
+    class QCheckBox            *m_fieldTempChk = nullptr;
     class QLabel               *m_fieldStatusLbl = nullptr;
     class QTimer               *m_volumeCamSettle = nullptr; //!< Debounce volume zoom re-render
     ViewMode                    m_viewMode = ViewMode::Top2D;
@@ -358,6 +377,10 @@ private:
     bool                        m_measureHasEnd = false;
     QPointF                     m_measureStart;
     QPointF                     m_measureEnd;
+
+    bool                        m_fieldProbeActive = false;
+    QPointF                     m_fieldProbeScene;
+    qreal                       m_fieldProbeValue = 0.0;
 
     static constexpr int        kRoleName = 0;
     static constexpr int        kRoleKind = 1;

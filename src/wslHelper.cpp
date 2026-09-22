@@ -347,7 +347,17 @@ QString runWslCmdCapture(const QString &distro,
     if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0)
         return QString();
 
+#ifdef Q_OS_WIN
+    // wsl.exe may emit UTF-16LE on redirected stdout; also ignore leading warning lines.
+    const QString decoded = decodeWslOutput(p.readAllStandardOutput()).trimmed();
+    if (decoded.isEmpty())
+        return QString();
+
+    const QStringList lines = decoded.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+    return lines.isEmpty() ? decoded : lines.last().trimmed();
+#else
     return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+#endif
 }
 
 /*!*******************************************************************************************************************

@@ -195,23 +195,56 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
     }
 
     ctx.runMode = m_preferences.value("PALACE_RUN_MODE", 0).toInt();
+#ifdef Q_OS_WIN
+    // Distro is needed early for launcher path checks (WSL conversion / test -x).
+    ctx.distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
+#endif
 
     bool isScriptMode = false;
     if (ctx.runMode == 1 && !isElmerFamilyKey(ctx.simKeyLower)) {
-        ctx.launcherWin = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
-        if (ctx.launcherWin.isEmpty()) {
+        const QString launcherPref =
+            m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
+        if (launcherPref.isEmpty()) {
             outError = QStringLiteral("PALACE_RUN_SCRIPT is not configured.");
             return false;
         }
 
-#ifdef Q_OS_WIN
-        ctx.launcherWin = toLinuxPathPortable(ctx.launcherWin, ctx.distro, 8000);
-#endif
+        ctx.launcherWin = launcherPref;
 
+#ifdef Q_OS_WIN
+        // Keep Windows .cmd/.bat/.exe as host paths (launch uses cmd.exe). Only convert
+        // / resolve through WSL for Linux-style launcher scripts.
+        const bool linuxStyle =
+            launcherPref.startsWith(QLatin1Char('/')) ||
+            launcherPref.startsWith(QLatin1Char('~'));
+        if (linuxStyle) {
+            if (!pathIsExecutablePortable(ctx.launcherWin, ctx.distro, 8000)) {
+                outError = QStringLiteral(
+                    "PALACE_RUN_SCRIPT must point to an executable file: %1")
+                               .arg(launcherPref);
+                return false;
+            }
+        } else {
+            const QFileInfo lfi(launcherPref);
+            const bool winLauncherExt =
+                launcherPref.endsWith(QStringLiteral(".cmd"), Qt::CaseInsensitive) ||
+                launcherPref.endsWith(QStringLiteral(".bat"), Qt::CaseInsensitive) ||
+                launcherPref.endsWith(QStringLiteral(".exe"), Qt::CaseInsensitive);
+            if (!lfi.exists() || !(lfi.isExecutable() || winLauncherExt)) {
+                outError = QStringLiteral(
+                    "PALACE_RUN_SCRIPT must point to an executable file: %1")
+                               .arg(launcherPref);
+                return false;
+            }
+        }
+#else
         if (!pathIsExecutablePortable(ctx.launcherWin, ctx.distro, 8000)) {
-            outError = QStringLiteral("PALACE_RUN_SCRIPT must point to an executable file.");
+            outError = QStringLiteral(
+                "PALACE_RUN_SCRIPT must point to an executable file: %1")
+                           .arg(launcherPref);
             return false;
         }
+#endif
 
         isScriptMode = true;
     }
@@ -245,7 +278,8 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
         if (!ensureWslAvailable(outError))
             return false;
 
-        ctx.distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
+        if (ctx.distro.trimmed().isEmpty())
+            ctx.distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
 
         QString palaceRootLinux = ctx.palaceRoot;
         if (!palaceRootLinux.startsWith('/') &&

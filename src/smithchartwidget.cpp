@@ -166,15 +166,19 @@ void SmithChartWidget::drawTraces(QPainter &p, const QRectF &plotRect) const
             continue;
 
         p.setPen(QPen(t.color, 1.6, t.style));
-        p.setBrush(t.color);
 
         if (t.gamma.size() == 1) {
+            // Marker dot: fill the small ellipse only.
+            p.setBrush(t.color);
             const QPointF pt = toPixel(QPointF(t.gamma.first().real(), t.gamma.first().imag()),
                                        plotRect);
             p.drawEllipse(pt, 4.5, 4.5);
             continue;
         }
 
+        // Stroke only — a brush would fill the open path as a closed polygon
+        // (GitHub #24: filled wedge instead of an Snn trajectory line).
+        p.setBrush(Qt::NoBrush);
         QPainterPath path;
         bool started = false;
         for (const auto &g : t.gamma) {

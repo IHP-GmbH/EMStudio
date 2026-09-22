@@ -10,6 +10,7 @@ class MainWindowPortsTest : public QObject
 private slots:
     void importPortsFromEditor_multilineScript_populatesTable();
     void importPortsFromEditor_targetLayer_onlyToLayerFilled();
+    void importPortsFromEditor_sheetReferencePlane_toLayerPreservedOnRoundTrip();
     void addAndRemovePorts_flow_works();
     void toggleSubLayerNames_convertsNumericLayersToNamesAndBack();
 

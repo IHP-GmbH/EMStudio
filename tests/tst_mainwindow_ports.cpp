@@ -172,6 +172,78 @@ void MainWindowPortsTest::importPortsFromEditor_targetLayer_onlyToLayerFilled()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Verifies that a via port's to-layer on a "sheet" reference plane survives an import/export round trip.
+ *
+ * Regression test for https://github.com/IHP-GmbH/EMStudio/issues/22: readSubstrateLayers() used to
+ * only collect substrate layers of Type="conductor", so a sheet-type reference plane (used as an
+ * artificial ground plane for via ports, with a Material that is never declared in <Materials> at
+ * all) was missing from the port "to layer" combo box choices. QComboBox::setCurrentText() then
+ * silently failed to select it, the to-layer combo stayed empty, and regenerating the script
+ * collapsed the port to target_layername=<fromLayer> instead of the original from_layername/
+ * to_layername pair.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::importPortsFromEditor_sheetReferencePlane_toLayerPreservedOnRoundTrip()
+{
+    MainWindow w;
+
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    QVERIFY2(!gdsPath.isEmpty(), "Golden GDS file not found via QFINDTESTDATA");
+
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um_with_ref_plane.xml");
+    QVERIFY2(!xmlPath.isEmpty(), "Golden XML file not found via QFINDTESTDATA");
+
+    const QString pyStub = ensureTestOpenemsPythonStub();
+    QVERIFY2(!pyStub.isEmpty(), "OpenEMS python stub not found via QFINDTESTDATA");
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(pyStub,
+                          QFile::permissions(pyStub) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.setGdsFile(gdsPath);
+    w.setTopCell("t1");
+    w.setSubstrateFile(xmlPath);
+
+    w.testSetPreference("Python Path", pyStub);
+    w.refreshSimToolOptionsForTests();
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey("openems", &err), qPrintable(err));
+
+    const QString script =
+        "simulation_ports.add_port(simulation_setup.simulation_port(\n"
+        "    portnumber=3,\n"
+        "    voltage=1,\n"
+        "    port_Z0=50,\n"
+        "    source_layernum=203,\n"
+        "    from_layername='Metal2',\n"
+        "    to_layername='REF_FOR_TRANSISTOR',\n"
+        "    direction='z'\n"
+        "))\n";
+
+    w.testSetEditorText(script);
+    w.testImportPortsFromEditor();
+
+    QCOMPARE(w.testPortsRowCount(), 1);
+    QCOMPARE(w.testPortComboText(0, 4), QString("Metal2"));
+    QCOMPARE(w.testPortComboText(0, 5), QString("REF_FOR_TRANSISTOR"));
+
+    QString genErr;
+    const QString generated = w.testGenerateScriptFromGuiState(&genErr);
+    QVERIFY2(!generated.isEmpty(), qPrintable(genErr));
+
+    QVERIFY2(generated.contains("from_layername='Metal2'"),
+             "Regenerated script lost the via port's from_layername");
+    QVERIFY2(generated.contains("to_layername='REF_FOR_TRANSISTOR'"),
+             "Regenerated script lost the via port's to_layername for the sheet reference plane");
+    QVERIFY2(!generated.contains("target_layername"),
+             "Regenerated script wrongly collapsed the port to target_layername");
+}
+
+/*!*******************************************************************************************************************
  * \brief Verifies manual add/remove operations on the ports table.
  *
  * The test checks:

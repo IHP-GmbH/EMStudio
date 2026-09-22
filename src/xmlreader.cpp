@@ -25,13 +25,16 @@
 #include "mainwindow.h"
 
 /*!*******************************************************************************************************************
- * \brief Parses the given XML substrate file and extracts the names of all layers of type "conductor".
+ * \brief Parses the given XML substrate file and extracts the names of all layers usable as port terminals.
  *
  * This function opens the XML file provided via \a xmlFilePath and reads through its contents using QXmlStreamReader.
- * It collects all layer names where the type attribute is "conductor" and returns them in a QStringList.
+ * It collects all layer names except those of type "dielectric" (bulk fill material, not a valid port terminal)
+ * and returns them in a QStringList. This intentionally also keeps layer types other than "conductor"/"via",
+ * such as "sheet" reference/ground planes (e.g. an artificial common reference plane used as a via port's
+ * to-layer), which are conductive terminal layers even though they are not literally "conductor" layers.
  *
  * \param xmlFilePath     Path to the XML file that defines the substrate stackup.
- * \return                List of layer names classified as conductors.
+ * \return                List of layer names usable as port from-/to-layer terminals.
  **********************************************************************************************************************/
 QStringList MainWindow::readSubstrateLayers(const QString &xmlFilePath)
 {
@@ -52,7 +55,7 @@ QStringList MainWindow::readSubstrateLayers(const QString &xmlFilePath)
             QString type = xml.attributes().value("Type").toString();
             QString name = xml.attributes().value("Name").toString();
 
-            if (type.compare("conductor", Qt::CaseInsensitive) == 0) {
+            if (type.compare("dielectric", Qt::CaseInsensitive) != 0) {
                 layerNames.append(name);
             }
         }

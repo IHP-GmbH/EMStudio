@@ -80,8 +80,11 @@
 #include "assistantagent.h"
 #include "securestore.h"
 #include "pythonparser.h"
+#include "pythoneditor.h"
 #include "keywordseditor.h"
 #include "sanitycheck.h"
+
+#include <QRegularExpression>
 
 
 /*!*******************************************************************************************************************
@@ -1179,6 +1182,266 @@ void MainWindow::registerAssistantMcpTools()
                 out.insert(QStringLiteral("index"), idx);
                 return out;
             });
+    }
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        QJsonObject findProp;
+        findProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        findProp.insert(QStringLiteral("description"),
+                        QStringLiteral("Optional substring/regex to search; returns matching lines with numbers"));
+        props.insert(QStringLiteral("find"), findProp);
+        QJsonObject startProp;
+        startProp.insert(QStringLiteral("type"), QStringLiteral("integer"));
+        startProp.insert(QStringLiteral("description"), QStringLiteral("1-based start line (default 1)"));
+        props.insert(QStringLiteral("start_line"), startProp);
+        QJsonObject maxProp;
+        maxProp.insert(QStringLiteral("type"), QStringLiteral("integer"));
+        maxProp.insert(QStringLiteral("description"), QStringLiteral("Max lines to return (default 200, cap 800)"));
+        props.insert(QStringLiteral("max_lines"), maxProp);
+        schema.insert(QStringLiteral("properties"), props);
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("get_model_python"),
+            QStringLiteral("Read the Python model currently in the editor. "
+                           "Use find= to locate parameters (e.g. diameter, fstop, GdsFile). "
+                           "Prefer this before editing."),
+            schema,
+            [this](const QJsonObject &args) {
+                QJsonObject out;
+                if (!m_ui || !m_ui->editRunPythonScript) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"), QStringLiteral("Editor not ready"));
+                    return out;
+                }
+                const QString text = m_ui->editRunPythonScript->toPlainText();
+                const QStringList lines = text.split(QLatin1Char('\n'));
+                const QString find = args.value(QStringLiteral("find")).toString();
+                int start = args.value(QStringLiteral("start_line")).toInt(1);
+                int maxLines = args.value(QStringLiteral("max_lines")).toInt(200);
+                if (start < 1)
+                    start = 1;
+                if (maxLines < 1)
+                    maxLines = 200;
+                if (maxLines > 800)
+                    maxLines = 800;
+
+                out.insert(QStringLiteral("ok"), true);
+                out.insert(QStringLiteral("path"),
+                           m_ui->txtRunPythonScript ? m_ui->txtRunPythonScript->text() : QString());
+                out.insert(QStringLiteral("chars"), text.size());
+                out.insert(QStringLiteral("lines"), lines.size());
+                out.insert(QStringLiteral("modified"),
+                           m_ui->editRunPythonScript->document()->isModified());
+
+                if (!find.isEmpty()) {
+                    QJsonArray hits;
+                    const QRegularExpression re(find, QRegularExpression::CaseInsensitiveOption);
+                    const bool useRe = re.isValid();
+                    for (int i = 0; i < lines.size() && hits.size() < maxLines; ++i) {
+                        const QString &ln = lines.at(i);
+                        const bool match = useRe ? re.match(ln).hasMatch()
+                                                 : ln.contains(find, Qt::CaseInsensitive);
+                        if (!match)
+                            continue;
+                        QJsonObject hit;
+                        hit.insert(QStringLiteral("line"), i + 1);
+                        hit.insert(QStringLiteral("text"), ln);
+                        hits.append(hit);
+                    }
+                    out.insert(QStringLiteral("matches"), hits);
+                    out.insert(QStringLiteral("match_count"), hits.size());
+                    return out;
+                }
+
+                QStringList slice;
+                const int from = start - 1;
+                for (int i = from; i < lines.size() && slice.size() < maxLines; ++i)
+                    slice << QStringLiteral("%1|%2").arg(i + 1, 5).arg(lines.at(i));
+                out.insert(QStringLiteral("start_line"), start);
+                out.insert(QStringLiteral("content"), slice.join(QLatin1Char('\n')));
+                out.insert(QStringLiteral("truncated"), from + slice.size() < lines.size());
+                return out;
+            });
+    }
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        QJsonObject findProp;
+        findProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        findProp.insert(QStringLiteral("description"), QStringLiteral("Exact text to find in the editor"));
+        props.insert(QStringLiteral("find"), findProp);
+        QJsonObject replProp;
+        replProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        replProp.insert(QStringLiteral("description"), QStringLiteral("Replacement text"));
+        props.insert(QStringLiteral("replace"), replProp);
+        QJsonObject allProp;
+        allProp.insert(QStringLiteral("type"), QStringLiteral("boolean"));
+        allProp.insert(QStringLiteral("description"), QStringLiteral("Replace all occurrences (default true)"));
+        props.insert(QStringLiteral("replace_all"), allProp);
+        schema.insert(QStringLiteral("properties"), props);
+        schema.insert(QStringLiteral("required"),
+                      QJsonArray{QStringLiteral("find"), QStringLiteral("replace")});
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("replace_in_model_python"),
+            QStringLiteral("Search/replace in the Python model editor (undoable). "
+                           "Use for parameter tweaks after get_model_python. "
+                           "Does NOT edit GDS polygons — only the .py script."),
+            schema,
+            [this](const QJsonObject &args) {
+                QJsonObject out;
+                if (!m_ui || !m_ui->editRunPythonScript) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"), QStringLiteral("Editor not ready"));
+                    return out;
+                }
+                const QString find = args.value(QStringLiteral("find")).toString();
+                const QString repl = args.value(QStringLiteral("replace")).toString();
+                const bool all = args.value(QStringLiteral("replace_all")).toBool(true);
+                if (find.isEmpty()) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"), QStringLiteral("Missing find"));
+                    return out;
+                }
+                QString text = m_ui->editRunPythonScript->toPlainText();
+                const int before = text.count(find);
+                if (before == 0) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"),
+                               QStringLiteral("find text not found (exact match required)"));
+                    out.insert(QStringLiteral("hint"),
+                               QStringLiteral("Call get_model_python with find= first"));
+                    return out;
+                }
+                if (all)
+                    text.replace(find, repl);
+                else
+                    text.replace(text.indexOf(find), find.size(), repl);
+                m_ui->editRunPythonScript->setPlainTextUndoable(text);
+                m_ui->editRunPythonScript->document()->setModified(true);
+                setStateChanged();
+                out.insert(QStringLiteral("ok"), true);
+                out.insert(QStringLiteral("replacements"), all ? before : 1);
+                out.insert(QStringLiteral("chars"), text.size());
+                return out;
+            });
+    }
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        QJsonObject contentProp;
+        contentProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        contentProp.insert(QStringLiteral("description"),
+                           QStringLiteral("Full new Python script text (prefer replace_in_model_python for small edits)"));
+        props.insert(QStringLiteral("content"), contentProp);
+        schema.insert(QStringLiteral("properties"), props);
+        schema.insert(QStringLiteral("required"), QJsonArray{QStringLiteral("content")});
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("set_model_python"),
+            QStringLiteral("Replace the entire Python model editor contents (undoable). "
+                           "Prefer replace_in_model_python for small changes."),
+            schema,
+            [this](const QJsonObject &args) {
+                QJsonObject out;
+                if (!m_ui || !m_ui->editRunPythonScript) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"), QStringLiteral("Editor not ready"));
+                    return out;
+                }
+                const QString content = args.value(QStringLiteral("content")).toString();
+                if (content.trimmed().isEmpty()) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"), QStringLiteral("Empty content refused"));
+                    return out;
+                }
+                m_ui->editRunPythonScript->setPlainTextUndoable(content);
+                m_ui->editRunPythonScript->document()->setModified(true);
+                setStateChanged();
+                out.insert(QStringLiteral("ok"), true);
+                out.insert(QStringLiteral("chars"), content.size());
+                out.insert(QStringLiteral("lines"), content.count(QLatin1Char('\n')) + 1);
+                return out;
+            });
+    }
+
+    m_assistantMcp->registerTool(
+        QStringLiteral("save_model"),
+        QStringLiteral("Save the current Python model to its path (File → Save). "
+                       "Fails if no path is set — ask the user to Save As first, "
+                       "or use load_model from an example folder."),
+        emptySchema(),
+        [this](const QJsonObject &) {
+            QJsonObject out;
+            if (!m_ui || !m_ui->editRunPythonScript) {
+                out.insert(QStringLiteral("ok"), false);
+                out.insert(QStringLiteral("error"), QStringLiteral("Editor not ready"));
+                return out;
+            }
+            const QString path = m_ui->txtRunPythonScript->text().trimmed();
+            if (path.isEmpty()) {
+                out.insert(QStringLiteral("ok"), false);
+                out.insert(QStringLiteral("error"),
+                           QStringLiteral("No model path — load_model an example or Save As first"));
+                return out;
+            }
+            const QFileInfo fi(path);
+            if (!fi.absoluteDir().exists()) {
+                out.insert(QStringLiteral("ok"), false);
+                out.insert(QStringLiteral("error"),
+                           QStringLiteral("Parent folder does not exist: %1").arg(fi.absolutePath()));
+                return out;
+            }
+            on_actionSave_triggered();
+            out.insert(QStringLiteral("ok"), true);
+            out.insert(QStringLiteral("path"), m_ui->txtRunPythonScript->text());
+            out.insert(QStringLiteral("modified"),
+                       m_ui->editRunPythonScript->document()->isModified());
+            return out;
+        });
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        auto num = [](const QString &desc) {
+            QJsonObject o;
+            o.insert(QStringLiteral("type"), QStringLiteral("number"));
+            o.insert(QStringLiteral("description"), desc);
+            return o;
+        };
+        auto str = [](const QString &desc) {
+            QJsonObject o;
+            o.insert(QStringLiteral("type"), QStringLiteral("string"));
+            o.insert(QStringLiteral("description"), desc);
+            return o;
+        };
+        props.insert(QStringLiteral("scale"),
+                     num(QStringLiteral("XY scale about top-cell bbox centre (e.g. 1.023)")));
+        props.insert(QStringLiteral("current_diameter_um"),
+                     num(QStringLiteral("Known diameter [µm]; with diameter_delta_um sets scale")));
+        props.insert(QStringLiteral("diameter_delta_um"),
+                     num(QStringLiteral("Add this many µm to current_diameter_um via scale")));
+        props.insert(QStringLiteral("dx_um"), num(QStringLiteral("Translate X [µm]")));
+        props.insert(QStringLiteral("dy_um"), num(QStringLiteral("Translate Y [µm]")));
+        props.insert(QStringLiteral("cell"),
+                     str(QStringLiteral("Optional top cell name (default: current UI top cell)")));
+        props.insert(QStringLiteral("gds"),
+                     str(QStringLiteral("Optional GDS path (default: Main tab GDS)")));
+        schema.insert(QStringLiteral("properties"), props);
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("modify_gds"),
+            QStringLiteral("Modify the current GDS via KLayout batch (creates .gds.bak once, "
+                           "then overwrites). Prefer diameter_delta_um + current_diameter_um "
+                           "(e.g. d=88, delta=+2 → scale 90/88), or explicit scale. "
+                           "Uniform XY scale about cell centre — good for inductor size tweaks; "
+                           "not a full parametric PDK redesign. Reloads layout in EMStudio."),
+            schema,
+            [this](const QJsonObject &args) { return modifyGdsViaKlayout(args); });
     }
 }
 
@@ -5427,6 +5690,204 @@ QString MainWindow::resolveKlayoutShowGdsScript() const
 {
     const QString appLoc = QCoreApplication::applicationDirPath();
     return QDir(appLoc).filePath(QStringLiteral("scripts/klayout_show_gds.rb"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Absolute path to the KLayout batch GDS modify script next to the app.
+ **********************************************************************************************************************/
+QString MainWindow::resolveKlayoutModifyGdsScript() const
+{
+    const QString appLoc = QCoreApplication::applicationDirPath();
+    const QString nextToApp = QDir(appLoc).filePath(QStringLiteral("scripts/klayout_modify_gds.py"));
+    if (QFileInfo::exists(nextToApp))
+        return nextToApp;
+    // Dev tree: <repo>/build/../scripts
+    const QString fromBuild = QDir(appLoc).absoluteFilePath(
+        QStringLiteral("../scripts/klayout_modify_gds.py"));
+    if (QFileInfo::exists(fromBuild))
+        return QFileInfo(fromBuild).absoluteFilePath();
+    return nextToApp;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Resolves a real klayout binary for batch -b (unwraps .bat launchers when possible).
+ **********************************************************************************************************************/
+QString MainWindow::resolveKlayoutBatchExe() const
+{
+    const QString raw = m_preferences.value(QStringLiteral("KLAYOUT_EXE")).toString();
+    const QString configured = parseKlayoutExeOnly(raw);
+    if (configured.isEmpty())
+        return {};
+
+    const QFileInfo fi(configured);
+    const QString suffix = fi.suffix().toLower();
+    const bool isLauncher = (suffix == QLatin1String("bat") || suffix == QLatin1String("cmd")
+                             || suffix == QLatin1String("sh"));
+    auto existsExe = [](const QString &p) {
+        return !p.isEmpty() && QFileInfo::exists(p) && QFileInfo(p).isFile();
+    };
+    if (!isLauncher && existsExe(configured))
+        return configured;
+
+    const QStringList names = {
+        QStringLiteral("klayout_app.exe"),
+        QStringLiteral("klayout.exe"),
+        QStringLiteral("klayout"),
+    };
+    if (isLauncher) {
+        const QDir dir = fi.dir();
+        for (const QString &n : names) {
+            const QString cand = dir.filePath(n);
+            if (existsExe(cand))
+                return cand;
+        }
+    }
+#ifdef Q_OS_WIN
+    const QStringList fallbacks = {
+        qEnvironmentVariable("APPDATA") + QStringLiteral("/KLayout/klayout_app.exe"),
+        qEnvironmentVariable("LOCALAPPDATA") + QStringLiteral("/KLayout/klayout_app.exe"),
+        qEnvironmentVariable("ProgramFiles") + QStringLiteral("/KLayout/klayout_app.exe"),
+    };
+    for (const QString &p : fallbacks) {
+        if (existsExe(p))
+            return p;
+    }
+#endif
+    const QString pathHit = QStandardPaths::findExecutable(QStringLiteral("klayout"));
+    if (existsExe(pathHit))
+        return pathHit;
+    return configured; // last resort (may be .bat)
+}
+
+/*!*******************************************************************************************************************
+ * \brief Runs \c klayout_modify_gds.py in KLayout batch mode and reloads the GDS.
+ **********************************************************************************************************************/
+QJsonObject MainWindow::modifyGdsViaKlayout(const QJsonObject &args)
+{
+    QJsonObject out;
+    QString gds = args.value(QStringLiteral("gds")).toString().trimmed();
+    if (gds.isEmpty() && m_ui)
+        gds = m_ui->txtGdsFile->text().trimmed();
+    if (gds.isEmpty() || !QFileInfo::exists(gds)) {
+        out.insert(QStringLiteral("ok"), false);
+        out.insert(QStringLiteral("error"),
+                   QStringLiteral("GDS not set or missing — load_model / set_layout first"));
+        return out;
+    }
+
+    QString cell = args.value(QStringLiteral("cell")).toString().trimmed();
+    if (cell.isEmpty() && m_ui)
+        cell = m_ui->cbxTopCell->currentText().trimmed();
+
+    const QString script = resolveKlayoutModifyGdsScript();
+    if (!QFileInfo::exists(script)) {
+        out.insert(QStringLiteral("ok"), false);
+        out.insert(QStringLiteral("error"),
+                   QStringLiteral("Missing scripts/klayout_modify_gds.py next to EMStudio"));
+        return out;
+    }
+
+    const QString klayout = resolveKlayoutBatchExe();
+    if (klayout.isEmpty() || !QFileInfo::exists(klayout)) {
+        out.insert(QStringLiteral("ok"), false);
+        out.insert(QStringLiteral("error"),
+                   QStringLiteral("KLayout not found — set Preferences → KLAYOUT_EXE"));
+        return out;
+    }
+
+    const bool hasScale = args.contains(QStringLiteral("scale"));
+    const bool hasDiam = args.contains(QStringLiteral("current_diameter_um"))
+            && args.contains(QStringLiteral("diameter_delta_um"));
+    const bool hasShift = args.contains(QStringLiteral("dx_um"))
+            || args.contains(QStringLiteral("dy_um"));
+    if (!hasScale && !hasDiam && !hasShift) {
+        out.insert(QStringLiteral("ok"), false);
+        out.insert(QStringLiteral("error"),
+                   QStringLiteral("Need scale, or current_diameter_um+diameter_delta_um, or dx_um/dy_um"));
+        return out;
+    }
+
+    QStringList rd;
+    rd << QStringLiteral("-rd") << QStringLiteral("input=%1").arg(QDir::toNativeSeparators(gds));
+    if (!cell.isEmpty())
+        rd << QStringLiteral("-rd") << QStringLiteral("cell=%1").arg(cell);
+    if (hasScale)
+        rd << QStringLiteral("-rd")
+           << QStringLiteral("scale=%1").arg(args.value(QStringLiteral("scale")).toDouble(), 0, 'g', 12);
+    if (hasDiam) {
+        rd << QStringLiteral("-rd")
+           << QStringLiteral("current_diameter_um=%1")
+                  .arg(args.value(QStringLiteral("current_diameter_um")).toDouble(), 0, 'g', 12);
+        rd << QStringLiteral("-rd")
+           << QStringLiteral("diameter_delta_um=%1")
+                  .arg(args.value(QStringLiteral("diameter_delta_um")).toDouble(), 0, 'g', 12);
+    }
+    if (args.contains(QStringLiteral("dx_um")))
+        rd << QStringLiteral("-rd")
+           << QStringLiteral("dx_um=%1").arg(args.value(QStringLiteral("dx_um")).toDouble(), 0, 'g', 12);
+    if (args.contains(QStringLiteral("dy_um")))
+        rd << QStringLiteral("-rd")
+           << QStringLiteral("dy_um=%1").arg(args.value(QStringLiteral("dy_um")).toDouble(), 0, 'g', 12);
+    rd << QStringLiteral("-rd") << QStringLiteral("flatten=1");
+
+    QStringList argsKl;
+    argsKl << QStringLiteral("-b")
+           << QStringLiteral("-r") << QDir::toNativeSeparators(script)
+           << rd;
+
+    QProcess proc;
+    proc.setProgram(klayout);
+    proc.setArguments(argsKl);
+    proc.setWorkingDirectory(QFileInfo(gds).absolutePath());
+    proc.setProcessChannelMode(QProcess::MergedChannels);
+    proc.start();
+    if (!proc.waitForStarted(8000)) {
+        out.insert(QStringLiteral("ok"), false);
+        out.insert(QStringLiteral("error"),
+                   QStringLiteral("Failed to start KLayout batch:\n%1").arg(klayout));
+        return out;
+    }
+    // Geometry scripts are usually fast; avoid hanging the UI forever.
+    if (!proc.waitForFinished(120000)) {
+        proc.kill();
+        proc.waitForFinished(2000);
+        out.insert(QStringLiteral("ok"), false);
+        out.insert(QStringLiteral("error"), QStringLiteral("KLayout modify timed out (120s)"));
+        return out;
+    }
+
+    const QString log = QString::fromUtf8(proc.readAll()).trimmed();
+    const int code = proc.exitCode();
+    const QString bak = gds + QStringLiteral(".bak");
+    if (code != 0 || !log.contains(QLatin1String("OK:"))) {
+        out.insert(QStringLiteral("ok"), false);
+        out.insert(QStringLiteral("error"),
+                   log.isEmpty() ? QStringLiteral("KLayout modify failed (exit %1)").arg(code)
+                                 : log.right(800));
+        out.insert(QStringLiteral("exit_code"), code);
+        return out;
+    }
+
+    // Reload into EMStudio layout preview
+    setGdsFile(gds);
+    m_simSettings[QStringLiteral("GdsFile")] = gds;
+    if (!cell.isEmpty()) {
+        m_simSettings[QStringLiteral("TopCell")] = cell;
+        setTopCell(cell);
+    }
+    refreshLayoutPreview();
+    updateSubLayerNamesCheckboxState();
+    setStateChanged();
+
+    out.insert(QStringLiteral("ok"), true);
+    out.insert(QStringLiteral("gds"), gds);
+    out.insert(QStringLiteral("bak"), QFileInfo::exists(bak) ? bak : QString());
+    out.insert(QStringLiteral("cell"), cell);
+    out.insert(QStringLiteral("log"), log.right(600));
+    out.insert(QStringLiteral("note"),
+               QStringLiteral("Uniform XY scale about bbox centre (after flatten). "
+                              "Original kept as .gds.bak if it did not already exist."));
+    return out;
 }
 
 /*!*******************************************************************************************************************

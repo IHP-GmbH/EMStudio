@@ -29,6 +29,7 @@
 #include <QPointer>
 #include <QMainWindow>
 #include <QProcess>
+#include <QJsonObject>
 
 #include "pythonparser.h"
 #include "sanitycheck.h"
@@ -503,6 +504,9 @@ private:
     QString                         fromWslPath(const QString &wslPath) const;
     QString                         resolveModelTemplatePath(const QString &templateFile) const;
     QString                         resolveKlayoutShowGdsScript() const;
+    QString                         resolveKlayoutModifyGdsScript() const;
+    QString                         resolveKlayoutBatchExe() const;
+    QJsonObject                     modifyGdsViaKlayout(const QJsonObject &args);
     QString                         parseKlayoutExeOnly(const QString &raw) const;
     QStringList                     parseKlayoutUserArgs(const QString &raw) const;
     QStringList                     extractLegacyKlayoutArgsFromExeField(const QString &raw) const;

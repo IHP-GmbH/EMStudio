@@ -106,6 +106,8 @@ private:
     static bool isJunkLine(const QString &line);
     static QString shorten(const QString &s, int maxLen = 64);
     static bool looksLinuxPath(const QString &path);
+    /*! True only on Windows when \a path is a Linux/WSL path (probe via wsl.exe). */
+    static bool probeViaWsl(const QString &path);
     static QString cleanExe(QString path);
     static QString resolveKlayoutExe(const QString &configured);
     static QString findCurl();

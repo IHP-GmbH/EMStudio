@@ -99,6 +99,19 @@ bool AboutDialog::looksLinuxPath(const QString &path)
 }
 
 /*!*******************************************************************************************************************
+ * \brief Whether a version probe must go through wsl.exe (Windows host + Linux path only).
+ **********************************************************************************************************************/
+bool AboutDialog::probeViaWsl(const QString &path)
+{
+#ifdef Q_OS_WIN
+    return looksLinuxPath(path);
+#else
+    Q_UNUSED(path);
+    return false;
+#endif
+}
+
+/*!*******************************************************************************************************************
  * \brief Resolves a KLayout launcher (.bat/.cmd) to klayout_app.exe when possible.
  **********************************************************************************************************************/
 QString AboutDialog::resolveKlayoutExe(const QString &configured)
@@ -266,7 +279,7 @@ void AboutDialog::buildToolRows()
                         ProbeKind::ExeVersion,
                         exe,
                         {},
-                        looksLinuxPath(exe),
+                        probeViaWsl(exe),
                         LatestKind::Github,
                         QStringLiteral("KLayout/klayout"));
             m_tools.last().valueLabel->setToolTip(
@@ -299,14 +312,14 @@ void AboutDialog::buildToolRows()
                 palaceExe = nixExe;
             } else {
                 palaceExe = nixExe;
-                viaWsl = looksLinuxPath(nixExe);
+                viaWsl = probeViaWsl(nixExe);
             }
 #else
             palaceExe = QDir(install).filePath(QStringLiteral("bin/palace"));
 #endif
         } else if (!script.isEmpty()) {
             palaceExe = script;
-            viaWsl = looksLinuxPath(script);
+            viaWsl = probeViaWsl(script);
         }
 
         if (palaceExe.isEmpty())
@@ -332,7 +345,7 @@ void AboutDialog::buildToolRows()
                         ProbeKind::ExeVersion,
                         solver,
                         {},
-                        looksLinuxPath(solver),
+                        probeViaWsl(solver),
                         LatestKind::Github,
                         QStringLiteral("ElmerCSC/elmerfem"));
 
@@ -348,7 +361,7 @@ void AboutDialog::buildToolRows()
                         ProbeKind::ExeVersion,
                         grid,
                         {},
-                        looksLinuxPath(grid),
+                        probeViaWsl(grid),
                         LatestKind::Github,
                         QStringLiteral("ElmerCSC/elmerfem"));
         }
@@ -364,7 +377,7 @@ void AboutDialog::buildToolRows()
                     ProbeKind::PythonVersion,
                     py,
                     {},
-                    looksLinuxPath(py),
+                    probeViaWsl(py),
                     LatestKind::PythonEol);
         return py;
     };
@@ -388,7 +401,7 @@ void AboutDialog::buildToolRows()
                     ProbeKind::PythonModule,
                     gdsPy,
                     QStringLiteral("gds2palace"),
-                    looksLinuxPath(gdsPy),
+                    probeViaWsl(gdsPy),
                     LatestKind::Pypi,
                     QStringLiteral("gds2palace"));
         m_tools.last().valueLabel->setToolTip(
@@ -417,7 +430,7 @@ void AboutDialog::buildToolRows()
                     ProbeKind::PythonModule,
                     snpPy,
                     QStringLiteral("snp2le"),
-                    looksLinuxPath(snpPy),
+                    probeViaWsl(snpPy),
                     LatestKind::Pypi,
                     QStringLiteral("snp2le"));
         m_tools.last().valueLabel->setToolTip(

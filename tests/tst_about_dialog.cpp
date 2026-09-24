@@ -73,7 +73,8 @@ void AboutDialogTest::initUi_setsExpectedLabels()
 {
     QCoreApplication::setApplicationVersion(QStringLiteral(EMSTUDIO_VERSION_STR));
 
-    AboutDialog dlg(QMap<QString, QVariant>());
+    const QMap<QString, QVariant> prefs;
+    AboutDialog dlg(prefs);
 
     QLabel* lblVersion = findLabel(&dlg, "lblVersion");
     QLabel* lblQt      = findLabel(&dlg, "lblQt");

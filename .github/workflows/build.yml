@@ -251,7 +251,8 @@ jobs:
       - name: Install test deps (gcovr + xvfb + gds2palace)
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb
+          # libGLU: gmsh (pulled in by gds2palace) needs it for CDLL load on import
+          sudo apt-get install -y xvfb libglu1-mesa
           python3 -m pip install --upgrade pip
           python3 -m pip install gcovr
           # About Linux probe golden (no OpenEMS/Palace); pin for stable version text.

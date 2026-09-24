@@ -18,6 +18,9 @@
 
 #include "about.h"
 
+#include <QMap>
+#include <QVariant>
+
 /*!*******************************************************************************************************************
  * \brief Returns a QLabel child of the given widget by object name.
  *

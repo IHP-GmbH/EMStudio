@@ -6,12 +6,13 @@
 #   python -m pip install -U -r requirements-python.txt
 #
 # Latest checked on PyPI:
-#   gds2palace 0.4.1  |  setupEM 0.5.1  |  gdspy 1.6.13  |  gmsh 4.15.x
+#   gds2palace 0.5.2  |  setupEM 0.5.1  |  gdspy 1.6.13  |  gmsh 4.15.x
 #   scikit-rf 2.1.0   |  numpy 2.x
+# Note: gds2palace 0.4.1+ needs Python >= 3.12 (f-string quote nesting).
 
 # --- Palace / Elmer (gds2palace) ---------------------------------------------
 # Pulls gdspy and gmsh as dependencies; pin floor matches Volker's pyproject.
-gds2palace>=0.4.1
+gds2palace>=0.5.2
 gdspy>1.6.0
 gmsh
 

@@ -1,0 +1,48 @@
+### SECTION probeViaWsl_windows
+=== probeViaWsl ===
+host=windows
+/usr/bin/python3	viaWsl=true
+~/venv/bin/python	viaWsl=true
+C:/Python311/python.exe	viaWsl=false
+python.exe	viaWsl=false
+D:/Tools/klayout.exe	viaWsl=false
+
+### SECTION probeViaWsl_linux
+=== probeViaWsl ===
+host=linux
+/usr/bin/python3	viaWsl=false
+~/venv/bin/python	viaWsl=false
+C:/Python311/python.exe	viaWsl=false
+python.exe	viaWsl=false
+D:/Tools/klayout.exe	viaWsl=false
+
+### SECTION tool_plan_windows
+=== tool_probe_plan ===
+KLayout	static	not set
+Palace	static	not set
+ElmerSolver	static	not set
+ElmerGrid	static	not set
+OpenEMS Python	static	not set
+Palace Python	python	viaWsl=true	program=/usr/bin/python3
+Elmer Python	static	not set
+Field Viewer Python	static	not set
+gds2palace	module:gds2palace	viaWsl=true	program=/usr/bin/python3
+snp2le	module:snp2le	viaWsl=true	program=/usr/bin/python3
+WSL distro	static	default / not set
+
+### SECTION tool_plan_linux
+=== tool_probe_plan ===
+KLayout	static	not set
+Palace	static	not set
+ElmerSolver	static	not set
+ElmerGrid	static	not set
+OpenEMS Python	static	not set
+Palace Python	python	viaWsl=false	program=/usr/bin/python3
+Elmer Python	static	not set
+Field Viewer Python	static	not set
+gds2palace	module:gds2palace	viaWsl=false	program=/usr/bin/python3
+snp2le	module:snp2le	viaWsl=false	program=/usr/bin/python3
+
+### SECTION live_gds2palace_linux
+=== tools_status ===
+gds2palace	0.5.2

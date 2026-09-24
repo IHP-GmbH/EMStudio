@@ -23,6 +23,8 @@
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFileInfo>
 #include <QLabel>
 #include <QProcess>
@@ -1001,3 +1003,92 @@ void AboutDialog::finishCurrent(const QString &text)
     m_awaitingLatest = false;
     QTimer::singleShot(0, this, &AboutDialog::runNextProbe);
 }
+
+#ifdef EMSTUDIO_TESTING
+/*!*******************************************************************************************************************
+ * \brief Fixed path matrix showing when About will route probes through wsl.exe.
+ **********************************************************************************************************************/
+QString AboutDialog::testProbeViaWslReport()
+{
+    const QStringList paths = {
+        QStringLiteral("/usr/bin/python3"),
+        QStringLiteral("~/venv/bin/python"),
+        QStringLiteral("C:/Python311/python.exe"),
+        QStringLiteral("python.exe"),
+        QStringLiteral("D:/Tools/klayout.exe"),
+    };
+
+    QStringList lines;
+    lines << QStringLiteral("=== probeViaWsl ===");
+#ifdef Q_OS_WIN
+    lines << QStringLiteral("host=windows");
+#else
+    lines << QStringLiteral("host=linux");
+#endif
+    for (const QString &p : paths) {
+        lines << QStringLiteral("%1\tviaWsl=%2")
+                     .arg(p, probeViaWsl(p) ? QStringLiteral("true")
+                                            : QStringLiteral("false"));
+    }
+    return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+}
+
+/*!*******************************************************************************************************************
+ * \brief Dumps tool probe plan (name, kind, viaWsl, program) for golden comparison.
+ **********************************************************************************************************************/
+QString AboutDialog::testToolProbePlanReport() const
+{
+    QStringList lines;
+    lines << QStringLiteral("=== tool_probe_plan ===");
+    for (const ToolRow &t : m_tools) {
+        if (t.skipProbe) {
+            const QString val = t.valueLabel ? t.valueLabel->text() : QString();
+            lines << QStringLiteral("%1\tstatic\t%2").arg(t.name, val);
+            continue;
+        }
+        QString kind = QStringLiteral("exe");
+        if (t.kind == ProbeKind::PythonVersion)
+            kind = QStringLiteral("python");
+        else if (t.kind == ProbeKind::PythonModule)
+            kind = QStringLiteral("module:%1").arg(t.module);
+        lines << QStringLiteral("%1\t%2\tviaWsl=%3\tprogram=%4")
+                     .arg(t.name,
+                          kind,
+                          t.viaWsl ? QStringLiteral("true") : QStringLiteral("false"),
+                          t.program);
+    }
+    return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+}
+
+/*!*******************************************************************************************************************
+ * \brief Waits until the async probe queue is idle.
+ **********************************************************************************************************************/
+bool AboutDialog::testWaitForProbesIdle(int timeoutMs)
+{
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        if (!m_proc && !m_awaitingLatest && m_probeIndex >= m_tools.size())
+            return true;
+        QEventLoop loop;
+        QTimer::singleShot(20, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
+    return !m_proc && !m_awaitingLatest && m_probeIndex >= m_tools.size();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Current External-tools label values (after probes).
+ **********************************************************************************************************************/
+QString AboutDialog::testToolsStatusReport() const
+{
+    QStringList lines;
+    lines << QStringLiteral("=== tools_status ===");
+    for (const ToolRow &t : m_tools) {
+        const QString val = t.valueLabel ? t.valueLabel->text() : QString();
+        lines << QStringLiteral("%1\t%2").arg(t.name, val);
+    }
+    return lines.join(QLatin1Char('\n')) + QLatin1Char('\n');
+}
+#endif // EMSTUDIO_TESTING

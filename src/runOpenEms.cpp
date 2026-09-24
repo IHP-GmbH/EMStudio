@@ -110,6 +110,17 @@ void MainWindow::runOpenEMS(bool interactive)
         env.insert(QStringLiteral("PYTHONPATH"), origScriptPath);
     }
 
+    // openEMS.exe + DLLs live in OPENEMS_INSTALL_PATH; ensure they are on PATH.
+    const QString openemsInstall =
+        m_preferences.value(QStringLiteral("OPENEMS_INSTALL_PATH")).toString().trimmed();
+    if (!openemsInstall.isEmpty() && QDir(openemsInstall).exists()) {
+        const QString currentPath = env.value(QStringLiteral("PATH"));
+        if (!currentPath.contains(openemsInstall, Qt::CaseInsensitive)) {
+            env.insert(QStringLiteral("PATH"),
+                       QDir::toNativeSeparators(openemsInstall) + pathSep + currentPath);
+        }
+    }
+
     env.remove(QStringLiteral("PYTHONHOME"));
 
     m_simProcess->setProcessEnvironment(env);

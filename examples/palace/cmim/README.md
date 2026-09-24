@@ -23,6 +23,7 @@ Stackup is the **Palace** file
 | `palace_cmim_tm1fix.py` | Same ports/settings; uses `cmim_2u3_tm1fix.gds` |
 | `palace_cmim_open.py` | Open fixture model (`cmim_2u3_open.gds`) for Y-de-embed |
 | `palace_cmim_open_tm1fix.py` | Open fixture for TM1 1.64 (`cmim_2u3_open_tm1fix.gds`) |
+| `openems_cmim_tm1fix.py` | Same GDS/ports for **openEMS** (`SG13G2_200um_openems.xml`) |
 | `_build_leads_gds.py` | Regenerates flat / tm1fix / open GDS from `cmim_orig.gds` |
 
 ## Device
@@ -97,3 +98,11 @@ To compare against the openEMS equivalent MIM, point `XML_filename` at
 
 **Note:** if meshing fails or memory blows up with a finer mesh, stay on `0.15` or use
 `SG13G2_200um_openems.xml`.
+
+## openEMS twin
+
+`openems_cmim_tm1fix.py` uses the same GDS and via ports as `palace_cmim_tm1fix.py`,
+but the openEMS stackup and FDTD workflow. Place Volker’s
+[openems_ihp_sg13g2](https://github.com/VolkerMuehlhaus/openems_ihp_sg13g2)
+`workflow/modules` next to the script (folder name `modules`), select **OpenEMS**
+in EMStudio, and use a Python that has `openEMS` (Windows wheels: 3.10 / 3.11).

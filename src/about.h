@@ -120,6 +120,18 @@ private:
     QProcess *m_proc = nullptr;
     QStringList m_versionFlags;
     bool m_awaitingLatest = false;
+
+#ifdef EMSTUDIO_TESTING
+public:
+    /*! Deterministic viaWsl matrix for golden comparison (Windows vs Linux host). */
+    static QString testProbeViaWslReport();
+    /*! Snapshot of tool rows right after construction (before/while probes run). */
+    QString testToolProbePlanReport() const;
+    /*! Process events until all version probes (and optional latest checks) finish. */
+    bool testWaitForProbesIdle(int timeoutMs = 45000);
+    /*! name\\tvalue lines from the External tools form after probes settle. */
+    QString testToolsStatusReport() const;
+#endif
 };
 
 #endif // ABOUTDIALOG_H

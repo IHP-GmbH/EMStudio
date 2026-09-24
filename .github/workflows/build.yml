@@ -248,12 +248,14 @@ jobs:
           arch: 'gcc_64'
           modules: 'qtcharts'
 
-      - name: Install test deps (gcovr + xvfb)
+      - name: Install test deps (gcovr + xvfb + gds2palace)
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb
           python3 -m pip install --upgrade pip
           python3 -m pip install gcovr
+          # About Linux probe golden (no OpenEMS/Palace); pin for stable version text.
+          python3 -m pip install "gds2palace==0.5.2"
 
       - name: Configure tests (qmake)
         run: |
@@ -281,6 +283,7 @@ jobs:
       - name: Run tests (headless Qt)
         run: |
           cd build-tests
+          export EMSTUDIO_TEST_PYTHON="$(command -v python3)"
           xvfb-run -a ./emstudio_golden_tests -platform offscreen
 
       - name: Test Linux bundle launcher (EMStudio → EMStudio.bin)

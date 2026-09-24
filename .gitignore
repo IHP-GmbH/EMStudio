@@ -32,6 +32,9 @@ ui_*.h
 *.tmp
 *.cache
 
+# Local openEMS workflow modules (junction/copy next to example scripts)
+examples/palace/cmim/modules/
+
 # --- Doxygen output (if generated into docs/) ---
 docs/html/
 docs/latex/

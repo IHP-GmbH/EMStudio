@@ -21,6 +21,9 @@ class AboutDialogTest : public QObject
 
 private slots:
     void initUi_setsExpectedLabels();
+    void linuxProbe_viaWslContract_matchesGolden();
+    void linuxProbe_toolPlan_matchesGolden();
+    void linuxProbe_liveGds2palace_matchesGolden();
 };
 
 #endif // TST_ABOUT_DIALOG_H

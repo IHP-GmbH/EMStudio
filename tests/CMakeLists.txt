@@ -77,6 +77,11 @@ target_link_libraries(emstudio_golden_tests PRIVATE
     Qt5::Widgets
     Qt5::Xml
     Qt5::Charts
+    Qt5::Network
 )
+
+if(WIN32)
+    target_link_libraries(emstudio_golden_tests PRIVATE crypt32)
+endif()
 
 add_test(NAME EMStudioGoldenTests COMMAND emstudio_golden_tests)

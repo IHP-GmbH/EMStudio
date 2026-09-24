@@ -40,10 +40,15 @@ class QComboBox;
 class QTableWidget;
 class QTimer;
 class QFrame;
+class QAction;
 class QtProperty;
 class QListWidgetItem;
 class QtVariantProperty;
 class ResultsViewer;
+class AssistantChatPanel;
+class AssistantMcp;
+class AssistantAgent;
+class QDockWidget;
 class QtTreePropertyBrowser;
 class QtVariantEditorFactory;
 class QtVariantPropertyManager;
@@ -570,6 +575,9 @@ private:
 #endif
 
     void                            setupWindowMenuDocks();
+    void                            setupAssistantChatDock();
+    void                            registerAssistantMcpTools();
+    void                            configureAssistantAgent();
 
     void                            refreshSimToolOptions();
     bool                            pathLooksValid(const QString &path, const QString &relativeExe = QString()) const;
@@ -603,6 +611,11 @@ private:
     bool                            m_stackupHasOverridableVars = false;
     QPointer<class StackupEditor>   m_stackupEditor;
     ResultsViewer                  *m_resultsViewer = nullptr;
+    QDockWidget                    *m_assistantDock = nullptr;
+    AssistantChatPanel             *m_assistantChat = nullptr;
+    AssistantMcp                   *m_assistantMcp = nullptr;
+    AssistantAgent                 *m_assistantAgent = nullptr;
+    QAction                        *m_actionAssistant = nullptr;
     QTableWidget                   *m_tblThermalObjects = nullptr;
     class LayoutLayerPanel         *m_layoutLayerPanel = nullptr;
     QTimer                         *m_fieldSliceDebounce = nullptr;
@@ -612,6 +625,7 @@ private:
     bool                            m_fieldExportBusy = false;
     bool                            m_fieldPreferAutoZ = true;
     bool                            m_fieldRefreshForce = false;
+    bool                            m_fieldExportRestartPending = false;
     int                             m_fieldExportToken = 0;
     QString                         m_fieldLastDumpPath;
     QString                         m_fieldExportOutDir;

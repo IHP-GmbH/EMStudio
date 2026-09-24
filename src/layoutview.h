@@ -8,6 +8,14 @@
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation, either version 3 of the License, or
  *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
 #ifndef LAYOUTVIEW_H
@@ -198,8 +206,12 @@ public:
     bool                        fieldLogScale() const;
     /*! True when the Field panel Arrows checkbox is checked. */
     bool                        fieldShowArrows() const;
-    /*! True when the Field panel Temp checkbox is checked (click-probe visible). */
+    /*! True when the Field panel Probe/Temp checkbox is checked (click-probe). */
     bool                        fieldShowTemp() const;
+    /*!*******************************************************************************************************************
+     * \brief Relabels the probe checkbox: \c Temp for Elmer Thermal, \c Probe for EM Field.
+     **********************************************************************************************************************/
+    void                        setFieldProbeThermal(bool thermal);
     /*!*******************************************************************************************************************
      * \brief GDS µm Y-up bounding box of non-port layout polygons (for field crop).
      *

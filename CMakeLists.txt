@@ -36,7 +36,7 @@ if(NOT Qt5_DIR)
     set(Qt5_DIR "C:/Qt/5.15.2/mingw81_64/lib/cmake/Qt5")
 endif()
 
-find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Xml Charts)
+find_package(Qt5 REQUIRED COMPONENTS Core Gui Widgets Xml Charts Network)
 
 # -----------------------------------------------------------------------------
 # Versioning (как в .pro)
@@ -153,6 +153,10 @@ set(SOURCES
     src/xmlreader.cpp
     src/touchstone.cpp
     src/smithchartwidget.cpp
+    src/assistantchatpanel.cpp
+    src/assistantmcp.cpp
+    src/assistantagent.cpp
+    src/securestore.cpp
     src/resultsviewer.cpp
 )
 
@@ -199,6 +203,10 @@ set(HEADERS
     src/stackupeditor.h
     src/touchstone.h
     src/smithchartwidget.h
+    src/assistantchatpanel.h
+    src/assistantmcp.h
+    src/assistantagent.h
+    src/securestore.h
     src/resultsviewer.h
 )
 
@@ -243,7 +251,12 @@ target_link_libraries(EMStudio PRIVATE
     Qt5::Widgets
     Qt5::Xml
     Qt5::Charts
+    Qt5::Network
 )
+
+if(WIN32)
+    target_link_libraries(EMStudio PRIVATE crypt32)
+endif()
 
 # -----------------------------------------------------------------------------
 # Post-build copy (как в qmake)

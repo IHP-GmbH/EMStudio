@@ -67,6 +67,22 @@ public:
     void                            setPreferredPythonPreferenceKey(const QString &prefKey);
     QString                         preferredPythonPreferenceKey() const;
 
+    /*!*******************************************************************************************************************
+     * \brief Shows the calculator, auto-selects \$1 if needed, evaluates \a expression, updates the Result pane.
+     *
+     * \param expression RF calculator expression or shorthand (e.g. \c S21 → \c db(S21,$1)).
+     * \param frequencyGHz Optional default frequency; &lt;= 0 keeps the spinbox value.
+     **********************************************************************************************************************/
+    struct RfEvalResult {
+        bool        ok = false;
+        double      value = 0.0;
+        QString     expression;
+        QString     resultText;
+        QString     error;
+        QStringList selectedLabels;
+    };
+    RfEvalResult                    evaluateRf(const QString &expression, double frequencyGHz = -1.0);
+
 #ifdef EMSTUDIO_TESTING
     QString                         testResolveHostPython() const { return resolveHostPython(); }
     QStringList                     testHostPythonCandidates() const { return hostPythonCandidates(); }

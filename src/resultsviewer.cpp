@@ -1879,3 +1879,97 @@ void ResultsViewer::drawSmith(const QVector<PlottedTrace> &plotted,
 
     m_plotHostLayout->addWidget(row, 1);
 }
+
+namespace {
+
+/*!*******************************************************************************************************************
+ * \brief Maps shorthand like \c S21 / \c delay to a full calculator expression.
+ **********************************************************************************************************************/
+QString normalizeRfExpression(QString raw)
+{
+    raw = raw.trimmed();
+    if (raw.isEmpty())
+        return QStringLiteral("db(S21,$1)");
+
+    if (raw.contains(QLatin1Char('(')))
+        return raw;
+
+    QRegularExpression reS(
+        QStringLiteral(R"(^(?:db\s+)?S\s*([1-9])\s*([1-9])$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch mS = reS.match(raw);
+    if (mS.hasMatch())
+        return QStringLiteral("db(S%1%2,$1)").arg(mS.captured(1), mS.captured(2));
+
+    QRegularExpression rePh(
+        QStringLiteral(R"(^ph(?:ase)?\s*\(?\s*S\s*([1-9])\s*([1-9])\s*\)?$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch mPh = rePh.match(raw);
+    if (mPh.hasMatch())
+        return QStringLiteral("ph(S%1%2,$1)").arg(mPh.captured(1), mPh.captured(2));
+
+    const QString low = raw.toLower();
+    if (low == QLatin1String("delay") || low == QLatin1String("cser")
+        || low == QLatin1String("csh1") || low == QLatin1String("csh2")
+        || low == QLatin1String("lser") || low == QLatin1String("rser")
+        || low == QLatin1String("q") || low == QLatin1String("qser")) {
+        const QString fn = (low == QLatin1String("qser")) ? QStringLiteral("q") : low;
+        return QStringLiteral("%1($1)").arg(fn);
+    }
+
+    return raw;
+}
+
+} // namespace
+
+/*!*******************************************************************************************************************
+ * \brief Shows calculator, ensures $1 is selected, evaluates, and fills the Result pane.
+ **********************************************************************************************************************/
+ResultsViewer::RfEvalResult ResultsViewer::evaluateRf(const QString &expression, double frequencyGHz)
+{
+    RfEvalResult r;
+    if (!m_calcPanel) {
+        r.error = tr("Calculator panel is not available.");
+        return r;
+    }
+
+    if (m_calcToggleBtn && !m_calcToggleBtn->isChecked())
+        m_calcToggleBtn->setChecked(true);
+    else {
+        m_calcPanel->setVisible(true);
+        syncCalculatorTraces();
+    }
+
+    const QVector<PlottedTrace> plotted = getCheckedPlotted();
+    if (plotted.isEmpty()) {
+        r.error = tr("No Touchstone curves plotted — check a file and at least one S-parameter on Results.");
+        return r;
+    }
+
+    if (m_calcSelectedPaths.isEmpty()) {
+        m_calcSelectedPaths.append(plotted.first().path);
+        refreshCalcSelectionUi();
+    } else {
+        syncCalculatorTraces();
+    }
+
+    r.expression = normalizeRfExpression(expression);
+    QString resultText;
+    QString err;
+    double value = 0;
+    const bool ok = m_calcPanel->runExpression(r.expression, frequencyGHz, &value, &resultText, &err);
+    r.ok = ok;
+    r.value = value;
+    r.resultText = resultText;
+    r.error = err;
+
+    for (const QString &path : m_calcSelectedPaths) {
+        for (const PlottedTrace &t : plotted) {
+            if (t.path == path) {
+                r.selectedLabels.append(t.label);
+                break;
+            }
+        }
+    }
+    return r;
+}

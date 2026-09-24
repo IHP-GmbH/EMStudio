@@ -103,11 +103,31 @@
     </layout>
    </item>
 
+   <!-- External tools (filled at runtime; versions load async) -->
+   <item>
+    <widget class="QGroupBox" name="toolsGroup">
+     <property name="title">
+      <string>External tools</string>
+     </property>
+     <layout class="QFormLayout" name="toolsForm">
+      <property name="labelAlignment">
+       <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+      </property>
+      <property name="horizontalSpacing">
+       <number>12</number>
+      </property>
+      <property name="verticalSpacing">
+       <number>4</number>
+      </property>
+     </layout>
+    </widget>
+   </item>
+
    <!-- Footer -->
    <item>
     <widget class="QLabel" name="lblCopyright">
      <property name="text">
-      <string>© 2023–2025 IHP Authors</string>
+      <string>© 2023–2026 IHP Authors</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>

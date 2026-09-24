@@ -22,6 +22,13 @@
 #define ABOUTDIALOG_H
 
 #include <QDialog>
+#include <QMap>
+#include <QProcess>
+#include <QString>
+#include <QVariant>
+#include <QVector>
+
+class QLabel;
 
 namespace Ui {
 class AboutDialog;
@@ -29,30 +36,88 @@ class AboutDialog;
 
 /*!*******************************************************************************************************************
  * \class AboutDialog
- * \brief Modal dialog displaying information about EMStudio.
+ * \brief Modal About dialog with EMStudio metadata and async external-tool versions.
  *
- * The AboutDialog presents application metadata such as:
- *  - application name and version,
- *  - Qt runtime version,
- *  - build type and timestamp,
- *  - license and project information.
- *
- * The dialog is implemented using a Qt Designer (.ui) file and is shown
- * modally from the Help → About EMStudio menu action.
+ * Tool rows show “(loading…)” immediately; versions are probed in the background.
+ * Where possible, installed versions are compared to upstream latest (PyPI / GitHub / endoflife.date).
  **********************************************************************************************************************/
 class AboutDialog : public QDialog
 {
     Q_OBJECT
 
 public:
-    explicit AboutDialog(QWidget *parent = nullptr);
-    ~AboutDialog();
+    explicit AboutDialog(const QMap<QString, QVariant> &preferences,
+                         QWidget *parent = nullptr);
+    ~AboutDialog() override;
+
+private slots:
+    void onProbeFinished(int exitCode, QProcess::ExitStatus exitStatus);
+    void onLatestFinished(int exitCode, QProcess::ExitStatus exitStatus);
 
 private:
-    void                initUi();
+    enum class ProbeKind {
+        ExeVersion,
+        PythonVersion,
+        PythonModule
+    };
 
-private:
-    Ui::AboutDialog*    m_ui;
+    enum class LatestKind {
+        None,
+        Pypi,      ///< latestRef = PyPI package name
+        Github,    ///< latestRef = "owner/repo"
+        PythonEol  ///< CPython latest via endoflife.date
+    };
+
+    struct ToolRow {
+        QString name;
+        ProbeKind kind = ProbeKind::ExeVersion;
+        QString program;
+        QString module;
+        bool viaWsl = false;
+        bool skipProbe = false;
+        LatestKind latestKind = LatestKind::None;
+        QString latestRef;
+        QString installedVersion;
+        QLabel *valueLabel = nullptr;
+    };
+
+    void initUi();
+    void buildToolRows();
+    void addStaticRow(const QString &name, const QString &value, const QString &tip = {});
+    void addProbeRow(const QString &name,
+                     ProbeKind kind,
+                     const QString &program,
+                     const QString &module = {},
+                     bool viaWsl = false,
+                     LatestKind latestKind = LatestKind::None,
+                     const QString &latestRef = {});
+    void startProbes();
+    void runNextProbe();
+    void finishCurrent(const QString &text);
+    void maybeStartLatestCheck(const QString &installed);
+    void startLatestCheck();
+    bool startExeAttempt();
+    QStringList pythonPrefixArgs(const ToolRow &row) const;
+
+    static QString extractVersion(const QString &toolName, const QByteArray &raw);
+    static QString extractSemver(const QString &text);
+    static QString extractGithubTag(const QByteArray &raw);
+    static QString extractPythonEolLatest(const QByteArray &raw);
+    static bool isJunkLine(const QString &line);
+    static QString shorten(const QString &s, int maxLen = 64);
+    static bool looksLinuxPath(const QString &path);
+    static QString cleanExe(QString path);
+    static QString resolveKlayoutExe(const QString &configured);
+    static QString findCurl();
+    QString pref(const QString &key) const;
+
+    Ui::AboutDialog *m_ui = nullptr;
+    QMap<QString, QVariant> m_preferences;
+    QVector<ToolRow> m_tools;
+    int m_probeIndex = -1;
+    QProcess *m_proc = nullptr;
+    QStringList m_versionFlags;
+    bool m_awaitingLatest = false;
 };
 
 #endif // ABOUTDIALOG_H

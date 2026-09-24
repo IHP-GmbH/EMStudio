@@ -1,0 +1,56 @@
+---
+description: EMStudio C++ file and function documentation banners
+globs: "**/*.{h,hpp,c,cpp}"
+alwaysApply: false
+---
+
+# File and function headers (EMStudio)
+
+When creating or editing C/C++ sources under this repo:
+
+## File banner (required at top of every `.h` / `.cpp`)
+
+Use the **full** GPL block (not a truncated version that stops after “any later version”):
+
+```
+/************************************************************************
+ *  EMStudio – GUI tool for setting up, running and analysing
+ *  electromagnetic simulations with IHP PDKs.
+ *
+ *  Copyright (C) 2023–2025 IHP Authors
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ ************************************************************************/
+```
+
+- Match existing year range in the file if already present; otherwise use `2023–2025`.
+- Do **not** omit the “WITHOUT ANY WARRANTY” / “You should have received…” paragraphs.
+
+## Class / function banners (required for new public APIs)
+
+Add a Doxygen block **immediately above** each new class and each new function definition (prefer documenting in the `.cpp` for implementations, and `\class` / method briefs in the `.h` for the type API), in this style:
+
+```
+/*!*******************************************************************************************************************
+ * \brief Short one-line summary.
+ *
+ * Optional longer notes.
+ *
+ * \param name Description.
+ * \return Description.
+ **********************************************************************************************************************/
+```
+
+- Use `\class Name` on class declarations in headers.
+- New functions/methods must get a `\brief` banner when introduced — do not leave bare definitions without docs in files that already use this style (About, Assistant, MainWindow, Preferences, etc.).

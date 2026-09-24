@@ -147,6 +147,55 @@ void Preferences::setupPreferencesPanel()
     m_propertyBrowser->addProperty(emstudioGroup);
 
     // -------------------------------------------------------------------------------------------------------------
+    // Assistant (LLM agent)
+    // -------------------------------------------------------------------------------------------------------------
+    QtVariantProperty *assistantGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("Assistant"));
+
+    QtVariantProperty *assistantBaseUrlProp =
+        m_variantManager->addProperty(QVariant::String, QLatin1String("ASSISTANT_BASE_URL"));
+    assistantBaseUrlProp->setToolTip(tr(
+        "OpenAI-compatible Chat Completions base URL.\n\n"
+        "Examples:\n"
+        "  - https://api.openai.com/v1\n"
+        "  - http://localhost:11434/v1   (Ollama)\n"
+        "  - http://127.0.0.1:1234/v1    (LM Studio)\n\n"
+        "Leave empty to use the keyword-only Assistant (no LLM)."));
+    assistantBaseUrlProp->setValue(
+        m_preferences.value(QStringLiteral("ASSISTANT_BASE_URL"),
+                            QStringLiteral("https://api.openai.com/v1")).toString());
+    assistantGroup->addSubProperty(assistantBaseUrlProp);
+
+    QtVariantProperty *assistantModelProp =
+        m_variantManager->addProperty(QVariant::String, QLatin1String("ASSISTANT_MODEL"));
+    assistantModelProp->setToolTip(tr(
+        "Chat model id.\n\n"
+        "Examples:\n"
+        "  - gpt-4o-mini\n"
+        "  - gpt-4o\n"
+        "  - llama3.1  (Ollama)\n"
+        "  - qwen2.5-coder"));
+    assistantModelProp->setValue(
+        m_preferences.value(QStringLiteral("ASSISTANT_MODEL"),
+                            QStringLiteral("gpt-4o-mini")).toString());
+    assistantGroup->addSubProperty(assistantModelProp);
+
+    QtVariantProperty *assistantKeyProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(),
+                                      QLatin1String("ASSISTANT_API_KEY"));
+    assistantKeyProp->setWhatsThis(QStringLiteral("password"));
+    assistantKeyProp->setToolTip(tr(
+        "API key for the LLM provider (Bearer token).\n"
+        "Required for OpenAI / cloud APIs. Optional for local Ollama / LM Studio.\n\n"
+        "Shown masked in Preferences. Stored encrypted with Windows DPAPI "
+        "(current user only) — never written to settings in cleartext."));
+    assistantKeyProp->setValue(
+        m_preferences.value(QStringLiteral("ASSISTANT_API_KEY"), QString()).toString());
+    assistantGroup->addSubProperty(assistantKeyProp);
+
+    m_propertyBrowser->addProperty(assistantGroup);
+
+    // -------------------------------------------------------------------------------------------------------------
     // OpenEMS
     // -------------------------------------------------------------------------------------------------------------
     QtVariantProperty *openemsGroup =

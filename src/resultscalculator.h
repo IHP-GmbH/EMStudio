@@ -78,6 +78,22 @@ public:
 
     void                            setTraces(const QVector<TraceRef> &traces, bool selectionActive);
     double                          frequencyGHz() const;
+    void                            setFrequencyGHz(double fGHz);
+
+    /*!*******************************************************************************************************************
+     * \brief Sets the expression line, optionally frequency, evaluates, and updates the result pane.
+     *
+     * \param expression Calculator expression (e.g. \c db(S21,$1)).
+     * \param frequencyGHz If &gt; 0, updates the default-f spinbox before eval.
+     * \param[out] valueOut Optional numeric result.
+     * \param[out] resultTextOut Optional full result pane text.
+     * \param[out] errorOut Optional error message.
+     * \return True on successful evaluation.
+     **********************************************************************************************************************/
+    bool                            runExpression(const QString &expression, double frequencyGHz,
+                                                  double *valueOut = nullptr,
+                                                  QString *resultTextOut = nullptr,
+                                                  QString *errorOut = nullptr);
 
 public slots:
     void                            evaluate();
@@ -114,6 +130,7 @@ private:
                                               double *out, QString *error) const;
     bool                            evalDbPh(bool wantDb, int m, int n, const TraceRef &trace,
                                              double fGHz, double *out, QString *error) const;
+    void                            scrollResultToBottom();
 
     QComboBox                      *m_funcCombo = nullptr;
     QLineEdit                      *m_exprEdit = nullptr;

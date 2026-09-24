@@ -56,6 +56,10 @@ SOURCES += \
     $$TOP/src/xmlreader.cpp \
     $$TOP/src/touchstone.cpp \
     $$TOP/src/smithchartwidget.cpp \
+    $$TOP/src/assistantchatpanel.cpp \
+    $$TOP/src/assistantmcp.cpp \
+    $$TOP/src/assistantagent.cpp \
+    $$TOP/src/securestore.cpp \
     $$TOP/src/resultsviewer.cpp
 
 HEADERS += \
@@ -98,4 +102,8 @@ HEADERS += \
     $$TOP/src/stackupeditor.h \
     $$TOP/src/touchstone.h \
     $$TOP/src/smithchartwidget.h \
+    $$TOP/src/assistantchatpanel.h \
+    $$TOP/src/assistantmcp.h \
+    $$TOP/src/assistantagent.h \
+    $$TOP/src/securestore.h \
     $$TOP/src/resultsviewer.h

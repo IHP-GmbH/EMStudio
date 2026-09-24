@@ -35,6 +35,8 @@
 #include <QPushButton>
 #include <QPixmap>
 #include <QScreen>
+#include <QScrollBar>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -383,6 +385,62 @@ void ResultsCalculatorPanel::setTraces(const QVector<TraceRef> &traces, bool sel
 double ResultsCalculatorPanel::frequencyGHz() const
 {
     return m_freqGHz ? m_freqGHz->value() : 1.0;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the default evaluation frequency spinbox (GHz).
+ **********************************************************************************************************************/
+void ResultsCalculatorPanel::setFrequencyGHz(double fGHz)
+{
+    if (m_freqGHz && fGHz > 0.0)
+        m_freqGHz->setValue(fGHz);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets expression (+ optional frequency), evaluates, and fills the Result pane.
+ **********************************************************************************************************************/
+bool ResultsCalculatorPanel::runExpression(const QString &expression, double frequencyGHz,
+                                           double *valueOut, QString *resultTextOut, QString *errorOut)
+{
+    if (frequencyGHz > 0.0)
+        setFrequencyGHz(frequencyGHz);
+    if (m_exprEdit)
+        m_exprEdit->setText(expression.trimmed());
+
+    evaluate();
+
+    if (selectedTraces().isEmpty()) {
+        if (errorOut)
+            *errorOut = tr("No curve selected for $1 — click a plot curve first.");
+        if (resultTextOut && m_output)
+            *resultTextOut = m_output->toPlainText();
+        return false;
+    }
+
+    const QString expr = m_exprEdit ? m_exprEdit->text().trimmed() : expression.trimmed();
+    if (expr.isEmpty()) {
+        if (errorOut)
+            *errorOut = tr("Empty expression.");
+        if (resultTextOut && m_output)
+            *resultTextOut = m_output->toPlainText();
+        return false;
+    }
+
+    double value = 0;
+    QString err;
+    if (!evalExpression(expr, &value, &err)) {
+        if (errorOut)
+            *errorOut = err;
+        if (resultTextOut && m_output)
+            *resultTextOut = m_output->toPlainText();
+        return false;
+    }
+
+    if (valueOut)
+        *valueOut = value;
+    if (resultTextOut && m_output)
+        *resultTextOut = m_output->toPlainText();
+    return true;
 }
 
 /*!*******************************************************************************************************************
@@ -776,12 +834,14 @@ void ResultsCalculatorPanel::evaluate()
     if (selectedTraces().isEmpty()) {
         m_output->setPlainText(tr("Click one or more curves on the plot ($1, $2, …),\n"
                                   "then Evaluate the expression."));
+        scrollResultToBottom();
         return;
     }
 
     const QString expr = m_exprEdit->text().trimmed();
     if (expr.isEmpty()) {
         m_output->setPlainText(tr("Empty expression. Pick a function from the combo or type one."));
+        scrollResultToBottom();
         return;
     }
 
@@ -789,6 +849,7 @@ void ResultsCalculatorPanel::evaluate()
     QString err;
     if (!evalExpression(expr, &value, &err)) {
         m_output->setPlainText(tr("Error:\n%1\n\nExpression:\n%2").arg(err, expr));
+        scrollResultToBottom();
         return;
     }
 
@@ -822,6 +883,26 @@ void ResultsCalculatorPanel::evaluate()
 
     lines << tr("→  %1").arg(formatVal(value, unit));
     m_output->setPlainText(lines.join(QLatin1Char('\n')));
+    scrollResultToBottom();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Scrolls the Result pane so the last line (the answer) is visible.
+ **********************************************************************************************************************/
+void ResultsCalculatorPanel::scrollResultToBottom()
+{
+    if (!m_output)
+        return;
+    // Defer until layout/scrollbar range updates after setPlainText.
+    QTimer::singleShot(0, m_output, [this]() {
+        if (!m_output)
+            return;
+        QTextCursor c = m_output->textCursor();
+        c.movePosition(QTextCursor::End);
+        m_output->setTextCursor(c);
+        if (QScrollBar *bar = m_output->verticalScrollBar())
+            bar->setValue(bar->maximum());
+    });
 }
 
 #endif // QT_VERSION

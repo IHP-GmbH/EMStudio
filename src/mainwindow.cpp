@@ -52,6 +52,7 @@
 #include <QLabel>
 #include <QVBoxLayout>
 #include <QFrame>
+#include <QDockWidget>
 #include <QPixmap>
 #include <QSet>
 #include <algorithm>
@@ -74,6 +75,10 @@
 #include "substrate.h"
 #include "stackupeditor.h"
 #include "resultsviewer.h"
+#include "assistantchatpanel.h"
+#include "assistantmcp.h"
+#include "assistantagent.h"
+#include "securestore.h"
 #include "pythonparser.h"
 #include "keywordseditor.h"
 #include "sanitycheck.h"
@@ -358,6 +363,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_ui->btnRunPythonScript->setVisible(false);
     m_ui->txtRunPythonScript->setVisible(false);
 
+    setupAssistantChatDock();
     setupWindowMenuDocks();
 
     refreshKeywordTipsForCurrentTool();
@@ -483,6 +489,697 @@ void MainWindow::setupWindowMenuDocks()
 
     bind(m_ui->actionRun_Control, m_ui->dockRunControl);
     bind(m_ui->actionLog,         m_ui->dockLog);
+    bind(m_actionAssistant,       m_assistantDock);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Creates the Assistant chat dock and places it beside the Log dock.
+ **********************************************************************************************************************/
+void MainWindow::setupAssistantChatDock()
+{
+    if (m_assistantDock)
+        return;
+
+    m_assistantDock = new QDockWidget(tr("Assistant"), this);
+    m_assistantDock->setObjectName(QStringLiteral("dockAssistant"));
+    m_assistantDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::RightDockWidgetArea
+                                     | Qt::LeftDockWidgetArea);
+    m_assistantDock->setFeatures(QDockWidget::DockWidgetClosable
+                                 | QDockWidget::DockWidgetMovable
+                                 | QDockWidget::DockWidgetFloatable);
+
+    m_assistantChat = new AssistantChatPanel(m_assistantDock);
+    m_assistantDock->setWidget(m_assistantChat);
+    m_assistantDock->setMinimumWidth(280);
+    m_assistantDock->setMinimumHeight(160);
+
+    addDockWidget(Qt::BottomDockWidgetArea, m_assistantDock);
+    if (m_ui && m_ui->dockLog)
+        splitDockWidget(m_ui->dockLog, m_assistantDock, Qt::Horizontal);
+
+    m_actionAssistant = new QAction(tr("Assistant"), this);
+    m_actionAssistant->setCheckable(true);
+    m_actionAssistant->setChecked(true);
+    if (m_ui && m_ui->menuWindow)
+        m_ui->menuWindow->addAction(m_actionAssistant);
+
+    m_assistantMcp = new AssistantMcp(this);
+    registerAssistantMcpTools();
+    m_assistantChat->setMcp(m_assistantMcp);
+
+    m_assistantAgent = new AssistantAgent(this);
+    m_assistantAgent->setMcp(m_assistantMcp);
+    configureAssistantAgent();
+    m_assistantChat->setAgent(m_assistantAgent);
+
+    connect(m_assistantChat, &AssistantChatPanel::userMessageSubmitted, this,
+            [this](const QString &text) {
+                appendToSimulationLog(
+                    QStringLiteral("[Assistant] user: %1\n").arg(text).toUtf8());
+            });
+}
+
+void MainWindow::configureAssistantAgent()
+{
+    if (!m_assistantAgent)
+        return;
+    m_assistantAgent->configure(
+        m_preferences.value(QStringLiteral("ASSISTANT_API_KEY")).toString(),
+        m_preferences.value(QStringLiteral("ASSISTANT_BASE_URL"),
+                            QStringLiteral("https://api.openai.com/v1")).toString(),
+        m_preferences.value(QStringLiteral("ASSISTANT_MODEL"),
+                            QStringLiteral("gpt-4o-mini")).toString());
+    if (m_assistantChat)
+        m_assistantChat->refreshModeUi();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Registers in-process MCP tools the Assistant chat can call.
+ **********************************************************************************************************************/
+void MainWindow::registerAssistantMcpTools()
+{
+    if (!m_assistantMcp)
+        return;
+
+    auto emptySchema = []() {
+        QJsonObject s;
+        s.insert(QStringLiteral("type"), QStringLiteral("object"));
+        s.insert(QStringLiteral("properties"), QJsonObject());
+        return s;
+    };
+
+    m_assistantMcp->registerTool(
+        QStringLiteral("list_tools"),
+        QStringLiteral("List registered MCP tools and descriptions."),
+        emptySchema(),
+        [this](const QJsonObject &) {
+            QJsonObject out;
+            out.insert(QStringLiteral("ok"), true);
+            out.insert(QStringLiteral("tools"), m_assistantMcp->toolsManifest());
+            return out;
+        });
+
+    m_assistantMcp->registerTool(
+        QStringLiteral("get_app_state"),
+        QStringLiteral("Current simulation tool, GDS/XML paths, model file, and editor dirty flag."),
+        emptySchema(),
+        [this](const QJsonObject &) {
+            QJsonObject out;
+            out.insert(QStringLiteral("ok"), true);
+            out.insert(QStringLiteral("sim_tool"), currentSimToolKey());
+            out.insert(QStringLiteral("gds"),
+                       m_ui ? m_ui->txtGdsFile->text() : QString());
+            out.insert(QStringLiteral("substrate_xml"),
+                       m_ui ? m_ui->txtSubstrate->text() : QString());
+            out.insert(QStringLiteral("top_cell"),
+                       m_ui ? m_ui->cbxTopCell->currentText() : QString());
+            out.insert(QStringLiteral("model_file"),
+                       m_preferences.value(QStringLiteral("PALACE_MODEL_FILE")).toString());
+            out.insert(QStringLiteral("python_script_path"),
+                       m_ui ? m_ui->txtRunPythonScript->text() : QString());
+            out.insert(QStringLiteral("current_tab"),
+                       m_ui && m_ui->tabSettings
+                           ? m_ui->tabSettings->tabText(m_ui->tabSettings->currentIndex())
+                           : QString());
+            out.insert(QStringLiteral("run_python_script"),
+                       m_simSettings.value(QStringLiteral("RunPythonScript")).toString());
+            out.insert(QStringLiteral("editor_modified"),
+                       m_ui && m_ui->editRunPythonScript
+                           && m_ui->editRunPythonScript->document()->isModified());
+            out.insert(QStringLiteral("editor_chars"),
+                       m_ui && m_ui->editRunPythonScript
+                           ? m_ui->editRunPythonScript->toPlainText().size()
+                           : 0);
+            out.insert(QStringLiteral("editor_lines"),
+                       m_ui && m_ui->editRunPythonScript
+                           ? m_ui->editRunPythonScript->document()->blockCount()
+                           : 0);
+            return out;
+        });
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        QJsonObject gdsProp;
+        gdsProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        props.insert(QStringLiteral("gds"), gdsProp);
+        QJsonObject xmlProp;
+        xmlProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        props.insert(QStringLiteral("substrate_xml"), xmlProp);
+        QJsonObject cellProp;
+        cellProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        props.insert(QStringLiteral("top_cell"), cellProp);
+        schema.insert(QStringLiteral("properties"), props);
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("set_layout"),
+            QStringLiteral("Set GDS path, substrate XML, and optional top cell in the Main tab."),
+            schema,
+            [this](const QJsonObject &args) {
+                QString gds = args.value(QStringLiteral("gds")).toString().trimmed();
+                QString xml =
+                    args.value(QStringLiteral("substrate_xml")).toString().trimmed();
+                const QString cell = args.value(QStringLiteral("top_cell")).toString().trimmed();
+
+                QJsonObject out;
+                if (gds.isEmpty() && xml.isEmpty()) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"),
+                               QStringLiteral("Need at least gds or substrate_xml"));
+                    return out;
+                }
+
+                // Expand truncated folder prefixes / project dirs into concrete files.
+                if ((!gds.isEmpty() && !QFileInfo::exists(gds))
+                    || (!xml.isEmpty() && !QFileInfo::exists(xml))
+                    || (QFileInfo(gds).isDir()) || (QFileInfo(xml).isDir())) {
+                    QString rgds, rxml, rcell, rpy;
+                    const QString hint = !gds.isEmpty() ? gds : xml;
+                    AssistantMcp::extractLayoutPaths(
+                        QStringLiteral("load gds from: %1").arg(hint),
+                        &rgds, &rxml, &rcell, &rpy);
+                    if (!rgds.isEmpty()
+                        && (gds.isEmpty() || !QFileInfo::exists(gds) || QFileInfo(gds).isDir()))
+                        gds = rgds;
+                    if (!rxml.isEmpty()
+                        && (xml.isEmpty() || !QFileInfo::exists(xml) || QFileInfo(xml).isDir()))
+                        xml = rxml;
+                }
+
+                if (!gds.isEmpty()) {
+                    if (!QFileInfo::exists(gds)) {
+                        out.insert(QStringLiteral("ok"), false);
+                        out.insert(QStringLiteral("error"),
+                                   QStringLiteral("GDS not found: %1").arg(gds));
+                        return out;
+                    }
+                    setGdsFile(gds);
+                    m_simSettings[QStringLiteral("GdsFile")] = gds;
+                    m_sysSettings[QStringLiteral("GdsDir")] =
+                        QFileInfo(gds).absolutePath();
+                }
+
+                if (!xml.isEmpty()) {
+                    if (!QFileInfo::exists(xml)) {
+                        out.insert(QStringLiteral("ok"), false);
+                        out.insert(QStringLiteral("error"),
+                                   QStringLiteral("Substrate XML not found: %1").arg(xml));
+                        return out;
+                    }
+                    setSubstrateFile(xml);
+                }
+
+                if (!cell.isEmpty()) {
+                    m_simSettings[QStringLiteral("TopCell")] = cell;
+                    setTopCell(cell);
+                    if (m_ui && m_ui->cbxTopCell->currentText() != cell) {
+                        // Cell may appear after GDS reload; keep requested name in settings.
+                        m_simSettings[QStringLiteral("gds_cellname")] = cell;
+                    }
+                }
+
+                refreshLayoutPreview();
+                updateSubLayerNamesCheckboxState();
+
+                out.insert(QStringLiteral("ok"), true);
+                out.insert(QStringLiteral("gds"),
+                           m_ui ? m_ui->txtGdsFile->text() : gds);
+                out.insert(QStringLiteral("substrate_xml"),
+                           m_ui ? m_ui->txtSubstrate->text() : xml);
+                out.insert(QStringLiteral("top_cell"),
+                           m_ui ? m_ui->cbxTopCell->currentText() : cell);
+                return out;
+            });
+    }
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        QJsonObject pathProp;
+        pathProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        props.insert(QStringLiteral("path"), pathProp);
+        schema.insert(QStringLiteral("properties"), props);
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("load_model"),
+            QStringLiteral("Load a Python model (.py) — same as File → Load Python Model "
+                           "(sets GDS/XML/ports from the script). "
+                           "Accepts a .py path, a project folder, or a unique truncated "
+                           "folder prefix (e.g. …/palace/induc → inductor_500pH)."),
+            schema,
+            [this](const QJsonObject &args) {
+                QString path = args.value(QStringLiteral("path")).toString().trimmed();
+                QJsonObject out;
+                if (path.isEmpty()) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"), QStringLiteral("Missing path"));
+                    return out;
+                }
+                // Expand truncated folders / pick *.py from a project dir.
+                if (!path.endsWith(QLatin1String(".py"), Qt::CaseInsensitive)
+                    || !QFileInfo::exists(path)) {
+                    QString gds, xml, cell, modelPy;
+                    AssistantMcp::extractLayoutPaths(
+                        QStringLiteral("load model from: %1").arg(path),
+                        &gds, &xml, &cell, &modelPy);
+                    if (!modelPy.isEmpty())
+                        path = modelPy;
+                }
+                if (!QFileInfo::exists(path)) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"),
+                               QStringLiteral("Model file not found: %1").arg(path));
+                    return out;
+                }
+                loadPythonModel(path);
+                out.insert(QStringLiteral("ok"), true);
+                out.insert(QStringLiteral("model"), path);
+                out.insert(QStringLiteral("gds"),
+                           m_ui ? m_ui->txtGdsFile->text() : QString());
+                out.insert(QStringLiteral("substrate_xml"),
+                           m_ui ? m_ui->txtSubstrate->text() : QString());
+                out.insert(QStringLiteral("ports_rows"),
+                           m_ui && m_ui->tblPorts ? m_ui->tblPorts->rowCount() : 0);
+                out.insert(QStringLiteral("sim_tool"), currentSimToolKey());
+                return out;
+            });
+    }
+
+    m_assistantMcp->registerTool(
+        QStringLiteral("get_preferences"),
+        QStringLiteral("Read selected Preferences keys used for solvers and Python."),
+        emptySchema(),
+        [this](const QJsonObject &) {
+            static const QStringList keys = {
+                QStringLiteral("PALACE_INSTALL_PATH"),
+                QStringLiteral("PALACE_RUN_SCRIPT"),
+                QStringLiteral("PALACE_RUN_MODE"),
+                QStringLiteral("PALACE_PYTHON"),
+                QStringLiteral("PALACE_WSL_PYTHON"),
+                QStringLiteral("WSL_DISTRO"),
+                QStringLiteral("ELMER_SOLVER_PATH"),
+                QStringLiteral("ELMER_PYTHON"),
+                QStringLiteral("Python Path"),
+                QStringLiteral("FIELD_VIEWER_PYTHON"),
+                QStringLiteral("MODEL_TEMPLATES_DIR"),
+                QStringLiteral("SIMULATION_TOOL_KEY"),
+            };
+            QJsonObject prefs;
+            for (const QString &k : keys)
+                prefs.insert(k, QJsonValue::fromVariant(m_preferences.value(k)));
+            QJsonObject out;
+            out.insert(QStringLiteral("ok"), true);
+            out.insert(QStringLiteral("preferences"), prefs);
+            return out;
+        });
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        QJsonObject keyProp;
+        keyProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        props.insert(QStringLiteral("key"), keyProp);
+        QJsonObject valProp;
+        valProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        props.insert(QStringLiteral("value"), valProp);
+        schema.insert(QStringLiteral("properties"), props);
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("set_preference"),
+            QStringLiteral("Set a whitelisted preference key and save settings."),
+            schema,
+            [this](const QJsonObject &args) {
+                const QString key = args.value(QStringLiteral("key")).toString().trimmed();
+                const QString value = args.value(QStringLiteral("value")).toString();
+                static const QSet<QString> allowed = {
+                    QStringLiteral("PALACE_INSTALL_PATH"),
+                    QStringLiteral("PALACE_RUN_SCRIPT"),
+                    QStringLiteral("PALACE_RUN_MODE"),
+                    QStringLiteral("PALACE_PYTHON"),
+                    QStringLiteral("PALACE_WSL_PYTHON"),
+                    QStringLiteral("WSL_DISTRO"),
+                    QStringLiteral("ELMER_SOLVER_PATH"),
+                    QStringLiteral("ELMER_PYTHON"),
+                    QStringLiteral("Python Path"),
+                    QStringLiteral("FIELD_VIEWER_PYTHON"),
+                    QStringLiteral("MODEL_TEMPLATES_DIR"),
+                };
+                QJsonObject out;
+                if (!allowed.contains(key)) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"),
+                               QStringLiteral("Preference key not allowed: %1").arg(key));
+                    return out;
+                }
+                if (key == QStringLiteral("PALACE_RUN_MODE")) {
+                    bool ok = false;
+                    const int mode = value.toInt(&ok);
+                    if (!ok) {
+                        out.insert(QStringLiteral("ok"), false);
+                        out.insert(QStringLiteral("error"),
+                                   QStringLiteral("PALACE_RUN_MODE must be an integer"));
+                        return out;
+                    }
+                    m_preferences[key] = mode;
+                } else {
+                    m_preferences[key] = value;
+                }
+                saveSettings();
+                refreshSimToolOptions();
+                out.insert(QStringLiteral("ok"), true);
+                out.insert(QStringLiteral("key"), key);
+                out.insert(QStringLiteral("value"), QJsonValue::fromVariant(m_preferences.value(key)));
+                return out;
+            });
+    }
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        QJsonObject applyProp;
+        applyProp.insert(QStringLiteral("type"), QStringLiteral("boolean"));
+        props.insert(QStringLiteral("apply"), applyProp);
+        schema.insert(QStringLiteral("properties"), props);
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("generate_default_model"),
+            QStringLiteral("Generate the default Python model for the current sim tool; "
+                           "optionally apply it to the editor."),
+            schema,
+            [this](const QJsonObject &args) {
+                const bool apply = args.value(QStringLiteral("apply")).toBool(false);
+                const QString key = normalizeSimToolKey(currentSimToolKey());
+                QString script;
+                QString templateName;
+                if (key == QLatin1String("openems")) {
+                    script = createDefaultOpenemsScript();
+                    templateName = QStringLiteral("openems");
+                } else if (key.contains(QLatin1String("thermal"))) {
+                    script = createDefaultElmerThermalScript();
+                    templateName = QStringLiteral("elmer_thermal");
+                } else if (isElmerFamilyKey(key)) {
+                    script = createDefaultElmerEmScript();
+                    templateName = QStringLiteral("elmer_em");
+                } else {
+                    script = createDefaultPalaceScript();
+                    templateName = QStringLiteral("palace");
+                }
+
+                QJsonObject out;
+                if (script.trimmed().isEmpty()) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"),
+                               QStringLiteral("Template empty or missing for tool '%1'").arg(key));
+                    return out;
+                }
+
+                if (apply && m_ui && m_ui->editRunPythonScript) {
+                    m_ui->editRunPythonScript->setPlainText(script);
+                    m_ui->editRunPythonScript->document()->setModified(true);
+                    // Template may already contain add_port lines — pull them into Ports tab.
+                    if (m_ui->tblPorts)
+                        m_ui->tblPorts->setRowCount(0);
+                    importPortsFromEditor();
+                    setStateChanged();
+                }
+
+                const int previewLen = qMin(1200, script.size());
+                out.insert(QStringLiteral("ok"), true);
+                out.insert(QStringLiteral("tool"), key);
+                out.insert(QStringLiteral("template"), templateName);
+                out.insert(QStringLiteral("applied"), apply);
+                out.insert(QStringLiteral("chars"), script.size());
+                out.insert(QStringLiteral("ports_rows"),
+                           m_ui && m_ui->tblPorts ? m_ui->tblPorts->rowCount() : 0);
+                out.insert(QStringLiteral("preview"), script.left(previewLen));
+                return out;
+            });
+    }
+
+    m_assistantMcp->registerTool(
+        QStringLiteral("import_ports"),
+        QStringLiteral("Import simulation ports from the Python editor into the Ports tab."),
+        emptySchema(),
+        [this](const QJsonObject &) {
+            QJsonObject out;
+            if (!m_ui || !m_ui->tblPorts || !m_ui->editRunPythonScript) {
+                out.insert(QStringLiteral("ok"), false);
+                out.insert(QStringLiteral("error"), QStringLiteral("UI not ready"));
+                return out;
+            }
+            m_ui->tblPorts->setRowCount(0);
+            importPortsFromEditor();
+            const int rows = m_ui->tblPorts->rowCount();
+            out.insert(QStringLiteral("ok"), rows > 0);
+            out.insert(QStringLiteral("ports_rows"), rows);
+            if (rows == 0) {
+                out.insert(QStringLiteral("error"),
+                           QStringLiteral(
+                               "No add_port(...) found in the editor. "
+                               "Load an example .py or use add_ports_from_layout."));
+            }
+            return out;
+        });
+
+    m_assistantMcp->registerTool(
+        QStringLiteral("add_ports_from_layout"),
+        QStringLiteral("Create Ports-tab rows from GDS layers 201–299 (layout markers P1/P2/…). "
+                       "from/to layers stay empty for you to set; syncs into the Python script."),
+        emptySchema(),
+        [this](const QJsonObject &) {
+            QJsonObject out;
+            if (!m_ui || !m_ui->tblPorts) {
+                out.insert(QStringLiteral("ok"), false);
+                out.insert(QStringLiteral("error"), QStringLiteral("UI not ready"));
+                return out;
+            }
+            if (m_layers.isEmpty())
+                updateGdsUserInfo();
+
+            QList<int> portLayers;
+            for (const auto &pair : m_layers) {
+                const int gds = pair.first;
+                if (gds >= 201 && gds <= 299)
+                    portLayers.append(gds);
+            }
+            std::sort(portLayers.begin(), portLayers.end());
+            portLayers.erase(std::unique(portLayers.begin(), portLayers.end()), portLayers.end());
+
+            if (portLayers.isEmpty()) {
+                out.insert(QStringLiteral("ok"), false);
+                out.insert(QStringLiteral("error"),
+                           QStringLiteral("No GDS layers in 201–299 (port markers) found. "
+                                          "Load a GDS with P1/P2-style port layers first."));
+                return out;
+            }
+
+            rebuildLayerMapping();
+            QVector<PortInfo> ports;
+            ports.reserve(portLayers.size());
+            int n = 1;
+            QJsonArray created;
+            for (int gds : portLayers) {
+                PortInfo p;
+                p.portnumber = n++;
+                p.voltage = 1.0;
+                p.z0 = 50.0;
+                p.sourceLayer = QString::number(gds);
+                p.sourceIsNumber = true;
+                p.direction = QStringLiteral("z");
+                ports.append(p);
+
+                QJsonObject row;
+                row.insert(QStringLiteral("port"), p.portnumber);
+                row.insert(QStringLiteral("source_layernum"), gds);
+                created.append(row);
+            }
+
+            m_ui->tblPorts->setRowCount(0);
+            appendParsedPortsToTable(ports);
+
+            // Write port block into the editor when possible.
+            if (m_ui->editRunPythonScript) {
+                QString script = m_ui->editRunPythonScript->toPlainText();
+                const QString portCode = buildPortCodeFromGuiTable();
+                if (!portCode.isEmpty()) {
+                    replaceOrInsertPortSection(script, portCode);
+                    m_ui->editRunPythonScript->setPlainText(script);
+                    m_ui->editRunPythonScript->document()->setModified(true);
+                }
+            }
+
+            setStateChanged();
+            refreshLayoutPreview();
+
+            out.insert(QStringLiteral("ok"), true);
+            out.insert(QStringLiteral("ports_rows"), m_ui->tblPorts->rowCount());
+            out.insert(QStringLiteral("ports"), created);
+            out.insert(QStringLiteral("note"),
+                       QStringLiteral(
+                           "Source layers set from layout. "
+                           "Set From/To on the Ports tab (e.g. Metal1 → TopMetal1), "
+                           "then save — markers alone do not define stack terminals."));
+            return out;
+        });
+
+    m_assistantMcp->registerTool(
+        QStringLiteral("run_simulation"),
+        QStringLiteral("Ask for confirmation, then start the current simulation backend."),
+        emptySchema(),
+        [this](const QJsonObject &) {
+            QJsonObject out;
+            const QString key = currentSimToolKey();
+            if (key.trimmed().isEmpty()) {
+                out.insert(QStringLiteral("ok"), false);
+                out.insert(QStringLiteral("error"), QStringLiteral("No simulation tool selected"));
+                return out;
+            }
+#ifndef EMSTUDIO_TESTING
+            const auto answer = QMessageBox::question(
+                this,
+                tr("Assistant — run simulation"),
+                tr("Start %1 simulation now?").arg(key),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No);
+            if (answer != QMessageBox::Yes) {
+                out.insert(QStringLiteral("ok"), false);
+                out.insert(QStringLiteral("error"), QStringLiteral("Cancelled by user"));
+                return out;
+            }
+#endif
+            on_btnRun_clicked();
+            out.insert(QStringLiteral("ok"), true);
+            out.insert(QStringLiteral("started"), true);
+            out.insert(QStringLiteral("sim_tool"), key);
+            return out;
+        });
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        QJsonObject exprProp;
+        exprProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        exprProp.insert(QStringLiteral("description"),
+                        QStringLiteral("Expression e.g. db(S21,$1), cser($1), delay($1); "
+                                       "shorthand S21 / delay also accepted"));
+        props.insert(QStringLiteral("expression"), exprProp);
+        QJsonObject freqProp;
+        freqProp.insert(QStringLiteral("type"), QStringLiteral("number"));
+        freqProp.insert(QStringLiteral("description"),
+                        QStringLiteral("Optional default frequency in GHz (uses calculator spinbox if omitted)"));
+        props.insert(QStringLiteral("frequency_ghz"), freqProp);
+        schema.insert(QStringLiteral("properties"), props);
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("eval_rf"),
+            QStringLiteral("Evaluate an RF Results-calculator expression on the plotted Touchstone "
+                           "curve(s). Opens Results + calculator, auto-selects $1 if needed, "
+                           "writes the numeric result into the Result pane. "
+                           "Examples: db(S21,$1), ph(S21,$1), cser($1), lser($1), delay($1)."),
+            schema,
+            [this](const QJsonObject &args) {
+                QJsonObject out;
+                if (!m_resultsViewer) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"), QStringLiteral("Results viewer not available"));
+                    return out;
+                }
+                const int resultsIdx = m_tabMap.value(QStringLiteral("Results"), -1);
+                if (resultsIdx >= 0)
+                    showTab(resultsIdx);
+
+                const QString expr = args.value(QStringLiteral("expression")).toString();
+                const double fGHz = args.contains(QStringLiteral("frequency_ghz"))
+                                        ? args.value(QStringLiteral("frequency_ghz")).toDouble()
+                                        : -1.0;
+                const ResultsViewer::RfEvalResult r = m_resultsViewer->evaluateRf(expr, fGHz);
+                out.insert(QStringLiteral("ok"), r.ok);
+                out.insert(QStringLiteral("expression"), r.expression);
+                if (r.ok) {
+                    out.insert(QStringLiteral("value"), r.value);
+                    out.insert(QStringLiteral("result_text"), r.resultText);
+                } else {
+                    out.insert(QStringLiteral("error"),
+                               r.error.isEmpty() ? QStringLiteral("Evaluation failed") : r.error);
+                    if (!r.resultText.isEmpty())
+                        out.insert(QStringLiteral("result_text"), r.resultText);
+                }
+                if (!r.selectedLabels.isEmpty())
+                    out.insert(QStringLiteral("selected"),
+                               QJsonArray::fromStringList(r.selectedLabels));
+                return out;
+            });
+    }
+
+    m_assistantMcp->registerTool(
+        QStringLiteral("open_stackup_editor"),
+        QStringLiteral("Open the Edit Stackup dialog for the current substrate XML "
+                       "(same as Substrate tab → Edit Stackup). Requires a loaded XML."),
+        emptySchema(),
+        [this](const QJsonObject &) {
+            QJsonObject out;
+            const QString path = m_ui ? m_ui->txtSubstrate->text().trimmed() : QString();
+            if (path.isEmpty() || !QFileInfo::exists(path)) {
+                out.insert(QStringLiteral("ok"), false);
+                out.insert(QStringLiteral("error"),
+                           QStringLiteral("No valid substrate XML — set_layout / load_model first."));
+                return out;
+            }
+            on_btnEditStackup_clicked();
+            out.insert(QStringLiteral("ok"), true);
+            out.insert(QStringLiteral("substrate_xml"), path);
+            out.insert(QStringLiteral("editor_open"), m_stackupEditor != nullptr);
+            return out;
+        });
+
+    {
+        QJsonObject schema = emptySchema();
+        QJsonObject props;
+        QJsonObject tabProp;
+        tabProp.insert(QStringLiteral("type"), QStringLiteral("string"));
+        tabProp.insert(QStringLiteral("description"),
+                       QStringLiteral("Tab title, e.g. Main, Substrate, Ports, Model, Simulation"));
+        props.insert(QStringLiteral("tab"), tabProp);
+        schema.insert(QStringLiteral("properties"), props);
+
+        m_assistantMcp->registerTool(
+            QStringLiteral("show_tab"),
+            QStringLiteral("Switch the main EMStudio tab (Main / Substrate / Ports / …)."),
+            schema,
+            [this](const QJsonObject &args) {
+                QJsonObject out;
+                const QString want = args.value(QStringLiteral("tab")).toString().trimmed();
+                if (want.isEmpty()) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"), QStringLiteral("Missing tab name"));
+                    out.insert(QStringLiteral("tabs"), QJsonArray::fromStringList(m_tabMap.keys()));
+                    return out;
+                }
+                int idx = m_tabMap.value(want, -1);
+                if (idx < 0) {
+                    // Case-insensitive / partial match
+                    for (auto it = m_tabMap.constBegin(); it != m_tabMap.constEnd(); ++it) {
+                        if (it.key().contains(want, Qt::CaseInsensitive)
+                            || want.contains(it.key(), Qt::CaseInsensitive)) {
+                            idx = it.value();
+                            break;
+                        }
+                    }
+                }
+                if (idx < 0) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"),
+                               QStringLiteral("Unknown tab: %1").arg(want));
+                    out.insert(QStringLiteral("tabs"), QJsonArray::fromStringList(m_tabMap.keys()));
+                    return out;
+                }
+                showTab(idx);
+                out.insert(QStringLiteral("ok"), true);
+                out.insert(QStringLiteral("tab"), m_tabTitles.value(idx));
+                out.insert(QStringLiteral("index"), idx);
+                return out;
+            });
+    }
 }
 
 /*!*******************************************************************************************************************
@@ -1047,8 +1744,12 @@ void MainWindow::onLayoutFieldModeChanged(bool on)
             m_ui->layoutView->clearFieldOverlay();
         return;
     }
+    if (m_ui && m_ui->layoutView)
+        m_ui->layoutView->setFieldProbeThermal(isElmerThermalKey(currentSimToolKey()));
     m_fieldPreferAutoZ = true;
-    scheduleFieldOverlayRefresh(true);
+    // Prefer disk cache when re-entering Field — force re-export freezes the UI
+    // (kill+waitForFinished + Python VTU load) and is rarely needed.
+    scheduleFieldOverlayRefresh(false);
 }
 
 /*!*******************************************************************************************************************
@@ -1443,6 +2144,13 @@ bool MainWindow::loadFieldOverlayFromCache(const QString &metaPath)
     }
 
     m_ui->layoutView->setFieldOverlay(ov);
+    {
+        const QString qty = ov.quantity.toLower();
+        const bool thermalQty = qty.contains(QLatin1String("temp"))
+                || qty == QLatin1String("t")
+                || isElmerThermalKey(currentSimToolKey());
+        m_ui->layoutView->setFieldProbeThermal(thermalQty);
+    }
     return ov.valid() || !ov.status.isEmpty();
 }
 
@@ -1570,12 +2278,16 @@ void MainWindow::refreshFieldOverlay(bool force)
                 QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                 this, &MainWindow::onFieldExportFinished);
     }
-    // Abort any in-flight export without applying a torn PNG/meta.
+    // Abort any in-flight export without blocking the UI thread.
     if (m_fieldExportProcess->state() != QProcess::NotRunning) {
         ++m_fieldExportToken;
+        m_fieldExportRestartPending = true;
+        m_fieldRefreshForce = force || m_fieldRefreshForce;
         m_fieldExportProcess->kill();
-        m_fieldExportProcess->waitForFinished(800);
+        // finished() will re-enter refreshFieldOverlay once the process exits.
+        return;
     }
+    m_fieldExportRestartPending = false;
 
     const int token = ++m_fieldExportToken;
     m_fieldExportProcess->setProperty("fieldExportToken", token);
@@ -1586,7 +2298,7 @@ void MainWindow::refreshFieldOverlay(bool force)
     m_fieldExportProcess->setWorkingDirectory(outDir);
     m_fieldExportProcess->setProcessChannelMode(QProcess::MergedChannels);
     m_fieldExportProcess->start();
-    if (!m_fieldExportProcess->waitForStarted(3000)) {
+    if (!m_fieldExportProcess->waitForStarted(1500)) {
         m_fieldExportBusy = false;
         pending = m_ui->layoutView->fieldOverlay();
         pending.status = tr("Failed to start Python:\n%1").arg(python);
@@ -1797,10 +2509,18 @@ void MainWindow::onFieldExportFinished(int exitCode, QProcess::ExitStatus status
             ? m_fieldExportProcess->property("fieldExportToken").toInt()
             : -1;
     if (token != m_fieldExportToken) {
-        // Superseded / killed — keep the last good overlay.
+        // Superseded / killed — restart if a newer request was queued while busy.
+        if (m_fieldExportRestartPending && m_ui && m_ui->layoutView
+            && m_ui->layoutView->isFieldMode()) {
+            m_fieldExportRestartPending = false;
+            const bool force = m_fieldRefreshForce;
+            m_fieldRefreshForce = false;
+            QTimer::singleShot(0, this, [this, force]() { refreshFieldOverlay(force); });
+        }
         return;
     }
     m_fieldExportBusy = false;
+    m_fieldExportRestartPending = false;
     if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
         return;
     if (!m_fieldExportProcess)
@@ -1847,6 +2567,11 @@ void MainWindow::onFieldExportFinished(int exitCode, QProcess::ExitStatus status
         m_ui->layoutView->setFieldOverlay(pending);
     } else {
         m_fieldPreferAutoZ = false;
+        const QString qty = m_ui->layoutView->fieldOverlay().quantity.toLower();
+        const bool thermalQty = qty.contains(QLatin1String("temp"))
+                || qty == QLatin1String("t")
+                || isElmerThermalKey(currentSimToolKey());
+        m_ui->layoutView->setFieldProbeThermal(thermalQty);
         if (volume) {
             m_fieldLastVolumeClipZUm = m_ui->layoutView->fieldOverlay().zUm;
             m_fieldLastVolumeLog = m_ui->layoutView->fieldOverlay().logScale;
@@ -1928,7 +2653,25 @@ void MainWindow::saveSettings()
 
     settings.beginGroup("Preferences");
     for (auto it = m_preferences.constBegin(); it != m_preferences.constEnd(); ++it) {
+        // Never persist the API key in cleartext — see ASSISTANT_API_KEY_DPAPI below.
+        if (it.key() == QLatin1String("ASSISTANT_API_KEY")
+            || it.key() == QLatin1String("ASSISTANT_API_KEY_DPAPI"))
+            continue;
         settings.setValue(it.key(), it.value());
+    }
+    {
+        const QString plainKey =
+            m_preferences.value(QStringLiteral("ASSISTANT_API_KEY")).toString().trimmed();
+        settings.remove(QStringLiteral("ASSISTANT_API_KEY"));
+        if (plainKey.isEmpty()) {
+            settings.remove(QStringLiteral("ASSISTANT_API_KEY_DPAPI"));
+        } else {
+            const QString enc = SecureStore::protectToBase64(plainKey);
+            if (!enc.isEmpty())
+                settings.setValue(QStringLiteral("ASSISTANT_API_KEY_DPAPI"), enc);
+            else
+                qWarning("EMStudio: failed to encrypt ASSISTANT_API_KEY (not saved)");
+        }
     }
     settings.endGroup();
 
@@ -1969,12 +2712,16 @@ void MainWindow::loadSettings()
 
         if (m_ui && m_ui->dockLog)
             m_ui->dockLog->show();
+        if (m_assistantDock)
+            m_assistantDock->show();
     }
 
     if (m_ui && m_ui->dockRunControl && m_ui->dockLog) {
         if (m_ui->dockRunControl->isHidden() && m_ui->dockLog->isHidden()) {
             m_ui->dockRunControl->show();
             m_ui->dockLog->show();
+            if (m_assistantDock)
+                m_assistantDock->show();
         }
     }
 
@@ -1988,6 +2735,17 @@ void MainWindow::loadSettings()
         m_preferences[key] = settings.value(key);
     settings.endGroup();
 
+    // Decrypt API key into memory; strip encrypted blob from the live map.
+    {
+        const QString enc =
+            m_preferences.take(QStringLiteral("ASSISTANT_API_KEY_DPAPI")).toString();
+        if (!enc.isEmpty()) {
+            const QString plain = SecureStore::unprotectFromBase64(enc);
+            if (!plain.isEmpty())
+                m_preferences[QStringLiteral("ASSISTANT_API_KEY")] = plain;
+        }
+        // Legacy cleartext key (pre-encryption builds) stays until next saveSettings().
+    }
 #ifdef Q_OS_WIN
     // -------------------------------------------------------------------------------------------------------------
     // WSL distro bootstrap: if not configured yet, pick the first available distro from the system.
@@ -3621,6 +4379,7 @@ void MainWindow::on_actionPrefernces_triggered()
     refreshKeywordTipsForCurrentTool();
 
     updateBoundaryOptionsForCurrentTool();
+    configureAssistantAgent();
 
     saveSettings();
 }
@@ -4839,6 +5598,8 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
     updateBoundaryOptionsForCurrentTool();
     updateExcitationUiForCurrentTool();
     syncResultsViewerHostPython();
+    if (m_ui && m_ui->layoutView)
+        m_ui->layoutView->setFieldProbeThermal(isElmerThermalKey(key));
 }
 
 /*!*******************************************************************************************************************
@@ -5556,7 +6317,7 @@ void MainWindow::tryAutoLoadRecentPythonForTopCell()
  **********************************************************************************************************************/
 void MainWindow::on_actionAbout_EMStudio_triggered()
 {
-    AboutDialog dlg(this);
+    AboutDialog dlg(m_preferences, this);
     dlg.exec();
 }
 

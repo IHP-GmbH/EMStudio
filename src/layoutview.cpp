@@ -8,6 +8,14 @@
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation, either version 3 of the License, or
  *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  ************************************************************************/
 
 #include "layoutview.h"
@@ -165,9 +173,9 @@ LayoutView::LayoutView(QWidget *parent)
     m_fieldLogChk = new QCheckBox(tr("Log"), m_fieldPanel);
     m_fieldArrowsChk = new QCheckBox(tr("Arrows"), m_fieldPanel);
     m_fieldArrowsChk->setChecked(true);
-    m_fieldTempChk = new QCheckBox(tr("Temp"), m_fieldPanel);
+    m_fieldTempChk = new QCheckBox(tr("Probe"), m_fieldPanel);
     m_fieldTempChk->setChecked(true);
-    m_fieldTempChk->setToolTip(tr("Click the Field heatmap to place a temperature probe.\nEsc clears the probe."));
+    m_fieldTempChk->setToolTip(tr("Click the Field heatmap to probe the value.\nEsc clears the probe."));
     optRow->addWidget(m_fieldLogChk);
     optRow->addWidget(m_fieldArrowsChk);
     optRow->addWidget(m_fieldTempChk);
@@ -551,12 +559,15 @@ void LayoutView::rebuildScene2D(bool refit)
 
     if (m_fieldOn && m_field.valid() && m_field.showArrows && !m_field.arrows.isEmpty()) {
         qreal maxMag = 1e-30;
-        for (const FieldArrow &a : m_field.arrows)
-            maxMag = qMax(maxMag, qAbs(a.mag));
+        constexpr int kMaxFieldArrows = 96;
+        const int nDraw = qMin(m_field.arrows.size(), kMaxFieldArrows);
+        for (int i = 0; i < nDraw; ++i)
+            maxMag = qMax(maxMag, qAbs(m_field.arrows.at(i).mag));
         const qreal extent = qMax(qAbs(m_field.xmaxUm - m_field.xminUm),
                                   qAbs(m_field.ymaxUm - m_field.yminUm));
         const qreal baseLen = qMax(0.5, extent * 0.04);
-        for (const FieldArrow &a : m_field.arrows) {
+        for (int i = 0; i < nDraw; ++i) {
+            const FieldArrow &a = m_field.arrows.at(i);
             const qreal len = baseLen * qBound(0.25, qAbs(a.mag) / maxMag, 1.0);
             QPointF dir(a.dx, -a.dy); // GDS Y-up → scene Y-down
             const qreal n = std::hypot(dir.x(), dir.y());
@@ -1168,6 +1179,29 @@ bool LayoutView::fieldShowArrows() const
 bool LayoutView::fieldShowTemp() const
 {
     return m_fieldTempChk && m_fieldTempChk->isChecked();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Relabels the probe checkbox for thermal vs EM Field context.
+ **********************************************************************************************************************/
+void LayoutView::setFieldProbeThermal(bool thermal)
+{
+    if (!m_fieldTempChk)
+        return;
+    if (thermal) {
+        m_fieldTempChk->setText(tr("Temp"));
+        m_fieldTempChk->setToolTip(
+            tr("Click the Field heatmap to place a temperature probe.\nEsc clears the probe."));
+    } else {
+        m_fieldTempChk->setText(tr("Probe"));
+        m_fieldTempChk->setToolTip(
+            tr("Click the Field heatmap to probe the field value (e.g. |E|).\n"
+               "Not temperature — use Elmer Thermal for Temp.\nEsc clears the probe."));
+    }
+    if (m_fieldPanel && m_fieldPanel->isVisible()) {
+        m_fieldPanel->adjustSize();
+        repositionFloatingControls();
+    }
 }
 
 /*!*******************************************************************************************************************

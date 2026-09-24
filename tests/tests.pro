@@ -1,8 +1,10 @@
-QT += testlib core gui widgets charts
+QT += testlib core gui widgets charts network
 TEMPLATE = app
 TARGET = emstudio_golden_tests
 CONFIG += console c++17
 CONFIG+=coverage
+
+win32: LIBS += -lcrypt32
 
 TOP = $$clean_path($$PWD/..)
 include($$TOP/emstudio_sources.pri)

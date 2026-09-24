@@ -46,9 +46,21 @@ jobs:
             build/**/EMStudio
           if-no-files-found: warn
 
-  # Explicit Ubuntu 24.04 portable-ish bundle (Qt runtime shipped in the artifact).
-  build-ubuntu24:
-    runs-on: ubuntu-24.04
+  # Portable Linux bundles (Qt runtime shipped). Build on the oldest OS you need
+  # to support: glibc is not bundled, so ubuntu24 binaries need glibc ≥ 2.38
+  # (Ubuntu 24.04+). Use ubuntu22 for Ubuntu 22.04 / glibc 2.35 hosts.
+  build-ubuntu-portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            artifact: emstudio-linux-ubuntu22
+            label: Ubuntu 22.04
+          - os: ubuntu-24.04
+            artifact: emstudio-linux-ubuntu24
+            label: Ubuntu 24.04
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout sources
@@ -104,7 +116,9 @@ jobs:
           cd build
           make -j"$(nproc)"
 
-      - name: Stage Ubuntu 24 bundle with Qt runtime
+      - name: Stage bundle with Qt runtime
+        env:
+          BUNDLE_LABEL: ${{ matrix.label }}
         run: |
           set -euxo pipefail
           test -x build/EMStudio
@@ -164,10 +178,13 @@ jobs:
           ./scripts/install_linux_launcher.sh dist
 
           printf '%s\n' \
-            'EMStudio Linux (Ubuntu 24.04) CI build' \
+            "EMStudio Linux (${BUNDLE_LABEL}) CI build" \
             '' \
             'Qt 5.15 runtime is bundled under ./lib and ./plugins.' \
-            'On a normal Ubuntu 24 desktop (X11/Wayland + OpenGL), run:' \
+            'glibc is NOT bundled: use the ubuntu22 artifact on Ubuntu 22.04' \
+            '(glibc 2.35), and ubuntu24 on Ubuntu 24.04+ (glibc ≥ 2.38).' \
+            '' \
+            'On a normal desktop (X11/Wayland + OpenGL), run:' \
             '  ./EMStudio' \
             '' \
             '(EMStudio is a small launcher; the real binary is EMStudio.bin.)' \
@@ -187,6 +204,8 @@ jobs:
             echo "Missing Qt/ICU libraries in the bundle" >&2
             exit 1
           fi
+          echo "=== glibc requirement (from EMStudio.bin) ==="
+          objdump -T dist/EMStudio.bin | awk '/GLIBC_/ {print $NF}' | sort -u | tail -5 || true
 
       - name: Smoke-test bundled binary (headless)
         run: |
@@ -202,10 +221,10 @@ jobs:
             fi
           fi
 
-      - name: Upload Ubuntu 24 artifact
+      - name: Upload portable Linux artifact
         uses: actions/upload-artifact@v4
         with:
-          name: emstudio-linux-ubuntu24
+          name: ${{ matrix.artifact }}
           path: dist
           if-no-files-found: error
           retention-days: 14

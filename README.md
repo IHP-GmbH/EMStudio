@@ -68,7 +68,14 @@ Download the artifact named **emstudio-windows-installer** and run the installer
 
 ## Pre-built Bundle (Linux)
 
-Download the artifact named **emstudio-linux-ubuntu24**. It's a self-contained bundle — no need to install Qt or any development tools.
+Download a portable artifact with bundled Qt:
+
+| Artifact | Built on | Needs host glibc | Typical host |
+|----------|----------|------------------|--------------|
+| **emstudio-linux-ubuntu22** | Ubuntu 22.04 | ≥ 2.35 | Ubuntu 22.04 |
+| **emstudio-linux-ubuntu24** | Ubuntu 24.04 | ≥ 2.38 | Ubuntu 24.04+ |
+
+If you see `version 'GLIBC_2.38' not found`, the host is older than Ubuntu 24 — use **ubuntu22**.
 
 1. Unzip the downloaded artifact.
 2. Run it with:
@@ -250,10 +257,10 @@ these folders in your PYTHONPATH environment variable. Prefer installing from Py
 ```bash
 python -m pip install -U -r requirements-python.txt
 # or at least:
-python -m pip install -U "gds2palace>=0.4.1"
+python -m pip install -U "gds2palace>=0.5.2"
 ```
 
-That pulls **gds2palace 0.4.1+** (schema 3.x stackup Variables / Reference / DerivedLayers) together with `gdspy` and `gmsh`. For Touchstone post-processing (`scripts/combine_extend_snp.py`) you also need `numpy` and `scikit-rf`. **Model Fit** on the Results tab launches [snp2le](https://github.com/iic-jku/snp2le) (`pip install snp2le`, Python ≥ 3.10). See `requirements-python.txt` for the full recommended set (aligned with Volker’s [setupEM](https://github.com/VolkerMuehlhaus/setupEM) / [gds2palace](https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2) PyPI packages).
+That pulls **gds2palace 0.5.2+** (schema 3.x stackup Variables / Reference / DerivedLayers; needs Python ≥ 3.12) together with `gdspy` and `gmsh`. For Touchstone post-processing (`scripts/combine_extend_snp.py`) you also need `numpy` and `scikit-rf`. **Model Fit** on the Results tab launches [snp2le](https://github.com/iic-jku/snp2le) (`pip install snp2le`, Python ≥ 3.10). See `requirements-python.txt` for the full recommended set (aligned with Volker’s [setupEM](https://github.com/VolkerMuehlhaus/setupEM) / [gds2palace](https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2) PyPI packages).
 
 # User Interface 
 

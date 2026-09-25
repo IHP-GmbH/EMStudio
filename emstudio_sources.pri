@@ -10,6 +10,7 @@ INCLUDEPATH += $$TOP $$TOP/src $$TOP/extension $$TOP/QtPropertyBrowser
 SOURCES += \
     $$TOP/src/headless.cpp \
     $$TOP/src/wslHelper.cpp \
+    $$TOP/src/toolautodetect.cpp \
     $$TOP/src/about.cpp \
     $$TOP/src/tips.cpp \
     $$TOP/src/keywordseditor.cpp \
@@ -64,6 +65,7 @@ SOURCES += \
 
 HEADERS += \
     $$TOP/src/wslHelper.h \
+    $$TOP/src/toolautodetect.h \
     $$TOP/src/about.h \
     $$TOP/src/keywordseditor.h \
     $$TOP/QtPropertyBrowser/qtbuttonpropertybrowser.h \

@@ -101,6 +101,7 @@ set(SOURCES
 
     src/headless.cpp
     src/wslHelper.cpp
+    src/toolautodetect.cpp
     src/about.cpp
     src/tips.cpp
     src/keywordseditor.cpp
@@ -162,6 +163,7 @@ set(SOURCES
 
 set(HEADERS
     src/wslHelper.h
+    src/toolautodetect.h
     src/about.h
     src/keywordseditor.h
 

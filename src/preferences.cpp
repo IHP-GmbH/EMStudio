@@ -211,6 +211,19 @@ void Preferences::setupPreferencesPanel()
     pythonPathProp->setValue(m_preferences.value(QStringLiteral("Python Path"), QString()));
     openemsGroup->addSubProperty(pythonPathProp);
 
+    QtVariantProperty *openemsInstallProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(),
+                                      QLatin1String("OPENEMS_INSTALL_PATH"));
+    openemsInstallProp->setWhatsThis("folder");
+    openemsInstallProp->setToolTip(tr("Directory that contains the openEMS executable "
+                                      "(openEMS.exe / openEMS).\n"
+                                      "Used to prepend that folder to PATH when launching models.\n"
+                                      "Examples:\n"
+                                      "  - C:\\\\Work\\\\OpenEMS\\\\openEMS\n"
+                                      "  - /usr/local"));
+    openemsInstallProp->setValue(m_preferences.value(QStringLiteral("OPENEMS_INSTALL_PATH"), QString()));
+    openemsGroup->addSubProperty(openemsInstallProp);
+
     // -------------------------------------------------------------------------------------------------------------
     // Palace
     // -------------------------------------------------------------------------------------------------------------

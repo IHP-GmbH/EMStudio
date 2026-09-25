@@ -65,6 +65,7 @@
 
 #include "about.h"
 #include "wslHelper.h"
+#include "toolautodetect.h"
 #include "mainwindow.h"
 #include "preferences.h"
 #include "ui_mainwindow.h"
@@ -3009,28 +3010,36 @@ void MainWindow::loadSettings()
         }
         // Legacy cleartext key (pre-encryption builds) stays until next saveSettings().
     }
-#ifdef Q_OS_WIN
     // -------------------------------------------------------------------------------------------------------------
-    // WSL distro bootstrap: if not configured yet, pick the first available distro from the system.
+    // First-launch / empty-prefs tool autoload (PATH + common installs; Windows WSL for Palace).
+    // Only fills empty keys — never overwrites a user-cleared or custom path.
     // -------------------------------------------------------------------------------------------------------------
-    const QString savedDistro = m_preferences.value(QStringLiteral("WSL_DISTRO")).toString().trimmed();
-    if (savedDistro.isEmpty()) {
-        const QStringList distros = listWslDistrosFromSystem(8000);
-        if (!distros.isEmpty()) {
-            m_preferences[QStringLiteral("WSL_DISTRO")] = distros.first();
-
-            // Optional: persist immediately so next start doesn't need probing
-            settings.beginGroup("Preferences");
-            settings.setValue(QStringLiteral("WSL_DISTRO"), distros.first());
+    {
+        const int autoFilled = ToolAutoDetect::fillEmptyPreferences(m_preferences);
+        if (autoFilled > 0) {
+            settings.beginGroup(QStringLiteral("Preferences"));
+            const QStringList toolKeys = {
+                QStringLiteral("WSL_DISTRO"),
+                QStringLiteral("Python Path"),
+                QStringLiteral("PALACE_PYTHON"),
+                QStringLiteral("ELMER_PYTHON"),
+                QStringLiteral("FIELD_VIEWER_PYTHON"),
+                QStringLiteral("KLAYOUT_EXE"),
+                QStringLiteral("ELMER_SOLVER_PATH"),
+                QStringLiteral("PALACE_INSTALL_PATH"),
+                QStringLiteral("OPENEMS_INSTALL_PATH"),
+            };
+            for (const QString &key : toolKeys) {
+                const QString v = m_preferences.value(key).toString().trimmed();
+                if (!v.isEmpty())
+                    settings.setValue(key, v);
+            }
             settings.endGroup();
         }
     }
 
-    // Export (even if empty -> clears env var)
+    // Export WSL distro (even if empty -> clears env var)
     exportWslDistroToEnv(m_preferences);
-#else
-    exportWslDistroToEnv(m_preferences);
-#endif
 
     if (m_layoutLayerPanel) {
         settings.beginGroup(QStringLiteral("LayoutPreview"));

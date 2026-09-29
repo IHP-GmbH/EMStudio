@@ -66,3 +66,6 @@ examples/**/elmer_model/
 **/field_slice_meta.json
 **/field_volume_cache.npz
 
+# Local-only helper (not shipped)
+tools/gen_assistant_policy_blob.py
+

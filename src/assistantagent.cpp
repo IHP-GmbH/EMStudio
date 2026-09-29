@@ -20,6 +20,7 @@
 
 #include "assistantagent.h"
 #include "assistantmcp.h"
+#include "assistantpromptblob.h"
 
 #include <QFile>
 #include <QJsonDocument>
@@ -147,6 +148,10 @@ void AssistantAgent::send(const QString &userText)
         failWith(QStringLiteral("MCP tools are not connected."));
         return;
     }
+    if (assistantDecodePolicyFragment().isEmpty()) {
+        failWith(QStringLiteral("Assistant policy check failed."));
+        return;
+    }
 
     // Keep system prompt fresh (tool list may grow) as the first message.
     {
@@ -191,18 +196,14 @@ QString AssistantAgent::buildSystemPrompt() const
         "Never tell the user to edit the Python editor manually when get_model_python / "
         "replace_in_model_python / set_model_python exist — call those tools yourself.\n"
         "If no tool fits, call list_tools / get_app_state and say which tool is missing.\n"
-        "\n"
-        "HARD SCOPE (must follow):\n"
-        "- Help ONLY with EMStudio and electromagnetic / RF / microwave work in this app: "
-        "IHP PDK, GDS/layout, stackup/substrate, ports, Palace, OpenEMS, Elmer, "
-        "simulation setup/run, S-parameters/results, model Python in the editor, "
-        "and how to use EMStudio itself.\n"
-        "- REFUSE anything off-topic: general coding, homework, writing emails/docs, "
-        "office work, chat, news, recipes, non-EM theory without an EMStudio link, "
-        "unrelated scripts, or using this chat as a generic LLM.\n"
-        "- On refuse: one short polite decline, invite an EMStudio/EM question, "
-        "do NOT answer the off-topic request and do NOT call tools for it.\n"
-        "\n"
+        "\n");
+    {
+        const QString policy = assistantDecodePolicyFragment();
+        if (!policy.isEmpty())
+            lines << policy;
+        lines << QStringLiteral("\n");
+    }
+    lines << QStringLiteral(
         "App map (high level):\n"
         "- Main tab: GDS, substrate XML, top cell, sim tool, run\n"
         "- Substrate tab: stackup preview; Edit Stackup opens the stackup editor dialog\n"

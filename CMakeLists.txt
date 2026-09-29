@@ -157,6 +157,7 @@ set(SOURCES
     src/assistantchatpanel.cpp
     src/assistantmcp.cpp
     src/assistantagent.cpp
+    src/assistantpromptblob.cpp
     src/securestore.cpp
     src/resultsviewer.cpp
 )
@@ -208,6 +209,7 @@ set(HEADERS
     src/assistantchatpanel.h
     src/assistantmcp.h
     src/assistantagent.h
+    src/assistantpromptblob.h
     src/securestore.h
     src/resultsviewer.h
 )

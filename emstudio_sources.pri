@@ -60,6 +60,7 @@ SOURCES += \
     $$TOP/src/assistantchatpanel.cpp \
     $$TOP/src/assistantmcp.cpp \
     $$TOP/src/assistantagent.cpp \
+    $$TOP/src/assistantpromptblob.cpp \
     $$TOP/src/securestore.cpp \
     $$TOP/src/resultsviewer.cpp
 
@@ -107,5 +108,6 @@ HEADERS += \
     $$TOP/src/assistantchatpanel.h \
     $$TOP/src/assistantmcp.h \
     $$TOP/src/assistantagent.h \
+    $$TOP/src/assistantpromptblob.h \
     $$TOP/src/securestore.h \
     $$TOP/src/resultsviewer.h

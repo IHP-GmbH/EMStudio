@@ -36,6 +36,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMap>
@@ -532,8 +533,17 @@ void ResultsViewer::buildUi()
     filesLayout->addLayout(filterRow);
 
     m_fileList = new QTreeWidget(filesGroup);
+    m_fileList->setColumnCount(2);
     m_fileList->setHeaderHidden(true);
+    m_fileList->setUniformRowHeights(true);
+    m_fileList->setTextElideMode(Qt::ElideMiddle);
     m_fileList->setMinimumHeight(80);
+    if (QHeaderView *hdr = m_fileList->header()) {
+        hdr->setStretchLastSection(true);
+        hdr->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+        hdr->setSectionResizeMode(1, QHeaderView::Stretch);
+        hdr->setMinimumSectionSize(80);
+    }
     connect(m_fileList, &QTreeWidget::itemChanged, this, &ResultsViewer::onFileItemChanged);
     filesLayout->addWidget(m_fileList, 1);
 
@@ -846,6 +856,7 @@ void ResultsViewer::rescanFiles()
                 groupItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
                 groupItem->setCheckState(0, Qt::Unchecked);
                 m_fileList->addTopLevelItem(groupItem);
+                groupItem->setFirstColumnSpanned(true);
                 for (const QString &path : it.value())
                     groupItem->addChild(makeFileItem(path));
                 refreshGroupCheckState(groupItem);
@@ -856,6 +867,7 @@ void ResultsViewer::rescanFiles()
 
     rebuildCompareTreeGroup();
 
+    m_fileList->resizeColumnToContents(0);
     m_fileList->blockSignals(false);
     if (m_convertBtn)
         m_convertBtn->setEnabled(!m_targetDir.isEmpty() && QDir(m_targetDir).exists());
@@ -1192,6 +1204,7 @@ void ResultsViewer::rebuildCompareTreeGroup()
     groupItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
     groupItem->setCheckState(0, Qt::Unchecked);
     m_fileList->addTopLevelItem(groupItem);
+    groupItem->setFirstColumnSpanned(true);
     for (const QString &path : m_extraComparePaths)
         groupItem->addChild(makeFileItem(path));
     refreshGroupCheckState(groupItem);
@@ -1329,9 +1342,14 @@ bool ResultsViewer::tryConvertPalaceCsv(QString *logOut)
 
 QTreeWidgetItem *ResultsViewer::makeFileItem(const QString &path)
 {
-    auto *item = new QTreeWidgetItem(QStringList{QFileInfo(path).fileName()});
+    const QFileInfo fi(path);
+    auto *item = new QTreeWidgetItem(QStringList{
+        fi.fileName(),
+        QDir::toNativeSeparators(fi.absoluteFilePath())});
     item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
     item->setData(0, Qt::UserRole, path);
+    item->setToolTip(0, fi.fileName());
+    item->setToolTip(1, QDir::toNativeSeparators(fi.absoluteFilePath()));
     item->setCheckState(0, m_checkedPaths.contains(path) ? Qt::Checked : Qt::Unchecked);
     return item;
 }

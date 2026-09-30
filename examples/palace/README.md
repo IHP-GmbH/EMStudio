@@ -10,6 +10,8 @@ Each subfolder is a self-contained run: Python model + GDS + stackup XML.
 | `line_viaport` | Simple line with via port |
 | `inductor_500pH` | 500 pH inductor, 2-port |
 | `balun_mim_vias` | 17–22 GHz MIM balun with dense via arrays (~3k vias, merge=3 µm) |
+| `core_1t10f_w_incaps_ports_simplified` | Multi-port RF core with in-caps (simplified GDS), 0–50 GHz |
+| `palace_core_dev` | 50 GHz MPA core (no BJT), 1–350 GHz |
 | `resistors_rsil` | RSIL resistors + derived layers (schema 3.1) |
 | `cmim` | Small CMIM 2.3 µm (IHP#493 geometry), 0–100 GHz |
 

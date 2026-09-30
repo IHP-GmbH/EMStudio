@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QLineEdit>
 #include <QSignalBlocker>
 #include <QTemporaryDir>
 #include <QTextStream>
@@ -574,4 +575,41 @@ void ElmerTest::applyGdsAndXmlPaths_doesNotPrependGdsCellnameWhenSettingsCellnam
     QVERIFY(out.trimmed().startsWith(QStringLiteral("from gds2palace")));
     QVERIFY(out.contains(QStringLiteral("create_elmer_thermal")));
     QVERIFY(out.contains(QStringLiteral("all_thermal_objects")));
+}
+
+void ElmerTest::applyGdsAndXmlPaths_updatesSettingsGdsAndSubstrateFile()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.show();
+
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY2(!gdsPath.isEmpty(), "golden GDS missing");
+    QVERIFY2(!xmlPath.isEmpty(), "golden XML missing");
+
+    w.setGdsFile(gdsPath);
+    auto *sub = w.findChild<QLineEdit *>(QStringLiteral("txtSubstrate"));
+    QVERIFY(sub);
+    sub->setText(xmlPath); // triggers on_txtSubstrate_textChanged → m_simSettings[SubstrateFile]
+
+    const QString in = QStringLiteral(
+        "from gds2palace import *\n"
+        "settings = {}\n"
+        "settings['GdsFile'] = 'old.gds'\n"
+        "settings['SubstrateFile'] = 'old.xml'\n"
+        "gds_filename = \"legacy.gds\"\n"
+        "XML_filename = \"legacy.xml\"\n");
+
+    const QString out = w.testApplyGdsAndXmlPaths(in, QStringLiteral("openems"));
+    const QString gdsNorm = QDir::fromNativeSeparators(gdsPath);
+    const QString xmlNorm = QDir::fromNativeSeparators(xmlPath);
+    QVERIFY2(out.contains(QStringLiteral("settings['GdsFile'] = \"%1\"").arg(gdsNorm)),
+             qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("settings['SubstrateFile'] = \"%1\"").arg(xmlNorm)),
+             qPrintable(out));
+    QVERIFY(out.contains(QStringLiteral("gds_filename = \"%1\"").arg(gdsNorm)));
+    QVERIFY(out.contains(QStringLiteral("XML_filename = \"%1\"").arg(xmlNorm)));
+    QVERIFY(!out.contains(QStringLiteral("old.gds")));
+    QVERIFY(!out.contains(QStringLiteral("legacy.gds")));
 }

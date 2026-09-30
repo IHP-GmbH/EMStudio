@@ -372,6 +372,8 @@ private:
     void                            applyElmerThermalWorkflowToScript(QString &script);
     void                            applyPalaceWorkflowToScript(QString &script);
     void                            syncGuiSettingsToPythonEditor();
+    /*! Push current GDS/XML line-edits into the Python buffer (browse / path edits). */
+    void                            syncGuiPathsToPythonEditor();
     void                            forceStartSimulationOff(QString &script) const;
     void                            applyBoundaries(QString &script, bool alsoTopLevelAssignment);
     void                            applyGdsAndXmlPaths(QString &script, const QString &simKeyLower);

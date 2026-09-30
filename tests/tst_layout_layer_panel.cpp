@@ -83,6 +83,12 @@ void LayoutLayerPanelTest::layers_filterHighlightOpacityAndContextMenu()
     slider->setValue(55);
     QVERIFY(opSpy.count() >= 1);
 
+    // Unused layer: opacity slider must stay disabled (nothing to fade in the preview).
+    panel.setHighlightedName(QStringLiteral("UnusedMetal"));
+    QVERIFY(!slider->isEnabled());
+    panel.setHighlightedName(QStringLiteral("Metal1"));
+    QVERIFY(slider->isEnabled());
+
     // Toggle visibility checkbox on first item
     QListWidgetItem *item = list->item(0);
     QVERIFY(item);

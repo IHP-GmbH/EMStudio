@@ -1464,6 +1464,7 @@ void MainWindow::refreshSimToolOptions()
     const QString openemsPath      = m_preferences.value("Python Path").toString().trimmed();
     const QString palacePath       = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
     const QString palaceScriptPath = m_preferences.value("PALACE_RUN_SCRIPT").toString().trimmed();
+    const int palaceRunMode        = m_preferences.value("PALACE_RUN_MODE", 0).toInt(); // 0=Executable, 1=Script
     const QString elmerSolverPath  = m_preferences.value("ELMER_SOLVER_PATH").toString().trimmed();
 
     const QString distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
@@ -1482,6 +1483,9 @@ void MainWindow::refreshSimToolOptions()
 #endif
     }
 
+    const bool palaceScriptIsStub =
+        palaceScriptPath.contains(QStringLiteral("palace_launcher_stub"), Qt::CaseInsensitive);
+
     bool hasPalaceScript = false;
     if (!palaceScriptPath.isEmpty()) {
 #ifdef Q_OS_WIN
@@ -1489,9 +1493,17 @@ void MainWindow::refreshSimToolOptions()
 #else
         hasPalaceScript = pathIsExecutablePortable(palaceScriptPath, distro, 800);
 #endif
+#ifndef EMSTUDIO_TESTING
+        // Production: never treat the unit-test stub as a real Palace launcher.
+        if (palaceScriptIsStub)
+            hasPalaceScript = false;
+#endif
     }
 
-    const bool hasPalace = hasPalaceInstall || hasPalaceScript;
+    // Honour PALACE_RUN_MODE: Script → launcher only; Executable → install tree only.
+    // Mixing them hid broken Script-mode configs when INSTALL_PATH happened to be set
+    // (or vice versa), and PALACE_PYTHON alone never enables the tool.
+    const bool hasPalace = (palaceRunMode == 1) ? hasPalaceScript : hasPalaceInstall;
 
     const bool hasElmer = !elmerSolverPath.isEmpty()
         && pathIsExecutablePortable(elmerSolverPath, distro, 800);
@@ -1540,6 +1552,31 @@ void MainWindow::refreshSimToolOptions()
             enabled << QStringLiteral("Elmer EM/Thermal (UI only — set ELMER_SOLVER_PATH to run)");
         info(QStringLiteral("Enabled simulation tools: %1").arg(enabled.join(QStringLiteral(", "))));
 
+        if (!hasPalace) {
+            if (palaceRunMode == 1) {
+                if (palaceScriptPath.isEmpty())
+                    info(QStringLiteral("Palace disabled: PALACE_RUN_MODE=Script but "
+                                        "PALACE_RUN_SCRIPT is empty."), false);
+                else if (palaceScriptIsStub)
+                    info(QStringLiteral("Palace disabled: PALACE_RUN_SCRIPT points to the "
+                                        "EMStudio test stub (palace_launcher_stub). "
+                                        "Set a real launcher (e.g. gds2palace run_palace) "
+                                        "or switch PALACE_RUN_MODE to Executable and set "
+                                        "PALACE_INSTALL_PATH."), false);
+                else
+                    info(QStringLiteral("Palace disabled: PALACE_RUN_SCRIPT is not executable: %1")
+                             .arg(palaceScriptPath), false);
+            } else if (palacePath.isEmpty()) {
+                info(QStringLiteral("Palace disabled: PALACE_RUN_MODE=Executable but "
+                                    "PALACE_INSTALL_PATH is empty. "
+                                    "PALACE_PYTHON alone is only for gds2palace preprocessing."),
+                     false);
+            } else {
+                info(QStringLiteral("Palace disabled: no bin/palace under PALACE_INSTALL_PATH=%1")
+                         .arg(palacePath), false);
+            }
+        }
+
         int restoreIdx = -1;
         QString wantedKey = normalizeSimToolKey(m_preferences.value(QStringLiteral("SIMULATION_TOOL_KEY")).toString());
         if (!wantedKey.isEmpty())
@@ -1554,7 +1591,9 @@ void MainWindow::refreshSimToolOptions()
         }
     }
 
+    updateBoundaryOptionsForCurrentTool();
     updateExcitationUiForCurrentTool();
+    updateEditStackupButtonState();
 }
 
 /*!*******************************************************************************************************************
@@ -3536,7 +3575,11 @@ void MainWindow::on_btnGdsFile_clicked()
                                                     tr("GDS Files (*.gds *.gdsii);;All Files (*)"));
     if (!filePath.isEmpty()) {
         m_ui->txtGdsFile->setText(filePath);
+        m_simSettings[QStringLiteral("GdsFile")] = filePath;
+        if (!m_modelGdsKey.isEmpty())
+            m_simSettings[m_modelGdsKey] = filePath;
         updateGdsUserInfo();
+        syncGuiPathsToPythonEditor();
         setStateChanged();
     }
 }
@@ -3910,7 +3953,11 @@ void MainWindow::on_btnSubstrate_clicked()
         drawSubstrate(filePath);
         m_subLayers = readSubstrateLayers(m_ui->txtSubstrate->text());
         m_simSettings["SubstrateFile"] = m_ui->txtSubstrate->text();
+        if (!m_modelXmlKey.isEmpty())
+            m_simSettings[m_modelXmlKey] = m_ui->txtSubstrate->text();
         m_sysSettings["SubstrateDir"] = QFileInfo(filePath).absolutePath();
+        syncGuiPathsToPythonEditor();
+        refreshLayoutPreview();
     }
 
     if(QFileInfo().exists(m_ui->txtGdsFile->text())) {
@@ -4244,6 +4291,10 @@ void MainWindow::refreshLayoutPreview()
     }
     const qint64 flattenMs = step.elapsed();
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
+    // Model load always uses Top2D first — Iso3D is slow on via-dense GDS; user can switch after.
+    if (m_ui->layoutView->isView3d())
+        m_ui->layoutView->setViewMode(LayoutView::ViewMode::Top2D);
 
     // Keep stack metals + any unmapped layers (ports 201/202, etc.).
     // (No filter: LayoutView styles known layers; unmapped get a port color.)
@@ -6467,8 +6518,8 @@ QString MainWindow::ensurePySuffix(QString path) const
 /*!*******************************************************************************************************************
  * \brief Returns the required folder name for a given simulation backend key.
  *
- * OpenEMS expects the model to be located in a folder containing "modules".
- * Palace expects the model to be located in a folder containing "gds2palace".
+ * OpenEMS expects the model next to a local \c modules tree (Volker openEMS workflow).
+ * Palace / Elmer use \c gds2palace as an installed Python module — no local copy required.
  *
  * \param simKeyLower Simulation key in lower case ("openems" / "palace").
  * \return Required folder name or empty string if no requirement applies.
@@ -6477,8 +6528,6 @@ QString MainWindow::requiredFolderForSim(const QString &simKeyLower) const
 {
     if (simKeyLower == QLatin1String("openems"))
         return QStringLiteral("modules");
-    if (simKeyLower == QLatin1String("palace") || isElmerFamilyKey(simKeyLower))
-        return QStringLiteral("gds2palace");
     return QString();
 }
 

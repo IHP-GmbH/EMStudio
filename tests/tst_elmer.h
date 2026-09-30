@@ -33,6 +33,7 @@ private slots:
     void applyGdsAndXmlPaths_updatesCellnameAndGdsCellname();
     void applyGdsAndXmlPaths_doesNotTouchReadGdsKwarg();
     void applyGdsAndXmlPaths_doesNotPrependGdsCellnameWhenSettingsCellnameExists();
+    void applyGdsAndXmlPaths_updatesSettingsGdsAndSubstrateFile();
 };
 
 #endif // TST_ELMER_H

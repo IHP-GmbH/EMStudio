@@ -254,23 +254,33 @@ void LayoutLayerPanel::onCurrentItemChanged(QListWidgetItem *current, QListWidge
         return;
     if (!current) {
         m_opacity->setEnabled(false);
+        m_opacityLabel->setText(tr("Opacity"));
         return;
     }
     const int gds = current->data(kRoleGds).toInt();
     qreal op = 1.0;
     QString name, kind;
+    bool used = false;
     for (const Entry &e : m_all) {
         if (e.gdsLayer == gds) {
             op = e.opacity;
             name = e.name;
             kind = e.kind;
+            used = e.used;
             break;
         }
     }
     m_block = true;
-    m_opacity->setEnabled(true);
+    // Unused stackup layers are not drawn — opacity would do nothing.
+    m_opacity->setEnabled(used);
     m_opacity->setValue(qBound(10, int(op * 100.0 + 0.5), 100));
-    m_opacityLabel->setText(tr("Opacity %1%").arg(m_opacity->value()));
+    if (used) {
+        m_opacityLabel->setText(tr("Opacity %1%").arg(m_opacity->value()));
+        m_opacity->setToolTip(tr("Fill opacity for the selected layer (layout preview)."));
+    } else {
+        m_opacityLabel->setText(tr("Opacity"));
+        m_opacity->setToolTip(tr("Layer is not present in the current GDS — opacity has no effect."));
+    }
     m_block = false;
     if (!name.isEmpty())
         emit layerActivated(name, kind);

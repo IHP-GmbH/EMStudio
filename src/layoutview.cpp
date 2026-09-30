@@ -977,7 +977,9 @@ void LayoutView::rebuildScene3D(bool refit)
         QString kind;
         int gds = 0;
         bool isPort = false;
-        qreal depth = 0.0;
+        qreal depth = 0.0;   //!< Camera depth (farther = larger); tie-break within a stack band
+        qreal zMid = 0.0;    //!< Stack mid-Z [µm] — primary back-to-front key
+        int faceKind = 1;    //!< 0 = bottom, 1 = wall, 2 = top
     };
     QVector<Face> faces;
     faces.reserve(extrudeItems.size() * 5);
@@ -1114,22 +1116,26 @@ void LayoutView::rebuildScene3D(bool refit)
             continue;
 
         const qreal op = opacityFor(it.poly.layer);
+        const bool isVia = (it.style.kind.compare(QLatin1String("via"), Qt::CaseInsensitive) == 0);
         double z0 = std::min(it.style.zminUm, it.style.zmaxUm);
         double z1 = std::max(it.style.zminUm, it.style.zmaxUm);
         if (z1 - z0 < kMinThickUm)
             z1 = z0 + kMinThickUm;
+        const qreal zMid = 0.5 * (z0 + z1);
+
+        // Vias slightly more opaque so pillars stay readable under translucent metals.
+        const qreal fillScale = isVia ? 1.15 : 1.0;
+        const int fillAlpha = qBound(0, int(kBaseFillAlpha * op * fillScale + 0.5), 230);
+        const int wallAlpha = qBound(0, int(kBaseFillAlpha * op * 0.85 * fillScale + 0.5), 220);
 
         QPolygonF topPoly;
         topPoly.reserve(it.poly.pointsUm.size());
-        qreal topDepth = 0.0;
-        int topN = 0;
+        qreal topDepthFar = -1e300;
         for (const QPointF &p : it.poly.pointsUm) {
             topPoly << project3D(p.x(), p.y(), z1);
-            topDepth += depth3D(p.x(), p.y(), z1);
-            ++topN;
+            // Farthest vertex (larger depth) — better than average for large translucent slabs.
+            topDepthFar = qMax(topDepthFar, depth3D(p.x(), p.y(), z1));
         }
-        if (topN > 0)
-            topDepth /= topN;
 
         const int n = it.poly.pointsUm.size();
         const int edgeCount = (n > 1 && it.poly.pointsUm.first() == it.poly.pointsUm.last())
@@ -1143,19 +1149,32 @@ void LayoutView::rebuildScene3D(bool refit)
                  << project3D(b.x(), b.y(), z1)
                  << project3D(a.x(), a.y(), z1);
             QColor side = it.style.color.darker(135);
-            side.setAlpha(qBound(0, int(kBaseFillAlpha * op * 0.85 + 0.5), 255));
-            const qreal d = 0.25 * (depth3D(a.x(), a.y(), z0) + depth3D(b.x(), b.y(), z0)
-                                    + depth3D(b.x(), b.y(), z1) + depth3D(a.x(), a.y(), z1));
-            faces.push_back({wall, side, it.style.name, it.style.kind, it.poly.layer, false, d});
+            side.setAlpha(wallAlpha);
+            const qreal d = qMax(qMax(depth3D(a.x(), a.y(), z0), depth3D(b.x(), b.y(), z0)),
+                                 qMax(depth3D(b.x(), b.y(), z1), depth3D(a.x(), a.y(), z1)));
+            faces.push_back({wall, side, it.style.name, it.style.kind, it.poly.layer, false, d,
+                             zMid, 1});
         }
 
         QColor top = it.style.color;
-        top.setAlpha(qBound(0, int(kBaseFillAlpha * op + 0.5), 255));
-        faces.push_back({topPoly, top, it.style.name, it.style.kind, it.poly.layer, false, topDepth});
+        top.setAlpha(fillAlpha);
+        faces.push_back({topPoly, top, it.style.name, it.style.kind, it.poly.layer, false,
+                         topDepthFar, zMid, 2});
     }
 
+    // Stack-aware painter's algorithm: lower metals/vias first, then higher layers.
+    // Pure camera-depth sort makes near vias paint over translucent TopMetal2 (see palace_core_dev).
     std::stable_sort(faces.begin(), faces.end(),
-                     [](const Face &a, const Face &b) { return a.depth > b.depth; });
+                     [](const Face &a, const Face &b) {
+                         constexpr qreal kEpsZ = 1e-4;
+                         if (a.zMid + kEpsZ < b.zMid)
+                             return true;
+                         if (b.zMid + kEpsZ < a.zMid)
+                             return false;
+                         if (a.faceKind != b.faceKind)
+                             return a.faceKind < b.faceKind; // walls before tops in a band
+                         return a.depth > b.depth; // farther first within the same face class
+                     });
     m_lastIso3dStats.faceCount = faces.size();
 
     QRectF geomBounds;

@@ -21,6 +21,7 @@
 #include <QMenu>
 #include <QFile>
 #include <QDebug>
+#include <QDir>
 #include <QAction>
 #include <QProcess>
 #include <QFileInfo>
@@ -516,6 +517,42 @@ void MainWindow::syncGuiSettingsToPythonEditor()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Writes GDS / substrate paths from the Main-tab line edits into the Python editor.
+ *
+ * Used when the user browses (or otherwise changes) paths so the model script stays
+ * consistent with the layout viewer — including gds2palace \c settings['GdsFile'].
+ **********************************************************************************************************************/
+void MainWindow::syncGuiPathsToPythonEditor()
+{
+    if (!m_ui || !m_ui->editRunPythonScript)
+        return;
+
+    QString script = m_ui->editRunPythonScript->toPlainText();
+    if (script.trimmed().isEmpty())
+        return;
+
+    if (m_ui->txtGdsFile) {
+        const QString gds = m_ui->txtGdsFile->text().trimmed();
+        if (!gds.isEmpty()) {
+            m_simSettings[QStringLiteral("GdsFile")] = gds;
+            if (!m_modelGdsKey.isEmpty())
+                m_simSettings[m_modelGdsKey] = gds;
+        }
+    }
+    if (m_ui->txtSubstrate) {
+        const QString xml = m_ui->txtSubstrate->text().trimmed();
+        if (!xml.isEmpty()) {
+            m_simSettings[QStringLiteral("SubstrateFile")] = xml;
+            if (!m_modelXmlKey.isEmpty())
+                m_simSettings[m_modelXmlKey] = xml;
+        }
+    }
+
+    applyGdsAndXmlPaths(script, currentSimToolKey().toLower());
+    setEditorScriptPreservingState(script);
+}
+
+/*!*******************************************************************************************************************
  * \brief Patches a gds2palace model script for Elmer solver output (run_elmer, settings['elmer']).
  **********************************************************************************************************************/
 void MainWindow::applyElmerWorkflowToScript(QString &script)
@@ -608,32 +645,52 @@ void MainWindow::applyBoundaries(QString &script, bool alsoTopLevelAssignment)
 QString MainWindow::makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const
 {
 #ifdef Q_OS_WIN
-    if (simKeyLower == QLatin1String("palace")) {
+    if (simKeyLower == QLatin1String("palace") || isElmerFamilyKey(simKeyLower)) {
         if (isWslAvailable())
             return toWslPath(nativePath);
     }
 #else
     Q_UNUSED(simKeyLower);
 #endif
-    return nativePath;
+    // Python string literals: prefer forward slashes (works on Windows too).
+    return QDir::fromNativeSeparators(nativePath);
 }
 
 /*!*******************************************************************************************************************
  * \brief Updates GDS and substrate XML file path variables inside the script.
  *
- * Replaces \c gds_filename and \c XML_filename assignments with values taken from \c m_simSettings
- * (keys: \c GdsFile, \c SubstrateFile). Paths may be converted to WSL form depending on platform/tool.
+ * Replaces top-level \c gds_filename / \c XML_filename and gds2palace-style
+ * \c settings['GdsFile'] / \c settings['SubstrateFile'] (plus model-specific keys).
+ * Paths may be converted to WSL form depending on platform/tool.
  *
  * \param script      Python script text to be modified in-place.
  * \param simKeyLower Current simulation tool key in lower-case (e.g. "openems", "palace").
  **********************************************************************************************************************/
 void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower)
 {
+    auto replaceDictStringAssign = [&](const QString &key, const QString &value) {
+        if (key.isEmpty())
+            return;
+        const QRegularExpression re(
+            QStringLiteral(R"((?m)^([ \t]*\w+\s*\[\s*['"]%1['"]\s*\]\s*=\s*)([^\n#]+)(.*)$)")
+                .arg(QRegularExpression::escape(key)));
+        if (script.contains(re))
+            script.replace(re, QStringLiteral("\\1\"%1\"\\3").arg(value));
+    };
+
     if (m_simSettings.contains("GdsFile")) {
         QString gdsPath = makeScriptPathForPython(m_simSettings.value("GdsFile").toString(), simKeyLower);
 
         QRegularExpression re("^gds_filename\\s*=.*$", QRegularExpression::MultilineOption);
         script.replace(re, QStringLiteral("gds_filename = \"%1\"").arg(gdsPath));
+
+        // gds2palace / Elmer: settings['GdsFile'] (and model-specific key if different).
+        QStringList gdsKeys{QStringLiteral("GdsFile")};
+        if (!m_modelGdsKey.isEmpty())
+            gdsKeys << m_modelGdsKey;
+        gdsKeys.removeDuplicates();
+        for (const QString &k : gdsKeys)
+            replaceDictStringAssign(k, gdsPath);
     }
 
     const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
@@ -697,6 +754,13 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
         QRegularExpression re("^XML_filename\\s*=.*$",
                               QRegularExpression::MultilineOption);
         script.replace(re, QStringLiteral("XML_filename = \"%1\"").arg(xmlPath));
+
+        QStringList xmlKeys{QStringLiteral("SubstrateFile")};
+        if (!m_modelXmlKey.isEmpty())
+            xmlKeys << m_modelXmlKey;
+        xmlKeys.removeDuplicates();
+        for (const QString &k : xmlKeys)
+            replaceDictStringAssign(k, xmlPath);
     }
 }
 

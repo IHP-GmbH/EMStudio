@@ -56,11 +56,141 @@
 #include <QHBoxLayout>
 #include <QGraphicsPixmapItem>
 #include <QPixmap>
+#include <QImage>
+#include <QElapsedTimer>
+#include <QHash>
+#include <QPair>
 #include <QtGlobal>
 #include <QtMath>
 #include <cmath>
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
+
+namespace {
+
+/*! ADS-style via-array envelope for Iso3D (display-only).
+ *  Grow → cluster overlapping expanded AABBs (union-find) → one solid bar per array.
+ *  Avoids QPainterPath::simplified() which is O(n²)-ish on thousands of vias and freezes the UI. */
+QVector<QPolygonF> growEnvelopeMerge(const QVector<QPolygonF> &polys, qreal growUm)
+{
+    QVector<QPolygonF> out;
+    const int n = polys.size();
+    if (n <= 0)
+        return out;
+    if (n == 1) {
+        out.push_back(polys.first());
+        return out;
+    }
+
+    QVector<QRectF> orig;
+    QVector<QRectF> grown;
+    orig.reserve(n);
+    grown.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        if (polys.at(i).size() < 3)
+            continue;
+        const QRectF br = polys.at(i).boundingRect();
+        if (!br.isValid() || br.width() <= 0 || br.height() <= 0)
+            continue;
+        orig.push_back(br);
+        grown.push_back(br.adjusted(-growUm, -growUm, growUm, growUm));
+    }
+    const int m = orig.size();
+    if (m == 0)
+        return out;
+    if (m == 1) {
+        const QRectF &r = orig.first();
+        QPolygonF p;
+        p << r.topLeft() << r.topRight() << r.bottomRight() << r.bottomLeft() << r.topLeft();
+        out.push_back(p);
+        return out;
+    }
+
+    QVector<int> parent(m);
+    for (int i = 0; i < m; ++i)
+        parent[i] = i;
+    auto find = [&](int x) {
+        while (parent[x] != x) {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        return x;
+    };
+    auto unite = [&](int a, int b) {
+        a = find(a);
+        b = find(b);
+        if (a != b)
+            parent[b] = a;
+    };
+
+    // Spatial hash so we only test nearby vias (not O(n²) AABB checks).
+    const qreal cell = qMax(growUm * 4.0, 1.0);
+    QHash<QPair<int, int>, QVector<int>> grid;
+    auto keyOf = [&](const QRectF &r) {
+        const qreal cx = r.center().x();
+        const qreal cy = r.center().y();
+        return qMakePair(int(std::floor(cx / cell)), int(std::floor(cy / cell)));
+    };
+    for (int i = 0; i < m; ++i) {
+        const auto key = keyOf(grown.at(i));
+        const int gx = key.first;
+        const int gy = key.second;
+        for (int dx = -1; dx <= 1; ++dx) {
+            for (int dy = -1; dy <= 1; ++dy) {
+                const auto it = grid.constFind(qMakePair(gx + dx, gy + dy));
+                if (it == grid.cend())
+                    continue;
+                for (int j : *it) {
+                    if (grown.at(i).intersects(grown.at(j)))
+                        unite(i, j);
+                }
+            }
+        }
+        grid[key].push_back(i);
+    }
+
+    QHash<int, QRectF> clusterBox;
+    for (int i = 0; i < m; ++i) {
+        const int root = find(i);
+        auto it = clusterBox.find(root);
+        if (it == clusterBox.end())
+            clusterBox.insert(root, orig.at(i));
+        else
+            *it = it->united(orig.at(i));
+    }
+
+    out.reserve(clusterBox.size());
+    for (auto it = clusterBox.cbegin(); it != clusterBox.cend(); ++it) {
+        const QRectF &r = it.value();
+        QPolygonF p;
+        p << r.topLeft() << r.topRight() << r.bottomRight() << r.bottomLeft() << r.topLeft();
+        out.push_back(p);
+    }
+    return out;
+}
+
+qreal estimateViaGrowUm(const QVector<QPolygonF> &polys)
+{
+    if (polys.isEmpty())
+        return 0.35;
+    // Median half-width of vias. Array pitch is typically ~2× via size (gap ≈ size),
+    // so grow must be ≥ half-gap ≈ half-width; use ~2× with headroom for PDK pitch stretch.
+    QVector<qreal> half;
+    half.reserve(qMin(polys.size(), 256));
+    for (int i = 0; i < polys.size() && half.size() < 256; ++i) {
+        const QRectF br = polys.at(i).boundingRect();
+        if (br.width() > 0 && br.height() > 0)
+            half.push_back(0.5 * qMin(br.width(), br.height()));
+    }
+    if (half.isEmpty())
+        return 0.35;
+    std::nth_element(half.begin(), half.begin() + half.size() / 2, half.end());
+    const qreal med = half.at(half.size() / 2);
+    // Bridge gaps up to ~2× via size (IHP-like arrays); clamp for safety.
+    return qBound(0.08, med * 2.2, 2.0);
+}
+
+} // namespace
 
 /*!*******************************************************************************************************************
  * \brief Constructs the LayoutView used for GDS top-view preview on the Substrate tab.
@@ -279,6 +409,7 @@ void LayoutView::rebuildScene(bool refit)
     m_scene->setSceneRect(QRectF());
 
     if (isFieldVolume()) {
+        m_scene->setItemIndexMethod(QGraphicsScene::BspTreeIndex);
         addFieldVolumeItems();
         m_highlightedName = keepHighlight;
         if (refit && !m_zoomLocked)
@@ -287,14 +418,43 @@ void LayoutView::rebuildScene(bool refit)
         return;
     }
 
-    if (m_viewMode == ViewMode::Iso3D)
+    if (m_viewMode == ViewMode::Iso3D) {
+        // Dense Iso3D (thousands of vias) — BSP build dominates load/orbit time.
+        m_scene->setItemIndexMethod(QGraphicsScene::NoIndex);
         rebuildScene3D(refit);
-    else
+    } else {
+        m_scene->setItemIndexMethod(QGraphicsScene::BspTreeIndex);
         rebuildScene2D(refit);
+    }
 
     m_highlightedName = keepHighlight;
     applyHighlight();
     repositionFloatingControls();
+}
+
+void LayoutView::scheduleOrbitRebuild()
+{
+    if (m_viewMode != ViewMode::Iso3D || m_polys.isEmpty() || isFieldVolume())
+        return;
+    if (!m_orbitRebuildTimer) {
+        m_orbitRebuildTimer = new QTimer(this);
+        m_orbitRebuildTimer->setSingleShot(true);
+        m_orbitRebuildTimer->setInterval(33); // ~30 fps while dragging
+        connect(m_orbitRebuildTimer, &QTimer::timeout, this, [this]() {
+            if (m_viewMode == ViewMode::Iso3D && !m_polys.isEmpty() && !isFieldVolume())
+                rebuildScene(false);
+        });
+    }
+    if (!m_orbitRebuildTimer->isActive())
+        m_orbitRebuildTimer->start();
+}
+
+void LayoutView::flushOrbitRebuild()
+{
+    if (m_orbitRebuildTimer && m_orbitRebuildTimer->isActive())
+        m_orbitRebuildTimer->stop();
+    if (m_viewMode == ViewMode::Iso3D && !m_polys.isEmpty() && !isFieldVolume())
+        rebuildScene(false);
 }
 
 void LayoutView::rebuildScene2D(bool refit)
@@ -688,6 +848,11 @@ bool LayoutView::layerMidZ(const QString &nameOrGds, qreal *zMid) const
 
 void LayoutView::rebuildScene3D(bool refit)
 {
+    QElapsedTimer timer;
+    timer.start();
+    m_lastIso3dStats = Iso3dRebuildStats{};
+    m_lastIso3dStats.inputPolyCount = m_polys.size();
+
     struct Item {
         GdsFlatPolygon poly;
         LayerStyle style;
@@ -697,7 +862,6 @@ void LayoutView::rebuildScene3D(bool refit)
 
     updateOrbitCenter();
 
-    // Used-metal Z span (fallback when a port has no from/to in the table).
     double zLo = m_orbitCz - 0.5;
     double zHi = m_orbitCz + 0.5;
     bool anyZ = false;
@@ -743,6 +907,69 @@ void LayoutView::rebuildScene3D(bool refit)
         items.push_back({p, st});
     }
 
+    constexpr int kViaMergePerLayer = 48;
+    QHash<int, QVector<QPolygonF>> viasByLayer;
+    QHash<int, LayerStyle> viaStyleByLayer;
+    int viaPolyCount = 0;
+    QVector<Item> extrudeItems;
+    extrudeItems.reserve(items.size());
+
+    for (const Item &it : items) {
+        const bool isPort = (it.style.kind == QLatin1String("port"))
+                || (it.poly.layer >= 201 && it.poly.layer <= 299);
+        if (isPort)
+            continue;
+        const bool isVia = (it.style.kind.compare(QLatin1String("via"), Qt::CaseInsensitive) == 0);
+        if (isVia && it.poly.pointsUm.size() >= 3) {
+            viasByLayer[it.poly.layer].push_back(it.poly.pointsUm);
+            viaStyleByLayer.insert(it.poly.layer, it.style);
+            ++viaPolyCount;
+        } else {
+            extrudeItems.push_back(it);
+        }
+    }
+    m_lastIso3dStats.viaPolyCount = viaPolyCount;
+
+    bool anyMerged = false;
+    int viaEnvelopeCount = 0;
+    for (auto it = viasByLayer.cbegin(); it != viasByLayer.cend(); ++it) {
+        const LayerStyle st = viaStyleByLayer.value(it.key());
+        const bool mergeLayer = it.value().size() >= kViaMergePerLayer;
+        if (mergeLayer) {
+            const qreal grow = estimateViaGrowUm(it.value());
+            const QVector<QPolygonF> envelopes = growEnvelopeMerge(it.value(), grow);
+            // Only count as merged when growEnvelope actually collapsed the array.
+            if (!envelopes.isEmpty() && envelopes.size() < it.value().size()) {
+                anyMerged = true;
+                viaEnvelopeCount += envelopes.size();
+                for (const QPolygonF &env : envelopes) {
+                    GdsFlatPolygon gp;
+                    gp.layer = it.key();
+                    gp.pointsUm = env;
+                    extrudeItems.push_back({gp, st});
+                }
+            } else {
+                viaEnvelopeCount += it.value().size();
+                for (const QPolygonF &poly : it.value()) {
+                    GdsFlatPolygon gp;
+                    gp.layer = it.key();
+                    gp.pointsUm = poly;
+                    extrudeItems.push_back({gp, st});
+                }
+            }
+        } else {
+            viaEnvelopeCount += it.value().size();
+            for (const QPolygonF &poly : it.value()) {
+                GdsFlatPolygon gp;
+                gp.layer = it.key();
+                gp.pointsUm = poly;
+                extrudeItems.push_back({gp, st});
+            }
+        }
+    }
+    m_lastIso3dStats.mergedVias = anyMerged;
+    m_lastIso3dStats.viaEnvelopeCount = viaEnvelopeCount;
+
     struct Face {
         QPolygonF poly;
         QColor fill;
@@ -753,10 +980,12 @@ void LayoutView::rebuildScene3D(bool refit)
         qreal depth = 0.0;
     };
     QVector<Face> faces;
+    faces.reserve(extrudeItems.size() * 5);
 
     constexpr qreal kMinThickUm = 0.05;
     QRectF portBounds;
 
+    // Ports first (interactive items — few).
     for (const Item &it : items) {
         if (it.poly.pointsUm.size() < 2)
             continue;
@@ -765,123 +994,126 @@ void LayoutView::rebuildScene3D(bool refit)
         const bool vis = visibleFor(it.poly.layer);
         const bool isPort = (it.style.kind == QLatin1String("port"))
                 || (it.poly.layer >= 201 && it.poly.layer <= 299);
-
-        // Ports: markers on feeder XY at from↔to Z (not top of full stackup).
-        if (isPort) {
-            QPointF c(0, 0);
-            int nPts = 0;
-            const int n = it.poly.pointsUm.size();
-            const int count = (n > 1 && it.poly.pointsUm.first() == it.poly.pointsUm.last())
-                    ? n - 1 : n;
-            for (int i = 0; i < count; ++i) {
-                c += it.poly.pointsUm.at(i);
-                ++nPts;
-            }
-            if (nPts < 1)
-                continue;
-            c /= nPts;
-
-            const PortInfo pi = m_ports.value(it.poly.layer);
-            QString dir = pi.direction.trimmed().toLower();
-            if (dir.isEmpty())
-                dir = QStringLiteral("z");
-
-            QColor col = it.style.color;
-            col.setAlpha(qBound(40, int(255 * op + 0.5), 255));
-            const QString pname = it.style.name.isEmpty()
-                    ? QStringLiteral("P%1").arg(it.poly.layer - 200)
-                    : it.style.name;
-
-            QPointF tipScene;
-            QPointF labelPos;
-
-            if (dir.contains(QLatin1Char('z'))) {
-                // XY = port footprint in layout; Z = XML From → To (from Ports table).
-                const bool neg = dir.startsWith(QLatin1Char('-'));
-                qreal zFrom = 0.0;
-                qreal zTo = 0.0;
-                bool gotFrom = pi.hasFromZ;
-                bool gotTo = pi.hasToZ;
-                if (gotFrom)
-                    zFrom = pi.zFromUm;
-                else
-                    gotFrom = layerMidZ(pi.fromLayer, &zFrom);
-                if (gotTo)
-                    zTo = pi.zToUm;
-                else
-                    gotTo = layerMidZ(pi.toLayer, &zTo);
-
-                if (gotFrom && !gotTo)
-                    zTo = zFrom + 0.5;
-                else if (!gotFrom && gotTo)
-                    zFrom = zTo - 0.5;
-                else if (!gotFrom && !gotTo) {
-                    zFrom = 0.5 * (zLo + zHi) - 0.25;
-                    zTo = zFrom + 0.5;
-                }
-
-                if (qAbs(zTo - zFrom) < 0.05)
-                    zTo = zFrom + (neg ? -0.05 : 0.05);
-                const qreal zTip = neg ? zFrom : zTo;
-                const qreal zTail = neg ? zTo : zFrom;
-                tipScene = project3D(c.x(), c.y(), zTip);
-                const QPointF tailScene = project3D(c.x(), c.y(), zTail);
-                addPortArrowAlong(tailScene, tipScene, col, pname, QStringLiteral("port"),
-                                  it.poly.layer, vis, 1e9,
-                                  neg ? QStringLiteral("-z") : QStringLiteral("z"));
-                labelPos = project3D(c.x(), c.y(), 0.5 * (zTail + zTip));
-            } else {
-                qreal zMark = 0.5 * (zLo + zHi);
-                if (pi.hasFromZ && pi.hasToZ)
-                    zMark = 0.5 * (pi.zFromUm + pi.zToUm);
-                else if (pi.hasToZ)
-                    zMark = pi.zToUm;
-                else if (pi.hasFromZ)
-                    zMark = pi.zFromUm;
-                qreal dx = 1.0, dy = 0.0;
-                QString dirLabel = QStringLiteral("x");
-                if (dir == QLatin1String("-x")) {
-                    dx = -1.0;
-                    dirLabel = QStringLiteral("-x");
-                } else if (dir == QLatin1String("y") || dir == QLatin1String("+y")) {
-                    dx = 0.0;
-                    dy = 1.0;
-                    dirLabel = QStringLiteral("y");
-                } else if (dir == QLatin1String("-y")) {
-                    dx = 0.0;
-                    dy = -1.0;
-                    dirLabel = QStringLiteral("-y");
-                }
-                tipScene = project3D(c.x(), c.y(), zMark);
-                const QPointF outward = project3D(c.x() - dx, c.y() - dy, zMark);
-                addPortArrowAlong(outward, tipScene, col, pname, QStringLiteral("port"),
-                                  it.poly.layer, vis, 1e9, dirLabel);
-                labelPos = tipScene;
-            }
-
-            auto *label = m_scene->addSimpleText(pname);
-            QFont f = label->font();
-            f.setBold(true);
-            f.setPointSize(9);
-            label->setFont(f);
-            label->setBrush(col);
-            label->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
-            label->setData(kRoleName, pname);
-            label->setData(kRoleKind, QStringLiteral("port"));
-            label->setData(kRoleGds, it.poly.layer);
-            label->setData(kRoleIsPort, true);
-            label->setData(kRolePen, it.style.color);
-            label->setVisible(vis);
-            label->setZValue(1e9 + 0.1);
-            label->setPos(labelPos);
-            setPixelOffset(label, 8, -16);
-            portBounds |= QRectF(labelPos.x() - 2, labelPos.y() - 2, 4, 4);
+        if (!isPort)
             continue;
+
+        QPointF c(0, 0);
+        int nPts = 0;
+        const int n = it.poly.pointsUm.size();
+        const int count = (n > 1 && it.poly.pointsUm.first() == it.poly.pointsUm.last())
+                ? n - 1 : n;
+        for (int i = 0; i < count; ++i) {
+            c += it.poly.pointsUm.at(i);
+            ++nPts;
+        }
+        if (nPts < 1)
+            continue;
+        c /= nPts;
+
+        const PortInfo pi = m_ports.value(it.poly.layer);
+        QString dir = pi.direction.trimmed().toLower();
+        if (dir.isEmpty())
+            dir = QStringLiteral("z");
+
+        QColor col = it.style.color;
+        col.setAlpha(qBound(40, int(255 * op + 0.5), 255));
+        const QString pname = it.style.name.isEmpty()
+                ? QStringLiteral("P%1").arg(it.poly.layer - 200)
+                : it.style.name;
+
+        QPointF tipScene;
+        QPointF labelPos;
+
+        if (dir.contains(QLatin1Char('z'))) {
+            const bool neg = dir.startsWith(QLatin1Char('-'));
+            qreal zFrom = 0.0;
+            qreal zTo = 0.0;
+            bool gotFrom = pi.hasFromZ;
+            bool gotTo = pi.hasToZ;
+            if (gotFrom)
+                zFrom = pi.zFromUm;
+            else
+                gotFrom = layerMidZ(pi.fromLayer, &zFrom);
+            if (gotTo)
+                zTo = pi.zToUm;
+            else
+                gotTo = layerMidZ(pi.toLayer, &zTo);
+
+            if (gotFrom && !gotTo)
+                zTo = zFrom + 0.5;
+            else if (!gotFrom && gotTo)
+                zFrom = zTo - 0.5;
+            else if (!gotFrom && !gotTo) {
+                zFrom = 0.5 * (zLo + zHi) - 0.25;
+                zTo = zFrom + 0.5;
+            }
+
+            if (qAbs(zTo - zFrom) < 0.05)
+                zTo = zFrom + (neg ? -0.05 : 0.05);
+            const qreal zTip = neg ? zFrom : zTo;
+            const qreal zTail = neg ? zTo : zFrom;
+            tipScene = project3D(c.x(), c.y(), zTip);
+            const QPointF tailScene = project3D(c.x(), c.y(), zTail);
+            addPortArrowAlong(tailScene, tipScene, col, pname, QStringLiteral("port"),
+                              it.poly.layer, vis, 1e9,
+                              neg ? QStringLiteral("-z") : QStringLiteral("z"));
+            labelPos = project3D(c.x(), c.y(), 0.5 * (zTail + zTip));
+        } else {
+            qreal zMark = 0.5 * (zLo + zHi);
+            if (pi.hasFromZ && pi.hasToZ)
+                zMark = 0.5 * (pi.zFromUm + pi.zToUm);
+            else if (pi.hasToZ)
+                zMark = pi.zToUm;
+            else if (pi.hasFromZ)
+                zMark = pi.zFromUm;
+            qreal dx = 1.0, dy = 0.0;
+            QString dirLabel = QStringLiteral("x");
+            if (dir == QLatin1String("-x")) {
+                dx = -1.0;
+                dirLabel = QStringLiteral("-x");
+            } else if (dir == QLatin1String("y") || dir == QLatin1String("+y")) {
+                dx = 0.0;
+                dy = 1.0;
+                dirLabel = QStringLiteral("y");
+            } else if (dir == QLatin1String("-y")) {
+                dx = 0.0;
+                dy = -1.0;
+                dirLabel = QStringLiteral("-y");
+            }
+            tipScene = project3D(c.x(), c.y(), zMark);
+            const QPointF outward = project3D(c.x() - dx, c.y() - dy, zMark);
+            addPortArrowAlong(outward, tipScene, col, pname, QStringLiteral("port"),
+                              it.poly.layer, vis, 1e9, dirLabel);
+            labelPos = tipScene;
         }
 
+        auto *label = m_scene->addSimpleText(pname);
+        QFont f = label->font();
+        f.setBold(true);
+        f.setPointSize(9);
+        label->setFont(f);
+        label->setBrush(col);
+        label->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+        label->setData(kRoleName, pname);
+        label->setData(kRoleKind, QStringLiteral("port"));
+        label->setData(kRoleGds, it.poly.layer);
+        label->setData(kRoleIsPort, true);
+        label->setData(kRolePen, it.style.color);
+        label->setVisible(vis);
+        label->setZValue(1e9 + 0.1);
+        label->setPos(labelPos);
+        setPixelOffset(label, 8, -16);
+        portBounds |= QRectF(labelPos.x() - 2, labelPos.y() - 2, 4, 4);
+    }
+
+    // Metals + via envelopes: full 3D (top + walls).
+    for (const Item &it : extrudeItems) {
         if (it.poly.pointsUm.size() < 3)
             continue;
+        if (!visibleFor(it.poly.layer))
+            continue;
 
+        const qreal op = opacityFor(it.poly.layer);
         double z0 = std::min(it.style.zminUm, it.style.zmaxUm);
         double z1 = std::max(it.style.zminUm, it.style.zmaxUm);
         if (z1 - z0 < kMinThickUm)
@@ -922,26 +1154,62 @@ void LayoutView::rebuildScene3D(bool refit)
         faces.push_back({topPoly, top, it.style.name, it.style.kind, it.poly.layer, false, topDepth});
     }
 
-    // Painter's algorithm: farther faces first (lower zValue), closer on top.
     std::stable_sort(faces.begin(), faces.end(),
                      [](const Face &a, const Face &b) { return a.depth > b.depth; });
+    m_lastIso3dStats.faceCount = faces.size();
 
+    QRectF geomBounds;
+    for (const Face &f : faces)
+        geomBounds |= f.poly.boundingRect();
     QRectF bounds = portBounds;
-    for (int i = 0; i < faces.size(); ++i) {
-        const Face &f = faces.at(i);
-        const bool vis = visibleFor(f.gds);
-        auto *item = m_scene->addPolygon(f.poly, QPen(QColor(30, 30, 30), 0), QBrush(f.fill));
-        item->setData(kRoleName, f.name);
-        item->setData(kRoleKind, f.kind);
-        item->setData(kRoleGds, f.gds);
-        item->setData(kRoleIsPort, false);
-        if (m_styles.contains(f.gds))
-            item->setData(kRoleBrush, m_styles.value(f.gds).color);
-        else
-            item->setData(kRoleBrush, f.fill);
-        item->setVisible(vis);
-        item->setZValue(double(i));
-        bounds |= f.poly.boundingRect();
+    bounds = bounds.isNull() ? geomBounds : bounds.united(geomBounds);
+
+    // Dense Iso3D: one pixmap instead of thousands of QGraphicsItems (orbit stays responsive).
+    constexpr int kPixmapFaceThreshold = 250;
+    const bool usePixmap = faces.size() >= kPixmapFaceThreshold;
+    m_lastIso3dStats.usedPixmap = usePixmap;
+
+    if (usePixmap && !geomBounds.isNull() && geomBounds.width() > 1e-9 && geomBounds.height() > 1e-9) {
+        constexpr int kMaxPx = 2048;
+        const qreal scale = qBound(2.0,
+                                   qreal(kMaxPx) / qMax(geomBounds.width(), geomBounds.height()),
+                                   64.0);
+        const int pw = qMax(1, int(std::ceil(geomBounds.width() * scale)));
+        const int ph = qMax(1, int(std::ceil(geomBounds.height() * scale)));
+        QImage img(pw, ph, QImage::Format_ARGB32_Premultiplied);
+        img.fill(Qt::transparent);
+        QPainter painter(&img);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.translate(-geomBounds.left() * scale, -geomBounds.top() * scale);
+        painter.scale(scale, scale);
+        painter.setPen(QPen(QColor(40, 40, 40, 160), 0));
+        for (const Face &f : faces) {
+            painter.setBrush(f.fill);
+            painter.drawPolygon(f.poly);
+        }
+        painter.end();
+
+        auto *pix = m_scene->addPixmap(QPixmap::fromImage(img));
+        pix->setPos(geomBounds.topLeft());
+        pix->setScale(1.0 / scale);
+        pix->setZValue(0);
+        pix->setAcceptedMouseButtons(Qt::NoButton);
+    } else {
+        const QPen facePen(QColor(30, 30, 30), 0);
+        for (int i = 0; i < faces.size(); ++i) {
+            const Face &f = faces.at(i);
+            auto *item = m_scene->addPolygon(f.poly, facePen, QBrush(f.fill));
+            item->setData(kRoleName, f.name);
+            item->setData(kRoleKind, f.kind);
+            item->setData(kRoleGds, f.gds);
+            item->setData(kRoleIsPort, false);
+            if (m_styles.contains(f.gds))
+                item->setData(kRoleBrush, m_styles.value(f.gds).color);
+            else
+                item->setData(kRoleBrush, f.fill);
+            item->setVisible(true);
+            item->setZValue(double(i));
+        }
     }
 
     if (!bounds.isNull()) {
@@ -953,6 +1221,9 @@ void LayoutView::rebuildScene3D(bool refit)
             fitContent();
         }
     }
+
+    m_lastIso3dStats.sceneItemCount = m_scene->items().size();
+    m_lastIso3dStats.ms = timer.elapsed();
 }
 
 QPointF LayoutView::project3D(qreal xUm, qreal yUm, qreal zUm) const
@@ -1800,7 +2071,7 @@ void LayoutView::wheelEvent(QWheelEvent *event)
             return;
         }
         if (!m_polys.isEmpty())
-            rebuildScene(false);
+            scheduleOrbitRebuild();
     };
 
     auto applyPan = [&](int dx, int dy) {
@@ -2112,7 +2383,7 @@ void LayoutView::mouseMoveEvent(QMouseEvent *event)
             if (m_fieldStatusLbl)
                 m_fieldStatusLbl->setText(tr("Orbit… release to update"));
         } else if (!m_polys.isEmpty()) {
-            rebuildScene(false);
+            scheduleOrbitRebuild();
         }
         event->accept();
         return;
@@ -2189,6 +2460,8 @@ void LayoutView::mouseReleaseEvent(QMouseEvent *event)
         viewport()->setCursor(Qt::ArrowCursor);
         if (isFieldVolume())
             emitFieldSliceRequest();
+        else
+            flushOrbitRebuild();
         event->accept();
         return;
     }

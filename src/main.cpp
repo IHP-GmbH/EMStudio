@@ -81,9 +81,11 @@
 #include <QSplashScreen>
 #include <QCoreApplication>
 #include <QGuiApplication>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QFontInfo>
 #include <QScreen>
+#include <QtGlobal>
 #include <cstdint>
 
 #if defined(Q_OS_WIN)
@@ -233,6 +235,8 @@ int main(int argc, char *argv[])
     }
 
     QScopedPointer<QSplashScreen> splash;
+    QElapsedTimer splashClock;
+    constexpr int kSplashMinMs = 1000;
     if (!headlessRun) {
         QPixmap pixmap(":/logo");
         QPixmap scaledPixmap = pixmap.scaled(
@@ -243,13 +247,19 @@ int main(int argc, char *argv[])
             );
         splash.reset(new QSplashScreen(scaledPixmap));
         splash->show();
+        splash->showMessage(QObject::tr("Loading…"),
+                            Qt::AlignBottom | Qt::AlignHCenter,
+                            QColor(240, 240, 240));
         a.processEvents();
+        splashClock.start();
     }
 
     MainWindow w;
 
     if (!pythonFile.isEmpty() && QFileInfo::exists(pythonFile)) {
         w.loadPythonModel(pythonFile);
+        if (splash)
+            a.processEvents();
     }
 
     if (!gdsFile.isEmpty())
@@ -265,9 +275,17 @@ int main(int argc, char *argv[])
         return a.exec();
     }
 
-    QTimer::singleShot(1000, [&]() {
-        if (splash) splash->finish(&w);
-        w.tryAutoLoadRecentPythonForTopCell();
+    // Heavy session restore / layout preview under the splash (not after it closes).
+    w.tryAutoLoadRecentPythonForTopCell();
+    if (splash)
+        a.processEvents();
+
+    const int remainMs = splash
+            ? qMax(0, kSplashMinMs - int(splashClock.elapsed()))
+            : 0;
+    QTimer::singleShot(remainMs, [&]() {
+        if (splash)
+            splash->finish(&w);
         w.show();
     });
 

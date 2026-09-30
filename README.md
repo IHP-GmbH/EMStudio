@@ -329,7 +329,7 @@ When a valid model is loaded or created from the template, the main tab will loo
 <img src="./doc/png/main2.png" alt="main" width="700">
 
 Not all possible settings are included in the template. Adding an additional setting is possible using the script editor on the Python tab. For a full list of available settings[] and their meaning, please refer to the documentation of the IHP openEMS workflow:
-https://github.com/VolkerMuehlhaus/openems_ihp_sg13g2/blob/main/doc/Using_OpenEMS_Python_with_IHP_SG13G2_v2.pdf
+https://github.com/VolkerMuehlhaus/gds2openEMS/blob/main/doc/Using_OpenEMS_Python_with_IHP_SG13G2_v3.pdf
 and IHP Palace workflow gds2palace:
 https://github.com/VolkerMuehlhaus/gds2palace_ihp_sg13g2/blob/main/doc/gds2palace_workflow_userguide.pdf
 
@@ -490,7 +490,7 @@ These repositories provide real-world examples for **OpenEMS**, **Palace**, and 
 ## 1. OpenEMS Example (IHP SG13G2)
 
 **Repository:**  
-https://github.com/VolkerMuehlhaus/openems_ihp_sg13g2
+https://github.com/VolkerMuehlhaus/gds2openEMS
 
 This project contains:
 

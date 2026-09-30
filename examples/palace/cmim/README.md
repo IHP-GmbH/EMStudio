@@ -103,6 +103,6 @@ To compare against the openEMS equivalent MIM, point `XML_filename` at
 
 `openems_cmim_tm1fix.py` uses the same GDS and via ports as `palace_cmim_tm1fix.py`,
 but the openEMS stackup and FDTD workflow. Place Volker’s
-[openems_ihp_sg13g2](https://github.com/VolkerMuehlhaus/openems_ihp_sg13g2)
+[gds2openEMS](https://github.com/VolkerMuehlhaus/gds2openEMS)
 `workflow/modules` next to the script (folder name `modules`), select **OpenEMS**
 in EMStudio, and use a Python that has `openEMS` (Windows wheels: 3.10 / 3.11).

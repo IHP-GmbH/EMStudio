@@ -21,7 +21,7 @@
 # Same GDS/ports as palace_cmim_tm1fix.py, but openEMS FDTD workflow.
 # Stackup: SG13G2_200um_openems.xml (MIM equiv. 0.1 um / er=16.87).
 #
-# Needs openems_ihp_sg13g2 "modules" next to this script (or on PYTHONPATH),
+# Needs gds2openEMS "modules" next to this script (or on PYTHONPATH),
 # and Python with openEMS (Windows wheels: 3.10/3.11).
 
 import os

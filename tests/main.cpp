@@ -133,6 +133,14 @@ int main(int argc, char **argv)
     const QString logDir    = QDir::currentPath();
     const QString mergedLog = logDir + "/test_results.txt";
 
+    // Optional filter: emstudio_golden_tests LayoutViewTest
+    QStringList onlySuites;
+    for (int i = 1; i < argc; ++i) {
+        const QString a = QString::fromLocal8Bit(argv[i]);
+        if (!a.startsWith(QLatin1Char('-')))
+            onlySuites << a;
+    }
+
     QFile::remove(mergedLog);
 
     const QList<TestEntry> tests = {
@@ -166,6 +174,9 @@ int main(int argc, char **argv)
     QStringList logFiles;
 
     for(const TestEntry &test : tests) {
+        if (!onlySuites.isEmpty() && !onlySuites.contains(test.name))
+            continue;
+
         const QString logFile = logDir + "/test_results_" + test.name + ".txt";
 
         QFile::remove(logFile);

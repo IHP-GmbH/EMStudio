@@ -55,6 +55,8 @@
 #include <QDockWidget>
 #include <QPixmap>
 #include <QSet>
+#include <QElapsedTimer>
+#include <QEventLoop>
 #include <algorithm>
 
 #include "extension/variantmanager.h"
@@ -4218,9 +4220,19 @@ void MainWindow::refreshLayoutPreview()
         return;
     }
 
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    QElapsedTimer wall;
+    wall.start();
+    // Keep the message pump alive so Windows does not mark us "Not Responding"
+    // during flatten / Iso3D of via-dense layouts.
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
     QVector<GdsFlatPolygon> polys;
     QString err;
+    QElapsedTimer step;
+    step.start();
     if (!GdsLayout::flattenTopCell(gdsPath, topCell, &polys, &err)) {
+        QApplication::restoreOverrideCursor();
         m_ui->layoutView->clear();
         m_layoutPreviewKey.clear();
         m_fieldLastDumpPath.clear();
@@ -4230,6 +4242,8 @@ void MainWindow::refreshLayoutPreview()
             info(err);
         return;
     }
+    const qint64 flattenMs = step.elapsed();
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // Keep stack metals + any unmapped layers (ports 201/202, etc.).
     // (No filter: LayoutView styles known layers; unmapped get a port color.)
@@ -4375,7 +4389,19 @@ void MainWindow::refreshLayoutPreview()
         }
     }
 
+    step.restart();
     m_ui->layoutView->setPolygons(polys, styles, ports);
+    const qint64 setPolysMs = step.elapsed();
+    const auto iso = m_ui->layoutView->lastIso3dRebuildStats();
+    qInfo().nospace()
+        << "Layout preview: polys=" << polys.size()
+        << " flattenMs=" << flattenMs
+        << " setPolygonsMs=" << setPolysMs
+        << " iso3dMs=" << iso.ms
+        << " vias=" << iso.viaPolyCount
+        << " envelopes=" << iso.viaEnvelopeCount
+        << " faces=" << iso.faceCount
+        << " wallMs=" << wall.elapsed();
 
     // New GDS / top cell / stackup → drop the previous Field heatmap so it cannot
     // ghost over the new layout or stretch sceneRect into a cropped strip.
@@ -4444,6 +4470,8 @@ void MainWindow::refreshLayoutPreview()
 
         m_layoutLayerPanel->setLayers(entries);
     }
+
+    QApplication::restoreOverrideCursor();
 }
 
 void MainWindow::setupLayoutLayerPanel()

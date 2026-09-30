@@ -19,6 +19,8 @@ private slots:
     void visibilityOpacity_andClear();
     void viewMode3d_isoExtrusion_persistsInSettings();
     void fieldMode_keeps2d_and3dOpensExternalSignal();
+    void iso3d_denseVias_growEnvelope_reportsTiming();
+    void iso3d_balunExample_flattenAndRebuild_reportsTiming();
 };
 
 #endif // TST_LAYOUT_VIEW_H

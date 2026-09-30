@@ -212,13 +212,21 @@ public:
      * \brief Relabels the probe checkbox: \c Temp for Elmer Thermal, \c Probe for EM Field.
      **********************************************************************************************************************/
     void                        setFieldProbeThermal(bool thermal);
-    /*!*******************************************************************************************************************
-     * \brief GDS µm Y-up bounding box of non-port layout polygons (for field crop).
-     *
-     * Skips port GDS layers (201–299) and styles tagged kind=port so the exporter
-     * frames the DUT rather than port markers.
-     **********************************************************************************************************************/
+    /*! GDS µm Y-up bounding box of non-port layout polygons (for field crop). */
     QRectF                      layoutContentBoundsUm() const;
+
+    /*! Timing / counts from the last Iso3D \c rebuildScene3D (for tests / profiling). */
+    struct Iso3dRebuildStats {
+        qint64 ms = 0;
+        int    inputPolyCount = 0;
+        int    viaPolyCount = 0;
+        int    viaEnvelopeCount = 0; //!< After ADS-style growEnvelope merge
+        int    faceCount = 0;
+        int    sceneItemCount = 0;
+        bool   usedPixmap = false;
+        bool   mergedVias = false;
+    };
+    Iso3dRebuildStats           lastIso3dRebuildStats() const { return m_lastIso3dStats; }
 
 signals:
     /*! Emitted when the user clicks a polygon; \a gdsLayer is the GDS number (-1 if unknown). */
@@ -328,6 +336,9 @@ private:
     void                        rebuildScene(bool refit = true);
     void                        rebuildScene2D(bool refit);
     void                        rebuildScene3D(bool refit);
+    /*! Coalesce Iso3D rebuilds while orbiting (mouse / wheel). */
+    void                        scheduleOrbitRebuild();
+    void                        flushOrbitRebuild();
     /*! Fit viewport to layout (Field: zoomed-in); scene still holds full field for zoom-out. */
     void                        fitPreferredContent();
     /*! Fit viewport to the full sceneRect (layout ∪ field domain). */
@@ -356,6 +367,8 @@ private:
     class QCheckBox            *m_fieldTempChk = nullptr;
     class QLabel               *m_fieldStatusLbl = nullptr;
     class QTimer               *m_volumeCamSettle = nullptr; //!< Debounce volume zoom re-render
+    class QTimer               *m_orbitRebuildTimer = nullptr; //!< Coalesce Iso3D orbit rebuilds
+    Iso3dRebuildStats           m_lastIso3dStats;
     ViewMode                    m_viewMode = ViewMode::Top2D;
     bool                        m_fieldOn = false;
     FieldOverlay                m_field;

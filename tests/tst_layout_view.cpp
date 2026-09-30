@@ -16,8 +16,12 @@
 #include <QToolButton>
 #include <QCoreApplication>
 #include <QWheelEvent>
+#include <QElapsedTimer>
+#include <QDebug>
+#include <QFileInfo>
 
 #include "layoutview.h"
+#include "gdslayout.h"
 
 namespace {
 
@@ -373,4 +377,168 @@ void LayoutViewTest::fieldMode_keeps2d_and3dOpensExternalSignal()
         settings.remove(QStringLiteral("viewField"));
     settings.endGroup();
     settings.sync();
+}
+
+void LayoutViewTest::iso3d_denseVias_growEnvelope_reportsTiming()
+{
+    // Dense via array similar to balun_mim_vias (~3k vias): ADS growEnvelope → few bars.
+    constexpr int kGrid = 55; // 55×55 = 3025 vias
+    constexpr qreal kVia = 0.2;
+    constexpr qreal kPitch = 0.45;
+
+    QVector<GdsFlatPolygon> polys;
+    polys.reserve(kGrid * kGrid + 2);
+    for (int iy = 0; iy < kGrid; ++iy) {
+        for (int ix = 0; ix < kGrid; ++ix) {
+            const qreal x0 = ix * kPitch;
+            const qreal y0 = iy * kPitch;
+            polys << makeRect(10, x0, y0, x0 + kVia, y0 + kVia);
+        }
+    }
+    polys << makeRect(1, -2, -2, kGrid * kPitch + 2, kGrid * kPitch + 2);
+    polys << makeRect(2, 5, 5, 15, 15);
+
+    QHash<int, LayoutView::LayerStyle> styles;
+    auto via = style(QStringLiteral("Via1"), QStringLiteral("via"), QColor(180, 180, 60), 5);
+    via.hasZ = true;
+    via.zminUm = 0.5;
+    via.zmaxUm = 1.0;
+    auto m1 = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+    m1.hasZ = true;
+    m1.zminUm = 0.0;
+    m1.zmaxUm = 0.5;
+    auto m2 = style(QStringLiteral("M2"), QStringLiteral("conductor"), QColor(40, 120, 200), 20);
+    m2.hasZ = true;
+    m2.zminUm = 1.0;
+    m2.zmaxUm = 1.4;
+    styles.insert(10, via);
+    styles.insert(1, m1);
+    styles.insert(2, m2);
+
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    settings.setValue(QStringLiteral("view3d"), false);
+    settings.setValue(QStringLiteral("viewField"), false);
+    settings.endGroup();
+    settings.sync();
+
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(800, 600);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+
+    view.setPolygons(polys, styles);
+
+    QElapsedTimer wall;
+    wall.start();
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    const qint64 wallMs = wall.elapsed();
+    const auto st = view.lastIso3dRebuildStats();
+
+    qInfo().nospace()
+        << "Iso3D dense vias timing: polys=" << polys.size()
+        << " vias=" << st.viaPolyCount
+        << " envelopes=" << st.viaEnvelopeCount
+        << " faces=" << st.faceCount
+        << " items=" << st.sceneItemCount
+        << " merged=" << st.mergedVias
+        << " pixmap=" << st.usedPixmap
+        << " rebuildMs=" << st.ms
+        << " wallMs=" << wallMs;
+
+    QVERIFY(view.isView3d());
+    QVERIFY2(st.mergedVias, "expected ADS-style via growEnvelope merge");
+    QVERIFY2(st.viaEnvelopeCount > 0 && st.viaEnvelopeCount < st.viaPolyCount / 10,
+             qPrintable(QStringLiteral("envelopes=%1 vias=%2 — merge did not collapse arrays")
+                                .arg(st.viaEnvelopeCount).arg(st.viaPolyCount)));
+    QVERIFY2(st.ms < 2500,
+             qPrintable(QStringLiteral("Iso3D rebuild too slow: %1 ms").arg(st.ms)));
+    QVERIFY2(wallMs < 4000,
+             qPrintable(QStringLiteral("Iso3D mode switch wall too slow: %1 ms").arg(wallMs)));
+
+    // Orbit rebuild should also stay interactive.
+    wall.restart();
+    view.setViewMode(LayoutView::ViewMode::Iso3D); // no-op path may skip; force rebuild via setPolygons
+    view.setPolygons(polys, styles);
+    const auto st2 = view.lastIso3dRebuildStats();
+    qInfo().nospace() << "Iso3D rebuild#2: rebuildMs=" << st2.ms
+                      << " envelopes=" << st2.viaEnvelopeCount;
+    QVERIFY2(st2.ms < 2500, qPrintable(QStringLiteral("2nd rebuild %1 ms").arg(st2.ms)));
+}
+
+void LayoutViewTest::iso3d_balunExample_flattenAndRebuild_reportsTiming()
+{
+    const QString gds = QStringLiteral("examples/palace/balun_mim_vias/trans_100diff_to_80se_ports.gds");
+    if (!QFileInfo::exists(gds))
+        QSKIP("balun_mim_vias example GDS not present");
+
+    QElapsedTimer step;
+    step.start();
+    QVector<GdsFlatPolygon> polys;
+    QString err;
+    QVERIFY2(GdsLayout::flattenTopCell(gds, QStringLiteral("central_coils_100_tm2_7u_cm_co"),
+                                       &polys, &err),
+             qPrintable(err));
+    const qint64 flattenMs = step.elapsed();
+
+    // Mark via-like layers by common IHP GDS numbers if present; else treat small polys as via.
+    QHash<int, int> layerCount;
+    for (const GdsFlatPolygon &p : polys)
+        layerCount[p.layer] += 1;
+
+    QHash<int, LayoutView::LayerStyle> styles;
+    int order = 0;
+    for (auto it = layerCount.cbegin(); it != layerCount.cend(); ++it) {
+        LayoutView::LayerStyle st;
+        st.name = QStringLiteral("L%1").arg(it.key());
+        // Dense layers → via (merge path); sparse → conductor.
+        st.kind = (it.value() >= 48) ? QStringLiteral("via") : QStringLiteral("conductor");
+        st.color = QColor(100 + (it.key() * 37) % 120, 80, 160);
+        st.order = order++;
+        st.hasZ = true;
+        st.zminUm = 0.1 * order;
+        st.zmaxUm = st.zminUm + 0.4;
+        styles.insert(it.key(), st);
+    }
+
+    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    settings.setValue(QStringLiteral("view3d"), true);
+    settings.setValue(QStringLiteral("viewField"), false);
+    settings.endGroup();
+    settings.sync();
+
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(800, 600);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+
+    step.restart();
+    view.setPolygons(polys, styles);
+    const qint64 setMs = step.elapsed();
+    const auto st = view.lastIso3dRebuildStats();
+
+    qInfo().nospace()
+        << "Balun Iso3D: polys=" << polys.size()
+        << " flattenMs=" << flattenMs
+        << " setPolygonsMs=" << setMs
+        << " vias=" << st.viaPolyCount
+        << " envelopes=" << st.viaEnvelopeCount
+        << " faces=" << st.faceCount
+        << " merged=" << st.mergedVias
+        << " pixmap=" << st.usedPixmap
+        << " rebuildMs=" << st.ms;
+
+    QVERIFY(polys.size() > 1000);
+    QVERIFY2(flattenMs < 8000,
+             qPrintable(QStringLiteral("GDS flatten too slow: %1 ms").arg(flattenMs)));
+    QVERIFY2(st.ms < 3000,
+             qPrintable(QStringLiteral("Iso3D rebuild too slow: %1 ms").arg(st.ms)));
+    QVERIFY2(setMs < 5000,
+             qPrintable(QStringLiteral("setPolygons too slow: %1 ms").arg(setMs)));
 }

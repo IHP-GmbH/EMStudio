@@ -22,7 +22,7 @@ This guide is a tutorial on *what changed and why*, not a restatement of that re
 | [`04_full_featureset_schemaVersion3.1.xml`](04_full_featureset_schemaVersion3.1.xml) | `3.1` | Everything above **+** `<DerivedLayers>` **+** `<Tables>`, substrate height driven entirely by a variable | 1.7.0+ |
 
 Reader version numbers refer to `util_stackup_reader.__version__` in this repo's
-`workflow/gds2palace/util_stackup_reader.py`. `openems_ihp_sg13g2` carries an
+`workflow/gds2palace/util_stackup_reader.py`. [gds2openEMS](https://github.com/VolkerMuehlhaus/gds2openEMS) carries an
 independent copy of the same reader — check that copy's `__version__`/
 `SUPPORTED_SCHEMA_VERSION` separately if you're targeting the openEMS flow instead.
 

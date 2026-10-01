@@ -35,6 +35,13 @@ private slots:
     void applyGdsAndXmlPaths_doesNotTouchReadGdsKwarg();
     void applyGdsAndXmlPaths_doesNotPrependGdsCellnameWhenSettingsCellnameExists();
     void applyGdsAndXmlPaths_updatesSettingsGdsAndSubstrateFile();
+    void thermalWorkflow_keepsSingleElmerThermalFlag();
+    void loadModel_selectsSettingsCellnameAndKeepsItOnSave();
+    void readGdsCellRef_findsTheCellArgument();
+    void applyTopCell_writesOnlyTheReadGdsVariable();
+    void loadModel_withoutCellSelectsGdsTopCell();
+    void loadModel_findsMissingInputFilesNextToModel();
+    void elmerSolverStage_runsSolverWithoutRunElmerScript();
 };
 
 #endif // TST_ELMER_H

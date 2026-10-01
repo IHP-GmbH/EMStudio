@@ -660,7 +660,7 @@ bool MainWindow::loadSimulationLogFromDisk(const QString &modelFile)
  *
  * Reacts to process termination depending on the current Palace phase:
  *  - After Python preprocessing, attempts to detect the run directory and
- *    launches the Palace solver stage.
+ *    launches the Palace solver stage (not when \c preview_only is True).
  *  - After solver completion, finalizes logging and resets internal state.
  *
  * \param exitCode Exit code returned by the finished process.
@@ -710,6 +710,28 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
             }
 
             m_simSettings["RunDir"] = QFileInfo(scriptPath).absolutePath();
+        }
+
+        // preview_only: gds2palace shows the geometry but doesn't mesh. The run folder then holds
+        // a fresh config next to an old mesh (or none), so starting the solver would mix them.
+        const QVariant previewOnly = m_simSettings.value(QStringLiteral("preview_only"));
+        if (previewOnly.toBool()
+            || previewOnly.toString().trimmed().compare(QLatin1String("True"), Qt::CaseInsensitive) == 0) {
+            appendToSimulationLog(
+                "\n[gds2palace preview finished. preview_only = True, so no mesh was created and the "
+                "solver is not started. Set preview_only to False to simulate.]\n");
+            persistSimulationLogSnapshot();
+
+            if (m_simProcess) {
+                m_simProcess->deleteLater();
+                m_simProcess = nullptr;
+            }
+            m_palacePhase = PalacePhase::None;
+
+            if (m_headless)
+                QCoreApplication::exit(0);
+
+            return;
         }
 
         appendToSimulationLog(
@@ -1302,8 +1324,9 @@ void MainWindow::startPalaceSolverStage(PalaceRunContext &ctx)
 /*!*******************************************************************************************************************
  * \brief Starts the Elmer solver stage after gds2palace preprocessing.
  *
- * Runs \c run_elmer from the simulation data directory (same as gds2palace workflow),
- * or invokes \c ELMER_SOLVER_PATH directly on Windows when configured.
+ * Runs \c run_elmer from the simulation data directory (same as gds2palace workflow).
+ * Without one (Elmer Thermal models don't create it) it runs ElmerSolver on \c case.sif
+ * directly, as on Windows, using \c ELMER_SOLVER_PATH or ElmerSolver from PATH.
  **********************************************************************************************************************/
 void MainWindow::startElmerSolverStage(PalaceRunContext &ctx)
 {
@@ -1348,9 +1371,43 @@ void MainWindow::startElmerSolverStage(PalaceRunContext &ctx)
     return;
 #else
     if (!QFileInfo::exists(runScriptWin)) {
-        failPalaceSolver(
-            QStringLiteral("No run_elmer script found in: %1").arg(ctx.searchDirWin),
-            true);
+        // gds2palace only writes case.sif / ELMERSOLVER_STARTINFO; run_elmer comes from
+        // utilities.create_elmer_run_script() in the model script, which Elmer Thermal
+        // models don't call (its combine_snp step is EM-only). Run ElmerSolver directly.
+        const QDir runDir(ctx.searchDirWin);
+        const bool hasSif = QFileInfo::exists(runDir.filePath(QStringLiteral("case.sif")));
+        if (!hasSif && !QFileInfo::exists(runDir.filePath(QStringLiteral("ELMERSOLVER_STARTINFO")))) {
+            failPalaceSolver(
+                QStringLiteral("No run_elmer script and no case.sif found in: %1").arg(ctx.searchDirWin),
+                true);
+            return;
+        }
+        QString solver = elmerExeWin;
+        if (solver.isEmpty() || !QFileInfo::exists(solver))
+            solver = QStandardPaths::findExecutable(QStringLiteral("ElmerSolver"));
+        if (solver.isEmpty()) {
+            failPalaceSolver(QStringLiteral("No run_elmer script in %1, and ElmerSolver was not found "
+                                            "(set ELMER_SOLVER_PATH in Preferences).")
+                                 .arg(ctx.searchDirWin),
+                             true);
+            return;
+        }
+
+        appendToSimulationLog(
+            QString("\n[No run_elmer script: starting %1 directly]\n").arg(solver).toUtf8());
+        m_palacePhase = PalacePhase::PalaceSolver;
+
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        applyElmerHomeToProcessEnv(env);
+        m_simProcess->setProcessEnvironment(env);
+        m_simProcess->setWorkingDirectory(ctx.searchDirWin);
+        // Without arguments ElmerSolver reads ELMERSOLVER_STARTINFO.
+        m_simProcess->start(solver, hasSif ? QStringList{QStringLiteral("case.sif")} : QStringList());
+
+        if (!m_simProcess->waitForStarted(3000)) {
+            error(QStringLiteral("Failed to start ElmerSolver."), false);
+            failPalaceSolver(QString(), false);
+        }
         return;
     }
 
@@ -1745,6 +1802,26 @@ void MainWindow::testStartPalaceSolverStage(const QString& modelPath,
         m_simProcess = new QProcess(this);
 
     startPalaceSolverStage(ctx);
+}
+
+QStringList MainWindow::testStartElmerSolverStage(const QString &runDir)
+{
+    PalaceRunContext ctx;
+    ctx.simKeyLower = QStringLiteral("elmer_thermal");
+    ctx.detectedRunDirWin = runDir;
+    ctx.runDirGuessWin = runDir;
+
+    if (!m_simProcess)
+        m_simProcess = new QProcess(this);
+
+    startElmerSolverStage(ctx);
+    // failPalaceSolver() drops the process when nothing could be started.
+    if (!m_simProcess || m_simProcess->state() == QProcess::NotRunning)
+        return {};
+    QStringList started{m_simProcess->program()};
+    started += m_simProcess->arguments();
+    m_simProcess->waitForFinished(5000);
+    return started;
 }
 
 #endif

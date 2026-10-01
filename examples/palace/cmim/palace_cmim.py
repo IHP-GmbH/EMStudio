@@ -38,7 +38,6 @@ run_command = ['./run_sim']
 
 # ===================== input files and path settings =======================
 
-gds_cellname = "TOP"
 gds_filename = "cmim_2u3_flat.gds"
 XML_filename = "SG13G2_200um.xml"
 variable_overrides = {}

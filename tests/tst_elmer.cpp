@@ -19,6 +19,7 @@
 
 #include "mainwindow.h"
 #include "substrate.h"
+#include "pythonparser.h"
 
 /*!*******************************************************************************************************************
  * \brief Resolves the ElmerSolver stub used to enable Elmer tools in the combo box.
@@ -648,4 +649,315 @@ void ElmerTest::applyGdsAndXmlPaths_updatesSettingsGdsAndSubstrateFile()
     QVERIFY(out.contains(QStringLiteral("XML_filename = \"%1\"").arg(xmlNorm)));
     QVERIFY(!out.contains(QStringLiteral("old.gds")));
     QVERIFY(!out.contains(QStringLiteral("legacy.gds")));
+}
+
+void ElmerTest::thermalWorkflow_keepsSingleElmerThermalFlag()
+{
+    MainWindow w;
+    const QString createLine =
+        QStringLiteral("config_name, data_dir = simulation_setup.create_elmer_thermal (settings)\n");
+
+    // Key not on the last line, with a comment: value kept, comment kept, nothing inserted.
+    const QString script =
+        QStringLiteral("settings['elmer_thermal'] = False # metals as volumes\n"
+                       "settings['refined_cellsize'] = 2\n") + createLine;
+    const QString once = w.testApplyElmerThermalWorkflow(script);
+    QCOMPARE(once.count(QStringLiteral("['elmer_thermal']")), 1);
+    QVERIFY(once.contains(QStringLiteral("settings['elmer_thermal'] = True # metals as volumes\n")));
+    // Saving again must not change the script.
+    QCOMPARE(w.testApplyElmerThermalWorkflow(once), once);
+
+    // Copies inserted by older versions (one per Save) are removed.
+    QString broken = QStringLiteral("settings['elmer_thermal'] = True # metals as volumes\n"
+                                    "settings['refined_cellsize'] = 2\n");
+    for (int i = 0; i < 10; ++i)
+        broken += QStringLiteral("settings['elmer_thermal'] = True\n");
+    broken += createLine;
+    const QString repaired = w.testApplyElmerThermalWorkflow(broken);
+    QCOMPARE(repaired.count(QStringLiteral("['elmer_thermal']")), 1);
+    QVERIFY(repaired.contains(QStringLiteral("settings['refined_cellsize'] = 2\n") + createLine));
+
+    // Missing key: inserted once, before create_elmer_thermal.
+    const QString added = w.testApplyElmerThermalWorkflow(createLine);
+    QCOMPARE(added, QStringLiteral("settings['elmer_thermal'] = True\n") + createLine);
+    QCOMPARE(w.testApplyElmerThermalWorkflow(added), added);
+}
+
+void ElmerTest::elmerSolverStage_runsSolverWithoutRunElmerScript()
+{
+#ifdef Q_OS_WIN
+    QSKIP("Windows always starts ELMER_SOLVER_PATH directly.");
+#else
+    MainWindow w;
+    const QString stub = ensureTestElmerSolverStub();
+    QVERIFY2(!stub.isEmpty(), "Elmer solver stub not found");
+    QFile::setPermissions(stub, QFile::permissions(stub) | QFileDevice::ExeUser
+                                    | QFileDevice::ExeGroup | QFileDevice::ExeOther);
+    w.testSetPreference(QStringLiteral("ELMER_SOLVER_PATH"), stub);
+
+    // Thermal run folder as gds2palace leaves it: case.sif + STARTINFO, no run_elmer.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const QString &name : {QStringLiteral("case.sif"), QStringLiteral("ELMERSOLVER_STARTINFO")}) {
+        QFile f(dir.filePath(name));
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("case.sif\n");
+    }
+    const QStringList started = w.testStartElmerSolverStage(dir.path());
+    QCOMPARE(started, QStringList({stub, QStringLiteral("case.sif")}));
+    QVERIFY(w.testSimulationLogText().contains(QStringLiteral("No run_elmer script: starting")));
+
+    // A run_elmer script (Elmer EM template) is still preferred.
+    QFile script(dir.filePath(QStringLiteral("run_elmer")));
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    script.write("#!/bin/bash\nexit 0\n");
+    script.close();
+    const QStringList viaScript = w.testStartElmerSolverStage(dir.path());
+    QCOMPARE(viaScript.value(0), QStringLiteral("bash"));
+    QVERIFY(viaScript.contains(QStringLiteral("./run_elmer")));
+
+    // Neither a script nor case.sif: clear error, nothing started.
+    QTemporaryDir empty;
+    QVERIFY(w.testStartElmerSolverStage(empty.path()).isEmpty());
+    QVERIFY(w.testMainLogText().contains(QStringLiteral("No run_elmer script and no case.sif")));
+#endif
+}
+
+void ElmerTest::loadModel_selectsSettingsCellnameAndKeepsItOnSave()
+{
+    const QString gds = QDir(repoScriptsDir())
+            .absoluteFilePath(QStringLiteral("../examples/elmer/thermal_simplest/simplest_with_source.gds"));
+    QVERIFY2(QFileInfo::exists(gds), qPrintable(gds)); // 11 cells
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto writeModel = [&](const QString &name, const QString &cell) {
+        const QString path = dir.filePath(name);
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+            return QString();
+        f.write(QStringLiteral(
+                    "from gds2palace import *\n"
+                    "settings = {}\n"
+                    "settings['GdsFile'] = \"%1\"\n"
+                    "settings['cellname'] = \"%2\"\n"
+                    "settings['elmer_thermal'] = True\n"
+                    "thermal_objects = simulation_setup.all_thermal_objects()\n"
+                    "config_name, data_dir = simulation_setup.create_elmer_thermal (settings)\n")
+                    .arg(gds, cell).toUtf8());
+        return path;
+    };
+    auto readFile = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly | QIODevice::Text) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+
+    const QString modelA = writeModel(QStringLiteral("a.py"), QStringLiteral("TM1_M5_CDNS_759845918921"));
+    const QString modelB = writeModel(QStringLiteral("b.py"), QStringLiteral("HeatSpreader01B_M"));
+
+    // Parser: settings['cellname'] is the model's top cell (gds2palace style).
+    QCOMPARE(PythonParser::parseSettings(modelB).getCellName(), QStringLiteral("HeatSpreader01B_M"));
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    auto *cbx = w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"));
+    QVERIFY(cbx);
+
+    // Another model first, so the dropdown holds a different cell when B loads.
+    w.loadPythonModel(modelA);
+    QCOMPARE(cbx->currentText(), QStringLiteral("TM1_M5_CDNS_759845918921"));
+    w.loadPythonModel(modelB);
+    QCOMPARE(cbx->currentText(), QStringLiteral("HeatSpreader01B_M"));
+
+    // Save keeps the model's cell; so does a reload.
+    w.testTriggerSave();
+    QVERIFY2(readFile(modelB).contains(QStringLiteral("settings['cellname'] = \"HeatSpreader01B_M\"")),
+             qPrintable(readFile(modelB)));
+    w.loadPythonModel(modelA);
+    w.loadPythonModel(modelB);
+    QCOMPARE(cbx->currentText(), QStringLiteral("HeatSpreader01B_M"));
+}
+
+void ElmerTest::readGdsCellRef_findsTheCellArgument()
+{
+    using Ref = PythonParser::ReadGdsCellRef;
+    // Multi-line call, settings key (gds2palace style).
+    Ref r = PythonParser::readGdsCellRef(QStringLiteral(
+        "allpolygons = gds_reader.read_gds(settings['GdsFile'],\n"
+        "    layernumbers,\n"
+        "    cellname=settings['cellname'],\n"
+        "    purposelist=settings['purpose'])\n"));
+    QVERIFY(r.found);
+    QCOMPARE(r.settingsKey, QStringLiteral("cellname"));
+
+    // Variable with spaces (gds2openEMS example style).
+    r = PythonParser::readGdsCellRef(QStringLiteral("x = read_gds(f, l,\n  cellname = gds_cellname)\n"));
+    QCOMPARE(r.variable, QStringLiteral("gds_cellname"));
+
+    // Literal.
+    const QString lit = QStringLiteral("x = read_gds(f, cellname=\"TOP\", purposelist=[0])\n");
+    r = PythonParser::readGdsCellRef(lit);
+    QVERIFY(r.hasLiteral);
+    QCOMPARE(r.literal, QStringLiteral("TOP"));
+    QCOMPARE(lit.mid(r.literalStart, r.literalLength), QStringLiteral("\"TOP\""));
+
+    // No cellname argument (IHP workflow scripts): top cell. Commented calls don't count.
+    r = PythonParser::readGdsCellRef(QStringLiteral(
+        "# read_gds(f, cellname=old)\n"
+        "allpolygons = gds_reader.read_gds(gds_filename, layernumbers, purposelist=[0], metals_list=m)\n"));
+    QVERIFY(r.found);
+    QVERIFY(r.variable.isEmpty() && r.settingsKey.isEmpty() && !r.hasLiteral);
+    QVERIFY(!PythonParser::readGdsCellRef(QStringLiteral("settings['cellname'] = 'A'\n")).found);
+
+    // The parser takes the read_gds target, not a stale gds_cellname.
+    const PythonParser::Result res = PythonParser::parseSettingsFromText(QStringLiteral(
+        "gds_cellname = \"Stale\"\n"
+        "cellname = \"Used\"\n"
+        "allpolygons = gds_reader.read_gds(gds_filename, layernumbers, cellname=cellname)\n"));
+    QCOMPARE(res.getCellName(), QStringLiteral("Used"));
+    // read_gds without the argument: no cell name (= GDS top cell), even with gds_cellname set.
+    QVERIFY(PythonParser::parseSettingsFromText(QStringLiteral(
+        "gds_cellname = \"TOP\"\n"
+        "allpolygons = gds_reader.read_gds(gds_filename, layernumbers)\n")).getCellName().isEmpty());
+}
+
+void ElmerTest::applyTopCell_writesOnlyTheReadGdsVariable()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    auto *cbx = w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"));
+    QVERIFY(cbx);
+    auto select = [&](const QString &cell) {
+        QSignalBlocker b(cbx);
+        cbx->clear();
+        cbx->addItem(cell);
+        cbx->setCurrentIndex(0);
+    };
+    select(QStringLiteral("NewCell"));
+
+    // Top-level variable used by read_gds: updated, comment kept; other cell lines untouched.
+    QString out = w.testApplyGdsAndXmlPaths(QStringLiteral(
+        "gds_filename = \"x.gds\"\n"
+        "gds_cellname = \"Other\"\n"
+        "cellname = \"\"  # optional, set empty string \"\" to use top cell\n"
+        "allpolygons = gds_reader.read_gds(gds_filename, layernumbers, cellname=cellname)\n"),
+        QStringLiteral("openems"));
+    QVERIFY2(out.contains(QStringLiteral("cellname = \"NewCell\"  # optional, set empty string \"\" to use top cell")),
+             qPrintable(out));
+    QVERIFY(out.contains(QStringLiteral("gds_cellname = \"Other\"")));
+
+    // read_gds without cellname: nothing is written, nothing invented.
+    const QString noArg = QStringLiteral(
+        "gds_filename = \"x.gds\"\n"
+        "allpolygons = gds_reader.read_gds(gds_filename, layernumbers, purposelist=[0])\n");
+    QCOMPARE(w.testApplyGdsAndXmlPaths(noArg, QStringLiteral("palace")), noArg);
+
+    // settings key used by read_gds but missing: added after settings = {}.
+    out = w.testApplyGdsAndXmlPaths(QStringLiteral(
+        "settings = {}\n"
+        "allpolygons = gds_reader.read_gds(f, l, cellname=settings['cellname'])\n"),
+        QStringLiteral("elmer_thermal"));
+    QVERIFY2(out.startsWith(QStringLiteral("settings = {}\nsettings['cellname'] = \"NewCell\"\n")), qPrintable(out));
+
+    // Undefined variable used by read_gds: defined before gds_filename.
+    out = w.testApplyGdsAndXmlPaths(QStringLiteral(
+        "gds_filename = \"x.gds\"\n"
+        "allpolygons = gds_reader.read_gds(gds_filename, l, cellname=gds_cellname)\n"),
+        QStringLiteral("palace"));
+    QVERIFY2(out.startsWith(QStringLiteral("gds_cellname = \"NewCell\"\ngds_filename")), qPrintable(out));
+
+    // Literal argument: replaced in place.
+    out = w.testApplyGdsAndXmlPaths(QStringLiteral("x = read_gds(f, cellname='Old', p=[0])\n"),
+                                    QStringLiteral("palace"));
+    QCOMPARE(out, QStringLiteral("x = read_gds(f, cellname=\"NewCell\", p=[0])\n"));
+}
+
+void ElmerTest::loadModel_withoutCellSelectsGdsTopCell()
+{
+    const QString gds = QDir(repoScriptsDir())
+            .absoluteFilePath(QStringLiteral("../examples/elmer/thermal_simplest/simplest_with_source.gds"));
+    QVERIFY2(QFileInfo::exists(gds), qPrintable(gds));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto write = [&](const QString &name, const QString &body) {
+        QFile f(dir.filePath(name));
+        if (f.open(QIODevice::WriteOnly | QIODevice::Text))
+            f.write(body.arg(gds).toUtf8());
+        return dir.filePath(name);
+    };
+    // A model with a sub-cell first, so a stale selection would show.
+    const QString withCell = write(QStringLiteral("cell.py"), QStringLiteral(
+        "settings = {}\n"
+        "settings['GdsFile'] = \"%1\"\n"
+        "settings['cellname'] = \"TM1_M5_CDNS_759845918921\"\n"
+        "allpolygons = gds_reader.read_gds(settings['GdsFile'], l, cellname=settings['cellname'])\n"));
+    // IHP workflow style: read_gds without cellname, plus a stale gds_cellname.
+    const QString noCell = write(QStringLiteral("nocell.py"), QStringLiteral(
+        "gds_cellname = \"TM1_M5_CDNS_759845918921\"\n"
+        "gds_filename = \"%1\"\n"
+        "allpolygons = gds_reader.read_gds(gds_filename, layernumbers, purposelist=[0])\n"));
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    auto *cbx = w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"));
+    QVERIFY(cbx);
+    w.loadPythonModel(withCell);
+    QCOMPARE(cbx->currentText(), QStringLiteral("TM1_M5_CDNS_759845918921"));
+    w.loadPythonModel(noCell);
+    // gdstk top_level()[0] of this GDS, the cell gds2palace loads without a cell name.
+    QCOMPARE(cbx->currentText(), QStringLiteral("0_INT_T595_HeatSpreader"));
+    // The cell list is unchanged (all cells, file order).
+    QCOMPARE(cbx->count(), 11);
+}
+
+void ElmerTest::loadModel_findsMissingInputFilesNextToModel()
+{
+    const QString examples = QDir(repoScriptsDir()).absoluteFilePath(QStringLiteral("../examples/elmer/thermal_simplest"));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // The model's folder holds the inputs; the script still points to another machine.
+    QVERIFY(QFile::copy(examples + QStringLiteral("/simplest_with_source.gds"),
+                        dir.filePath(QStringLiteral("simplest_with_source.gds"))));
+    QVERIFY(QFile::copy(examples + QStringLiteral("/SG13_interposer_thermal_typicalvalues.xml"),
+                        dir.filePath(QStringLiteral("stack.xml"))));
+    const QString model = dir.filePath(QStringLiteral("moved.py"));
+    {
+        QFile f(model);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write("from gds2palace import *\n"
+                "settings = {}\n"
+                "settings['GdsFile'] = \"C:/Users/anton/Documents/EMStudio/simplest_with_source.gds\"\n"
+                "settings['SubstrateFile'] = \"C:\\\\Users\\\\anton\\\\stack.xml\"\n"
+                "settings['cellname'] = \"HeatSpreader01B_M\"\n"
+                "settings['elmer_thermal'] = True\n"
+                "allpolygons = gds_reader.read_gds(settings['GdsFile'], l, cellname=settings['cellname'])\n"
+                "config_name, data_dir = simulation_setup.create_elmer_thermal (settings)\n");
+    }
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.loadPythonModel(model);
+    auto *gdsEdit = w.findChild<QLineEdit *>(QStringLiteral("txtGdsFile"));
+    auto *xmlEdit = w.findChild<QLineEdit *>(QStringLiteral("txtSubstrate"));
+    QVERIFY(gdsEdit && xmlEdit);
+    QCOMPARE(QFileInfo(gdsEdit->text()), QFileInfo(dir.filePath(QStringLiteral("simplest_with_source.gds"))));
+    QCOMPARE(QFileInfo(xmlEdit->text()), QFileInfo(dir.filePath(QStringLiteral("stack.xml"))));
+    QVERIFY(w.testMainLogText().contains(QStringLiteral("using")));
+    // The top cell resolves against the found GDS.
+    QCOMPARE(w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"))->currentText(),
+             QStringLiteral("HeatSpreader01B_M"));
+
+    // Save writes the local paths into the script.
+    w.testTriggerSave();
+    QFile f(model);
+    QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString saved = QString::fromUtf8(f.readAll());
+    QVERIFY2(saved.contains(QStringLiteral("settings['GdsFile'] = \"%1\"")
+                                .arg(QDir::fromNativeSeparators(dir.filePath(QStringLiteral("simplest_with_source.gds"))))),
+             qPrintable(saved));
+    QVERIFY2(saved.contains(QStringLiteral("settings['SubstrateFile'] = \"%1\"")
+                                .arg(QDir::fromNativeSeparators(dir.filePath(QStringLiteral("stack.xml"))))),
+             qPrintable(saved));
+    QVERIFY(!saved.contains(QStringLiteral("anton")));
 }

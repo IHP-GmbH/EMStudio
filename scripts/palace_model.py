@@ -23,7 +23,7 @@ run_command = ['./run_sim']
 # ===================== input files and path settings =======================
 
 gds_filename = ""   # geometries
-gds_cellname = ""       # optional name of cell, empty string to load always top cell
+cellname = ""       # optional name of cell, empty string to load always top cell
 
 XML_filename = ""          # stackup
 
@@ -93,7 +93,7 @@ allpolygons = gds_reader.read_gds(gds_filename,
                                   metals_list=metals_list,
                                   preprocess=settings['preprocess_gds'],
                                   merge_polygon_size=settings['merge_polygon_size'],
-                                  cellname=gds_cellname)
+                                  cellname=cellname)
 
 
 ########### create model ###########

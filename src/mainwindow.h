@@ -21,6 +21,7 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+#include <QDir>
 #include <QMap>
 #include <QSet>
 #include <QHash>
@@ -245,6 +246,8 @@ public:
 
     // Elmer EM / Thermal helpers
     QString                         testNormalizeSimToolKey(const QString &key) const;
+    /*! Runs the Elmer solver stage in \a runDir; returns the started program and arguments. */
+    QStringList                     testStartElmerSolverStage(const QString &runDir);
     bool                            testIsElmerFamilyKey(const QString &key) const;
     bool                            testIsElmerEmKey(const QString &key) const;
     bool                            testIsElmerThermalKey(const QString &key) const;
@@ -360,7 +363,8 @@ private:
     QStringList                     recentPythonModels() const;
     void                            setRecentPythonModels(const QStringList& list);
 
-    QStringList                     extractGdsCellNames(const QString &filePath);
+    QStringList                     extractGdsCellNames(const QString &filePath,
+                                                        QStringList *topCells = nullptr);
     QSet<QPair<int, int>>           extractGdsLayerNumbers(const QString &filePath);
 
     QStringList                     readSubstrateLayers(const QString &xmlFilePath);
@@ -485,6 +489,12 @@ private:
     void                            setupLayoutLayerPanel();
     /*! F5 Run and Ctrl+1…6 tab shortcuts (menu shortcuts are in mainwindow.ui). */
     void                            setupGlobalShortcuts();
+    /*! Writes the Top Cell selection into the variable read_gds() uses (see pythonToEditor.cpp). */
+    void                            applyTopCellToScript(QString &script, const QString &topCell);
+    /*! GDS / XML path from a model script: as written (relative to the model), else the
+     *  same file name next to the model when the written path does not exist. */
+    QString                         resolveModelInputFile(const QString &scriptValue,
+                                                          const QDir &modelDir);
     /*! Pushes preference VIEWER_NAV_STYLE to the Layout preview and an open 3D field viewer. */
     void                            applyNavigationStyle();
     QVector<SanityFinding>          collectSanityFindings() const;
@@ -630,6 +640,7 @@ private:
     QList<QWidget*>                 m_tabWidgets;
     QStringList                     m_tabTitles;
     QMap<QString, int>              m_tabMap;
+    QString                         m_gdsTopCell;   //!< First top-level cell of the GDS (gdstk top_level()[0])
 
     QString                         m_modelGdsKey;
     QString                         m_modelXmlKey;

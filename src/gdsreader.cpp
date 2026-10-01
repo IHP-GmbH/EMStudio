@@ -34,15 +34,20 @@
  * \brief Extracts the list of cell names from a GDSII file.
  *
  * This function reads the binary GDSII file format and identifies records with record type 0x06 (STRNAME),
- * which contain the names of the defined cells in the layout.
+ * which contain the names of the defined cells in the layout. SNAME records (0x12, SREF/AREF targets)
+ * mark referenced cells; the others are top-level cells.
  *
  * \param filePath Path to the GDSII file.
+ * \param topCells Optional: receives the top-level cells in file order (like gdstk's top_level()).
  * \return A list of extracted cell names.
  **********************************************************************************************************************/
-QStringList MainWindow::extractGdsCellNames(const QString &filePath)
+QStringList MainWindow::extractGdsCellNames(const QString &filePath, QStringList *topCells)
 {
     QFile file(filePath);
     QStringList cellNames;
+    QSet<QString> referenced;
+    if (topCells)
+        topCells->clear();
 
     if (!file.open(QIODevice::ReadOnly))
         return cellNames;
@@ -73,7 +78,7 @@ QStringList MainWindow::extractGdsCellNames(const QString &filePath)
             break;
         }
 
-        if (recordType == 0x06 && dataType == 0x06) { // STRNAME / ASCII
+        if ((recordType == 0x06 || recordType == 0x12) && dataType == 0x06) { // STRNAME / SNAME
             QByteArray nameData;
             nameData.resize(int(dataSize));
             if (dataSize > 0) {
@@ -83,9 +88,14 @@ QStringList MainWindow::extractGdsCellNames(const QString &filePath)
                 }
             }
 
-            QString cellName = QString::fromLatin1(nameData).trimmed();
-            if (!cellName.isEmpty())
+            // Names are NUL-padded to an even length.
+            QString cellName = QString::fromLatin1(nameData).remove(QChar(0)).trimmed();
+            if (cellName.isEmpty())
+                continue;
+            if (recordType == 0x06)
                 cellNames << cellName;
+            else
+                referenced.insert(cellName);
 
         } else {
             const qint64 newPos = recStartPos + size;
@@ -96,6 +106,11 @@ QStringList MainWindow::extractGdsCellNames(const QString &filePath)
     }
 
     file.close();
+    if (topCells) {
+        for (const QString &name : cellNames)
+            if (!referenced.contains(name))
+                *topCells << name;
+    }
     return cellNames;
 }
 

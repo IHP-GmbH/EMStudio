@@ -36,6 +36,9 @@ def _die(msg: str, code: int = 1) -> None:
     sys.exit(code)
 
 
+# 2D slice meta format. 2: thermal slices no longer swap X/Y (EMStudio ignores older caches).
+SLICE_META_VERSION = 2
+
 # Log color scale of the 2D slice spans at most this many dB below the slice maximum.
 LOG_RANGE_DB = 40.0
 
@@ -587,28 +590,6 @@ def _sample_z_grid(pv, data_mesh, scalar_name: str, scale: float, xs, ys, z_um: 
     return grid, mask
 
 
-def _fix_xy_axis_swap(grid, xs, ys, xmin, xmax, ymin, ymax, layout_roi):
-    """Swap sample XY for thermal slices (mesh buffer was transposed vs GDS).
-
-    Layout Field consistently showed a vertical heat blob on a horizontal DUT;
-    transpose the sample grid and swap axis vectors/bounds so the overlay matches
-    the GDS layout. \\a layout_roi is unused (kept for call-site compatibility).
-    """
-    import numpy as np
-
-    del layout_roi
-    if grid is None:
-        return grid, xs, ys, xmin, xmax, ymin, ymax
-    grid = np.ascontiguousarray(np.asarray(grid, dtype=float).T)
-    xs, ys = ys, xs
-    xmin, xmax, ymin, ymax = ymin, ymax, xmin, xmax
-    print(
-        "field_slice_export: transposed thermal slice XY to match GDS layout",
-        file=sys.stderr,
-    )
-    return grid, xs, ys, xmin, xmax, ymin, ymax
-
-
 def _is_thermal_quantity(name: str) -> bool:
     nl = (name or "").lower()
     return nl in ("temperature", "temp", "t") or ("temp" in nl)
@@ -799,18 +780,11 @@ def export_slice(
     except Exception as exc:
         _die(f"slice sample failed: {exc}")
 
-    if _is_thermal_quantity(scalar_name):
-        grid_vals, xs, ys, xmin, xmax, ymin, ymax = _fix_xy_axis_swap(
-            grid_vals, xs, ys, xmin, xmax, ymin, ymax, layout_roi
-        )
-        # nx/ny follow xs/ys after a possible transpose.
-        nx, ny = len(xs), len(ys)
-
     # Color scale from this slice (valid points only) — avoids posterized global range.
     valid = grid_vals[np.isfinite(grid_vals)]
     if valid.size == 0:
         meta = {
-            "version": 1,
+            "version": SLICE_META_VERSION,
             "quantity": scalar_name,
             "z_um": z_clip,
             "zmin_um": zmin,
@@ -858,7 +832,7 @@ def export_slice(
         print(f"field_slice_export: values grid skipped: {exc}", file=sys.stderr)
 
     meta = {
-        "version": 1,
+        "version": SLICE_META_VERSION,
         "quantity": scalar_name,
         "z_um": z_clip,
         "zmin_um": zmin,

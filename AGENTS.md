@@ -146,6 +146,11 @@ regular expressions. It never regenerates the whole script.
     quoted strings re-quoted, lists and expressions verbatim; for `fdump` a bare
     value is wrapped in `[...]`.
   - `applyGdsAndXmlPaths`, `applyVariableOverridesToScript`, `applyBoundaries`.
+    The Top Cell goes only into what the script's `read_gds(..., cellname=...)` uses
+    (`PythonParser::readGdsCellRef`, `applyTopCellToScript`): a variable, a
+    `settings['key']` or a literal. Without that argument nothing is written; the script then
+    loads the GDS top cell (`top_level()[0]`, `m_gdsTopCell`), which is also the dropdown
+    default. Loading reads the cell from the same place.
   - `replaceOrInsertPortSection(buildPortCodeFromGuiTable())`, or the thermal
     section for Elmer Thermal.
   - Tool-specific patches: `applyPalaceWorkflowToScript`,
@@ -159,6 +164,8 @@ regular expressions. It never regenerates the whole script.
   markers such as `from openEMS import openEMS`, `create_elmer_thermal`) →
   `selectSimToolByKey`, rebuild the grid, set GDS/XML/top cell, ports or thermal
   table, then the layout preview.
+  GDS/XML paths go through `resolveModelInputFile`: if the written path doesn't exist, a
+  file with the same name next to the model is used (and written back on Save).
 - **Ports**: GUI table `tblPorts` ↔ `simulation_ports.add_port(simulation_setup.simulation_port(...))`
   lines, which may span several lines (`findPortBlocks` balances parentheses).
   `PortInfo` holds one port. In-plane ports use only `to_layername`; via ports use
@@ -189,6 +196,8 @@ sanitycheck.cpp) → `runOpenEMS()` or `runPalace()`. Both save first.
      inside WSL (`WSL_DISTRO`, wslHelper). Elmer runs natively (`ELMER_SOLVER_PATH`,
      `ELMER_PYTHON`).
 
+  If the model has `preview_only = True`, the run ends after phase 1: gds2palace doesn't
+  mesh then, so a solver would read a fresh config next to an old mesh.
   After the run, CSV results are converted with `scripts/combine_extend_snp.py`.
   Elmer Thermal opens the Substrate tab with Layout Field.
 - The simulation log is persisted as `emstudio_simulation.log` in the run's data

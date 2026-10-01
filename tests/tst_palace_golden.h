@@ -27,6 +27,7 @@ private slots:
     void preparePalaceSolverLaunch_emptyConfig_fails();
     void failPalaceSolver_resetsPhase_and_process();
     void onPalaceProcessFinished_pythonPhase_nonZeroExit_logsFailure();
+    void onPalaceProcessFinished_previewOnly_skipsSolver();
     void onPalaceProcessFinished_solverPhase_logsFinish();
     void startPalaceSolverStage_missingSearchDir_fails();
     void startPalaceSolverStage_missingConfig_fails();

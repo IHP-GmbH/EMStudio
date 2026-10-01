@@ -821,20 +821,6 @@ static void finalizeResult(const QString& scriptDir,
 }
 
 /*!*******************************************************************************************************************
- * \brief Parse "settings-like" key/value pairs and metadata from a Python script.
- *
- * This function coordinates parsing of settings dictionary assignments,
- * legacy file variables, inferred file paths, and documentation blocks.
- * It also derives auxiliary information such as the simulation output path.
- *
- * \param content          Full Python script text to be parsed.
- * \param scriptDir        Directory where the script is conceptually located (may be empty).
- * \param baseName         Script base name without extension (may be empty).
- * \param contextForErrors Context string used to enrich error messages (may be empty).
- *
- * \return Parsed settings and auxiliary information.
- **********************************************************************************************************************/
-/*!*******************************************************************************************************************
  * \brief Takes the cell name from the read_gds(..., cellname=...) argument when there is one.
  *
  * Overrides the other inferences: the argument is what the script simulates. A read_gds call
@@ -862,6 +848,20 @@ static void inferCellNameFromReadGds(const QString &content, PythonParser::Resul
     result.cellName = cell.trimmed();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Parse "settings-like" key/value pairs and metadata from a Python script.
+ *
+ * This function coordinates parsing of settings dictionary assignments,
+ * legacy file variables, inferred file paths, and documentation blocks.
+ * It also derives auxiliary information such as the simulation output path.
+ *
+ * \param content          Full Python script text to be parsed.
+ * \param scriptDir        Directory where the script is conceptually located (may be empty).
+ * \param baseName         Script base name without extension (may be empty).
+ * \param contextForErrors Context string used to enrich error messages (may be empty).
+ *
+ * \return Parsed settings and auxiliary information.
+ **********************************************************************************************************************/
 PythonParser::Result parseSettingsImpl(const QString &content,
                                        const QString &scriptDir,
                                        const QString &baseName,

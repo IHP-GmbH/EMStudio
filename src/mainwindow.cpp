@@ -60,6 +60,7 @@
 #include <algorithm>
 
 #include "extension/variantmanager.h"
+#include "appsettings.h"
 #include "extension/variantfactory.h"
 
 #include "QtPropertyBrowser/qtvariantproperty.h"
@@ -1978,7 +1979,7 @@ QString MainWindow::resolveFieldSliceExportScript() const
  **********************************************************************************************************************/
 QString MainWindow::resolveFieldViewerPython(QString *detailOut) const
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("Preferences"));
     const QString fieldPy = settings.value(QStringLiteral("FIELD_VIEWER_PYTHON")).toString().trimmed();
     const QString openemsPy = settings.value(QStringLiteral("Python Path")).toString().trimmed();
@@ -2937,7 +2938,7 @@ void MainWindow::syncResultsViewerHostPython()
  **********************************************************************************************************************/
 void MainWindow::saveSettings()
 {
-    QSettings settings("EMStudio", "EMStudioApp");
+    QSettings settings = emstudioSettings();
     settings.setValue("MainWindow/geometry", saveGeometry());
     settings.setValue("MainWindow/state", saveState());
 
@@ -2997,7 +2998,7 @@ void MainWindow::saveSettings()
  **********************************************************************************************************************/
 void MainWindow::loadSettings()
 {
-    QSettings settings("EMStudio", "EMStudioApp");
+    QSettings settings = emstudioSettings();
 
     const QByteArray geom  = settings.value("MainWindow/geometry").toByteArray();
     const QByteArray state = settings.value("MainWindow/state").toByteArray();
@@ -4613,14 +4614,14 @@ void MainWindow::setupLayoutLayerPanel()
             this, [this](bool on) {
                 if (m_ui->layoutView)
                     m_ui->layoutView->setShowCoordinates(on);
-                QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+                QSettings settings = emstudioSettings();
                 settings.beginGroup(QStringLiteral("LayoutPreview"));
                 settings.setValue(QStringLiteral("showCoordinates"), on);
                 settings.endGroup();
             });
     connect(m_layoutLayerPanel, &LayoutLayerPanel::usedLayersOnlyToggled,
             this, [](bool on) {
-                QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+                QSettings settings = emstudioSettings();
                 settings.beginGroup(QStringLiteral("LayoutPreview"));
                 settings.setValue(QStringLiteral("usedLayersOnly"), on);
                 settings.endGroup();

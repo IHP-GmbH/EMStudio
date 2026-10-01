@@ -22,6 +22,7 @@
 #define PYTHONPARSER_H
 
 #include <QMap>
+#include <QSet>
 #include <QVariant>
 #include <QString>
 
@@ -55,6 +56,9 @@ public:
 
         QHash<QString,
               SettingWriteMode>     writeMode;
+        //! Keys whose value is a quoted string literal in the script (written back quoted);
+        //! other text values are raw expressions (lists, references) written verbatim.
+        QSet<QString>               quotedStrings;
 
         QString getCellName()    const { return cellName; }
         QString getGdsFilename() const { return gdsFilename; }

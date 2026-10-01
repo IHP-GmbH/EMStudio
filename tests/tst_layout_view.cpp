@@ -6,6 +6,7 @@
  ************************************************************************/
 
 #include "tst_layout_view.h"
+#include "appsettings.h"
 
 #include <QtTest/QtTest>
 #include <QHash>
@@ -203,7 +204,7 @@ void LayoutViewTest::visibilityOpacity_andClear()
 
 void LayoutViewTest::viewMode3d_isoExtrusion_persistsInSettings()
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     const QVariant prev = settings.value(QStringLiteral("view3d"));
     const QVariant prevField = settings.value(QStringLiteral("viewField"));
@@ -291,7 +292,7 @@ void LayoutViewTest::viewMode3d_isoExtrusion_persistsInSettings()
 
 void LayoutViewTest::fieldMode_keeps2d_and3dOpensExternalSignal()
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     const QVariant prev3d = settings.value(QStringLiteral("view3d"));
     const QVariant prevField = settings.value(QStringLiteral("viewField"));
@@ -415,7 +416,7 @@ void LayoutViewTest::iso3d_denseVias_growEnvelope_reportsTiming()
     styles.insert(1, m1);
     styles.insert(2, m2);
 
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     settings.setValue(QStringLiteral("view3d"), false);
     settings.setValue(QStringLiteral("viewField"), false);
@@ -503,7 +504,7 @@ void LayoutViewTest::iso3d_balunExample_flattenAndRebuild_reportsTiming()
         styles.insert(it.key(), st);
     }
 
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     settings.setValue(QStringLiteral("view3d"), true);
     settings.setValue(QStringLiteral("viewField"), false);

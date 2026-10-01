@@ -99,6 +99,7 @@ HEADERS += \
     $$TOP/src/layoutview.h \
     $$TOP/src/layoutlayerpanel.h \
     $$TOP/src/sanitycheck.h \
+    $$TOP/src/appsettings.h \
     $$TOP/src/resultscalculator.h \
     $$TOP/src/exprparser.h \
     $$TOP/src/stackupexpr.h \

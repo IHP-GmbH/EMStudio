@@ -20,6 +20,7 @@ private slots:
     void setInputs_updatesState_withoutCrash();
     void boundaryOptions_updateOnToolChange_withoutCrash();
     void saveAction_writesScriptToFile_and_updatesState();
+    void saveAction_keepsEditedTextSettings();
     void collectSanityFindings_reportsMissingInputs();
     void layoutPreview_withGoldenGds_populatesLayerPanel();
 };

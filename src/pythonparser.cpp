@@ -465,6 +465,14 @@ static void parseSettingsAssignments(const QString& content, PythonParser::Resul
 
         const QVariant value = parsePythonLiteralOrNumber(valueExpr);
         result.settings.insert(key, value);
+
+        const bool quoted = valueExpr.size() >= 2
+                && ((valueExpr.startsWith('\'') && valueExpr.endsWith('\''))
+                    || (valueExpr.startsWith('\"') && valueExpr.endsWith('\"')));
+        if (quoted)
+            result.quotedStrings.insert(key);
+        else
+            result.quotedStrings.remove(key); // last assignment wins
     }
 }
 
@@ -843,6 +851,9 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     for (auto it = result.topLevel.begin(); it != result.topLevel.end(); ++it) {
         const QString key = it.key();
         result.writeMode[key] = PythonParser::SettingWriteMode::TopLevel;
+        // Top-level text values only come from quoted literals (parsePyLiteral).
+        if (!result.settings.contains(key) && it.value().type() == QVariant::String)
+            result.quotedStrings.insert(key);
     }
 
     for (auto it = result.settings.begin(); it != result.settings.end(); ++it) {

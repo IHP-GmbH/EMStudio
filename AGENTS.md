@@ -231,6 +231,11 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   (PyVista + Pillow; the Windows installer bundles one in `field_viewer_python/`,
   built by `scripts/stage_field_viewer_python.ps1` from `requirements-field-viewer.txt`).
 - Python packages for the workflows are listed in `requirements-python.txt`.
+- On Linux Wayland desktops with XWayland, main.cpp sets
+  `QT_QPA_PLATFORM=xcb;wayland` before creating the QApplication
+  (`preferXcbOnWayland`): Qt 5's Wayland backend prints warnings and misplaces
+  nested popups. An explicit `QT_QPA_PLATFORM` wins (tests run `-platform offscreen`).
+  Child processes launched for the Field viewers get `QT_QPA_PLATFORM` removed.
 - Windows specifics are wrapped in `#ifdef Q_OS_WIN` (mostly runPalace, wslHelper,
   toolautodetect, about). Any code that handles paths must work with Windows paths,
   WSL `/mnt/c/...` paths and Linux paths.

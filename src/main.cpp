@@ -84,7 +84,6 @@
 #include <QElapsedTimer>
 #include <QFont>
 #include <QFontInfo>
-#include <QScreen>
 #include <QtGlobal>
 #include <cstdint>
 
@@ -128,6 +127,25 @@ void normalizeApplicationFontForHighDpi()
     QApplication::setFont(normalized);
 }
 
+#if defined(Q_OS_LINUX)
+/*!*******************************************************************************************************************
+ * \brief Prefers X11 (XWayland) over Qt 5's Wayland backend on Wayland desktops.
+ *
+ * Qt 5.15's Wayland plugin prints warnings (QSocketNotifier, setGrabPopup) and can
+ * misplace or close nested popups, e.g. a combo box list opened from a popup.
+ * Falls back to Wayland if X11 can't start; an explicit QT_QPA_PLATFORM always wins.
+ * Must run before QApplication is constructed.
+ **********************************************************************************************************************/
+void preferXcbOnWayland()
+{
+    if (qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+        return;
+    if (qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") || qEnvironmentVariableIsEmpty("DISPLAY"))
+        return; // no Wayland session, or no XWayland to fall back to
+    qputenv("QT_QPA_PLATFORM", "xcb;wayland");
+}
+#endif
+
 } // namespace
 
 /*!*******************************************************************************************************************
@@ -164,6 +182,9 @@ int main(int argc, char *argv[])
 #if defined(Q_OS_WIN)
     enableWindowsPerMonitorDpiV2();
 #endif
+#if defined(Q_OS_LINUX)
+    preferXcbOnWayland();
+#endif
 
     // Qt5: opt into automatic High-DPI scaling (Qt6 enables this by default).
     // Must be set before QApplication. PassThrough keeps fractional scales
@@ -184,14 +205,6 @@ int main(int argc, char *argv[])
 
     QCoreApplication::setApplicationName("EMStudio");
     QCoreApplication::setApplicationVersion(QStringLiteral(EMSTUDIO_VERSION_STR));
-
-#ifndef QT_NO_DEBUG_OUTPUT
-    if (QScreen *screen = QGuiApplication::primaryScreen()) {
-        qDebug() << "HiDPI: logicalDpi" << screen->logicalDotsPerInch()
-                 << "devicePixelRatio" << screen->devicePixelRatio()
-                 << "appFontPt" << QApplication::font().pointSizeF();
-    }
-#endif
 
     QString gdsFile;
     QString topCell;

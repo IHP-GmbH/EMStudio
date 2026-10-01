@@ -55,7 +55,6 @@
 #include <QDockWidget>
 #include <QPixmap>
 #include <QSet>
-#include <QElapsedTimer>
 #include <QEventLoop>
 #include <algorithm>
 
@@ -364,7 +363,6 @@ MainWindow::MainWindow(QWidget *parent)
     const qreal pt = QFontInfo(QApplication::font()).pointSizeF();
     if (pt > 0.0)
         mono.setPointSizeF(pt);
-    mono.setPixelSize(-1);
     m_ui->editSimulationLog->setFont(mono);
 
     //hide python code button and text line
@@ -4486,16 +4484,12 @@ void MainWindow::refreshLayoutPreview()
     }
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    QElapsedTimer wall;
-    wall.start();
     // Keep the message pump alive so Windows does not mark us "Not Responding"
     // during flatten / Iso3D of via-dense layouts.
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     QVector<GdsFlatPolygon> polys;
     QString err;
-    QElapsedTimer step;
-    step.start();
     if (!GdsLayout::flattenTopCell(gdsPath, topCell, &polys, &err)) {
         QApplication::restoreOverrideCursor();
         m_ui->layoutView->clear();
@@ -4507,7 +4501,6 @@ void MainWindow::refreshLayoutPreview()
             info(err);
         return;
     }
-    const qint64 flattenMs = step.elapsed();
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // Model load always uses Top2D first — Iso3D is slow on via-dense GDS; user can switch after.
@@ -4658,19 +4651,7 @@ void MainWindow::refreshLayoutPreview()
         }
     }
 
-    step.restart();
     m_ui->layoutView->setPolygons(polys, styles, ports);
-    const qint64 setPolysMs = step.elapsed();
-    const auto iso = m_ui->layoutView->lastIso3dRebuildStats();
-    qInfo().nospace()
-        << "Layout preview: polys=" << polys.size()
-        << " flattenMs=" << flattenMs
-        << " setPolygonsMs=" << setPolysMs
-        << " iso3dMs=" << iso.ms
-        << " vias=" << iso.viaPolyCount
-        << " envelopes=" << iso.viaEnvelopeCount
-        << " faces=" << iso.faceCount
-        << " wallMs=" << wall.elapsed();
 
     // New GDS / top cell / stackup → drop the previous Field heatmap so it cannot
     // ghost over the new layout or stretch sceneRect into a cropped strip.

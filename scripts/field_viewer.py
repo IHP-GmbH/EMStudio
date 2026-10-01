@@ -149,6 +149,14 @@ def _exact_clip_by_axis(mesh, axis, position, sign, slice_only=False):
     return kept
 
 
+def _same_extent(a, b, tolerance=0.01):
+    """True if two (xmin, xmax, ymin, ymax, zmin, zmax) bounds match within
+    tolerance x the larger diagonal (same model, e.g. another frequency)."""
+    diag = max(np.linalg.norm(np.subtract(a[1::2], a[0::2])),
+               np.linalg.norm(np.subtract(b[1::2], b[0::2])))
+    return bool(np.max(np.abs(np.subtract(a, b))) <= tolerance * diag) if diag > 0 else a == b
+
+
 def _decimate_indices(points, spacing, weights):
     """One point per cube of size ``spacing`` (the largest-weight one, so
     hotspots survive). Replaces VTK's glyph(tolerance=...), whose point
@@ -665,15 +673,28 @@ class FieldViewerWindow(QDialog):
             self._switch_to_file(self._visible_paths[index])
 
     def _switch_to_file(self, path):
+        """Load another result file. With the same model extent the camera (view, zoom,
+        projection) and the clip plane position stay; otherwise both are reset."""
         if path == self.file_path:
             return
+        old_bounds = self._full_mesh.bounds if self._full_mesh is not None else None
+        old_clip = self._slider_value_to_position() if old_bounds is not None else None
         self.file_path = path
         self._load_error = None
         self.warning_label.setText("")
-        self._camera_needs_reset = True
         self._cycle_index = None
-        self._load_mesh()
-        self._on_axis_changed()
+        self._load_mesh(keep_field=True)
+        same_extent = (old_bounds is not None and self._full_mesh is not None
+                       and _same_extent(old_bounds, self._full_mesh.bounds))
+        self._camera_needs_reset = not same_extent
+        if not same_extent:
+            self._on_axis_changed()
+            return
+        self.clip_slider.blockSignals(True)
+        self.clip_slider.setValue(self._native_to_slider_value(self._current_axis, old_clip))
+        self.clip_slider.blockSignals(False)
+        self._update_clip_position_label()
+        self._schedule_redraw()
 
     def _on_cycle_changed(self, index):
         if index < 0 or index == self._cycle_index:
@@ -748,15 +769,19 @@ class FieldViewerWindow(QDialog):
         self.cycle_combo.blockSignals(False)
         self.cycle_group.setVisible(self._num_cycles > 1)
 
-    def _load_mesh(self, preserve_selection=False):
-        """Load self.file_path / self._cycle_index (spec 5.1)."""
+    def _load_mesh(self, preserve_selection=False, keep_field=False):
+        """Load self.file_path / self._cycle_index (spec 5.1).
+
+        preserve_selection: cycle switch of the same file. keep_field: another file.
+        Both keep the Field pane (field, Log, dB range, Min/Max) when the new data has
+        the selected field; otherwise it is reset to the defaults."""
         self.setWindowTitle(f"Field Viewer - {self._file_labels.get(self.file_path, self.file_path)}")
         self._mesh_generation += 1
         self._clipped_mesh_cache = None
         self._clipped_mesh_cache_key = None
         self._full_mesh_for_clip = None
         self._pending_clip_request = None
-        previous_array = self._current_array() if preserve_selection else None
+        previous_array = self._current_array() if (preserve_selection or keep_field) else None
         if not preserve_selection:
             self._cycle_infos = field_io.cycle_infos(self.file_path, self.source)
         try:
@@ -783,8 +808,8 @@ class FieldViewerWindow(QDialog):
         self._entries = {}
         self._populate_array_combo()
 
-        if preserve_selection and previous_array in available:
-            # Cycle switch: keep field and a manual Min/Max.
+        if previous_array is not None and previous_array in available:
+            # Cycle or file switch: keep field, Log, dB range and Min/Max.
             self.array_combo.blockSignals(True)
             self._select_array(previous_array)
             self.array_combo.blockSignals(False)

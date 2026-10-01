@@ -10,6 +10,7 @@
 #include <QtTest/QtTest>
 #include <QAction>
 #include <QComboBox>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QMenu>
 #include <QSet>
@@ -18,6 +19,7 @@
 #include <QTableWidget>
 
 #include "keybindingsdialog.h"
+#include "layoutview.h"
 #include "mainwindow.h"
 #include "navigationstyle.h"
 
@@ -102,7 +104,7 @@ void KeyBindingsTest::mainWindow_appliesStyleAndShortcuts()
     args = w.testFieldViewerArguments(QStringLiteral("/s/field_viewer.py"), QStringLiteral("/r"));
     QCOMPARE(args.at(args.indexOf(QStringLiteral("--nav-style")) + 1), QStringLiteral("emstudio"));
 
-    // Ctrl+1…6 open the Run Control pages.
+    // Ctrl+1…7 open the Run Control pages.
     auto *tabs = w.findChild<QTabWidget *>(QStringLiteral("tabSettings"));
     QVERIFY(tabs);
     auto find = [&w](const QKeySequence &seq) -> QShortcut * {
@@ -122,5 +124,33 @@ void KeyBindingsTest::mainWindow_appliesStyleAndShortcuts()
     QCOMPARE(tabs->tabText(0), QStringLiteral("Substrate"));
     QVERIFY(activate(QKeySequence(QStringLiteral("Ctrl+1"))));
     QCOMPARE(tabs->tabText(0), QStringLiteral("Main"));
+
+    // Fields (Ctrl+7) takes the shared layout view and turns Field mode on; Substrate gets it
+    // back with Field off and its 3D view restored. No Field toggle on the view.
+    auto *view = w.findChild<LayoutView *>(QStringLiteral("layoutView"));
+    auto *fieldsPage = w.findChild<QWidget *>(QStringLiteral("tabFields"));
+    auto *substratePane = w.findChild<QWidget *>(QStringLiteral("wdgLayoutPane"));
+    auto *fieldBtn = w.findChild<QWidget *>(QStringLiteral("layoutViewFieldBtn"));
+    QVERIFY(view && fieldsPage && substratePane && fieldBtn);
+    QVERIFY(fieldBtn->isHidden());
+    QVERIFY(activate(QKeySequence(QStringLiteral("Ctrl+2"))));
+    view->setViewMode(LayoutView::ViewMode::Iso3D);
+    QVERIFY(activate(QKeySequence(QStringLiteral("Ctrl+7"))));
+    QCOMPARE(tabs->tabText(0), QStringLiteral("Fields"));
+    QVERIFY(fieldsPage->isAncestorOf(view));
+    QVERIFY(view->isFieldMode());
+    QVERIFY(!view->isView3d());
+    QVERIFY(activate(QKeySequence(QStringLiteral("Ctrl+2"))));
+    QVERIFY(substratePane->isAncestorOf(view));
+    QVERIFY(!view->isFieldMode());
+    QVERIFY(view->isView3d());
+    view->setViewMode(LayoutView::ViewMode::Top2D);
+
+    // Shift+F on the view switches pages.
+    QKeyEvent shiftF(QEvent::KeyPress, Qt::Key_F, Qt::ShiftModifier);
+    QApplication::sendEvent(view, &shiftF);
+    QCOMPARE(tabs->tabText(0), QStringLiteral("Fields"));
+    QApplication::sendEvent(view, &shiftF);
+    QCOMPARE(tabs->tabText(0), QStringLiteral("Substrate"));
     QVERIFY(find(QKeySequence(Qt::Key_F5))); // not activated: it would start a run
 }

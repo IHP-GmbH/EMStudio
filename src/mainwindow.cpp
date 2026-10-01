@@ -275,6 +275,12 @@ MainWindow::MainWindow(QWidget *parent)
                 });
         connect(m_ui->layoutView, &LayoutView::fieldModeChanged,
                 this, &MainWindow::onLayoutFieldModeChanged);
+        // The Fields page owns Field mode: no toggle on the view, Shift+F switches pages.
+        m_ui->layoutView->setFieldToggleVisible(false);
+        connect(m_ui->layoutView, &LayoutView::fieldPageRequested,
+                this, [this](bool on) {
+                    showRunControlPage(on ? QStringLiteral("Fields") : QStringLiteral("Substrate"));
+                });
         connect(m_ui->layoutView, &LayoutView::fieldExternalVolumeRequested,
                 this, &MainWindow::openFieldVolumeExternalViewer);
         connect(m_ui->layoutView, &LayoutView::fieldSliceRequest,
@@ -1868,7 +1874,79 @@ void MainWindow::showTab(int indexToShow)
 
         if (title.compare(QStringLiteral("Results"), Qt::CaseInsensitive) == 0)
             updateResultsViewerFromModel();
+        if (title.compare(QStringLiteral("Fields"), Qt::CaseInsensitive) == 0)
+            placeLayoutPane(true);
+        else if (title.compare(QStringLiteral("Substrate"), Qt::CaseInsensitive) == 0)
+            placeLayoutPane(false);
     }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Moves the layout view + Layers panel between the Substrate and Fields pages.
+ *
+ * Both pages share one LayoutView. Fields turns Field mode on (2D slice, 3D button opens the
+ * Field viewer); Substrate turns it off and restores its 2D/3D choice. Each page keeps its own
+ * zoom / pan when the user changed it.
+ *
+ * \param fieldsPage True for the Fields page, false for Substrate.
+ **********************************************************************************************************************/
+void MainWindow::placeLayoutPane(bool fieldsPage)
+{
+    LayoutView *view = m_ui ? m_ui->layoutView : nullptr;
+    if (!view || !m_layoutPaneSplit)
+        return;
+    if (fieldsPage == m_layoutOnFieldsPage) {
+        if (fieldsPage && !view->isFieldMode())
+            view->setFieldMode(true);
+        return;
+    }
+
+    if (fieldsPage) {
+        m_substrateViewState = view->viewState();
+        m_substrateIso3d = view->isView3d();
+        m_ui->verticalLayoutLayoutPane->removeWidget(m_layoutPaneSplit);
+        m_layoutPaneSplit->setParent(m_ui->tabFields);
+        m_ui->verticalLayoutFieldsPage->addWidget(m_layoutPaneSplit, 1);
+        if (m_ui->lblLayoutTitle)
+            m_ui->lblLayoutTitle->setText(tr("Layout Field"));
+    } else {
+        m_fieldsViewState = view->viewState();
+        m_ui->verticalLayoutFieldsPage->removeWidget(m_layoutPaneSplit);
+        m_layoutPaneSplit->setParent(m_ui->wdgLayoutPane);
+        m_ui->verticalLayoutLayoutPane->addWidget(m_layoutPaneSplit, 1);
+        if (m_ui->lblLayoutTitle)
+            m_ui->lblLayoutTitle->setText(tr("Layout"));
+    }
+    m_layoutPaneSplit->show();
+    m_layoutOnFieldsPage = fieldsPage;
+
+    view->setFieldMode(fieldsPage);
+    if (!fieldsPage && m_substrateIso3d)
+        view->setViewMode(LayoutView::ViewMode::Iso3D);
+
+    // After the page's layout has sized the view.
+    const LayoutView::ViewState state = fieldsPage ? m_fieldsViewState : m_substrateViewState;
+    QTimer::singleShot(0, this, [this, state]() {
+        if (m_ui && m_ui->layoutView)
+            m_ui->layoutView->restoreViewState(state);
+    });
+}
+
+/*!*******************************************************************************************************************
+ * \brief Opens a run control page by its list title and selects its list item.
+ * \param title Page title, e.g. "Fields".
+ **********************************************************************************************************************/
+void MainWindow::showRunControlPage(const QString &title)
+{
+    const int idx = m_tabMap.value(title, -1);
+    if (idx < 0)
+        return;
+    if (QListWidget *list = m_ui->lstRunControl) {
+        const QList<QListWidgetItem *> items = list->findItems(title, Qt::MatchExactly);
+        if (!items.isEmpty())
+            list->setCurrentItem(items.first());
+    }
+    showTab(idx);
 }
 
 QString MainWindow::resolveResultsDirectory() const
@@ -2669,6 +2747,10 @@ void MainWindow::refreshFieldOverlay(bool force)
     if (dump.isEmpty()) {
         pending.status = tr("No field dump found. Enable fdump / field_dumps, or open a run with .pvd/.vtk/.vtu.");
         m_ui->layoutView->setFieldOverlay(pending);
+        // Once per run folder: the Fields page asks again on every visit.
+        if (m_fieldChoicesKey == m_fieldNoDumpLoggedKey)
+            return;
+        m_fieldNoDumpLoggedKey = m_fieldChoicesKey;
         appendToSimulationLog(
             QByteArray("\n[Field] No field dump found under the current results directory.\n"
                        "  Palace: set settings['fdump'] and re-run.\n"
@@ -3189,8 +3271,9 @@ void MainWindow::saveSettings()
         settings.setValue(QStringLiteral("usedLayersOnly"), m_layoutLayerPanel->usedLayersOnly());
         settings.setValue(QStringLiteral("showCoordinates"), m_layoutLayerPanel->showCoordinates());
         if (m_ui && m_ui->layoutView) {
-            settings.setValue(QStringLiteral("view3d"), m_ui->layoutView->isView3d());
-            settings.setValue(QStringLiteral("viewField"), m_ui->layoutView->isFieldMode());
+            settings.setValue(QStringLiteral("view3d"), m_layoutOnFieldsPage
+                                  ? m_substrateIso3d : m_ui->layoutView->isView3d());
+            settings.remove(QStringLiteral("viewField"));
         }
         settings.endGroup();
     }
@@ -4619,10 +4702,16 @@ void MainWindow::refreshLayoutPreview()
             if (!pi.fromLayer.isEmpty() && layerZ(pi.fromLayer, &f0, &f1)) {
                 pi.zFromUm = std::max(f0, f1); // top of Metal1
                 pi.hasFromZ = true;
+                pi.fromZminUm = std::min(f0, f1);
+                pi.fromZmaxUm = std::max(f0, f1);
+                pi.hasFromRange = true;
             }
             if (!pi.toLayer.isEmpty() && layerZ(pi.toLayer, &t0, &t1)) {
                 pi.zToUm = 0.5 * (t0 + t1); // mid of destination metal
                 pi.hasToZ = true;
+                pi.toZminUm = std::min(t0, t1);
+                pi.toZmaxUm = std::max(t0, t1);
+                pi.hasToRange = true;
             }
             ports.insert(gds, pi);
 
@@ -4766,6 +4855,7 @@ void MainWindow::setupLayoutLayerPanel()
     split->setStretchFactor(1, 1);
     split->setSizes({700, 200});
     m_ui->verticalLayoutLayoutPane->addWidget(split, /*stretch*/ 1);
+    m_layoutPaneSplit = split;
 
     connect(m_layoutLayerPanel, &LayoutLayerPanel::visibilityChanged,
             this, [this](int gds, bool vis) {
@@ -4976,10 +5066,10 @@ void MainWindow::applyNavigationStyle()
 }
 
 /*!*******************************************************************************************************************
- * \brief Creates the window-wide shortcuts that have no menu action: F5 Run, Ctrl+1…6 tabs.
+ * \brief Creates the window-wide shortcuts that have no menu action: F5 Run, Ctrl+1…7 pages.
  *
  * Ctrl+N opens the N-th Run Control entry (Main, Substrate, Python, Ports/Thermal, Simulate,
- * Results); hidden entries (Results for Elmer Thermal) are skipped.
+ * Results, Fields); hidden entries (Results for Elmer Thermal) are skipped.
  **********************************************************************************************************************/
 void MainWindow::setupGlobalShortcuts()
 {
@@ -4990,7 +5080,7 @@ void MainWindow::setupGlobalShortcuts()
             m_ui->btnRun->click();
     });
 
-    for (int n = 1; n <= 6; ++n) {
+    for (int n = 1; n <= 7; ++n) {
         auto *tab = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(n)), this);
         connect(tab, &QShortcut::activated, this, [this, n]() {
             QListWidget *list = m_ui->lstRunControl;

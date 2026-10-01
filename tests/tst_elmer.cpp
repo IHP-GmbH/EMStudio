@@ -8,6 +8,7 @@
 #include "tst_elmer.h"
 
 #include <QtTest/QtTest>
+#include <QTabWidget>
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
@@ -420,9 +421,12 @@ void ElmerTest::openThermalResults_switchesToFieldView()
         f.close();
     }
 
-    // No dump tooling needed: should switch to Substrate + Field without hanging.
+    // No dump tooling needed: should open the Fields page (Field mode on) without hanging.
     w.testOpenThermalResultsInFieldView(dir.path());
     QVERIFY(w.testIsFieldMode());
+    auto *tabs = w.findChild<QTabWidget *>(QStringLiteral("tabSettings"));
+    QVERIFY(tabs);
+    QCOMPARE(tabs->tabText(0), QStringLiteral("Fields"));
 }
 
 void ElmerTest::fieldChoices_parseListingAndViewerArgs()

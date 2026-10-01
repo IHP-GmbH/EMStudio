@@ -114,7 +114,7 @@ QVector<BindingRow> bindingTable(NavStyle style)
     const QString l2d = tr("Layout 2D");
     const QString l3d = tr("Layout 3D");
     const QString layout = tr("Layout");
-    const QString field = tr("Layout Field");
+    const QString field = tr("Fields page");
     const QString viewer = tr("3D field viewer");
 
     QVector<BindingRow> rows;
@@ -125,8 +125,8 @@ QVector<BindingRow> bindingTable(NavStyle style)
          << BindingRow{global, tr("Run simulation"), QStringLiteral("F5")}
          << BindingRow{global, tr("Preferences"), QStringLiteral("Ctrl+,")}
          << BindingRow{global, tr("About EMStudio"), QStringLiteral("F1")}
-         << BindingRow{global, tr("Switch tab (Main, Substrate, Python, Ports, Simulate, Results)"),
-                       QStringLiteral("Ctrl+1 … Ctrl+6")}
+         << BindingRow{global, tr("Switch page (Main, Substrate, Python, Ports, Simulate, Results, Fields)"),
+                       QStringLiteral("Ctrl+1 … Ctrl+7")}
          << BindingRow{global, tr("Quit"), QStringLiteral("Ctrl+Q")};
 
     // Layout 2D mouse
@@ -166,8 +166,8 @@ QVector<BindingRow> bindingTable(NavStyle style)
          << BindingRow{layout, tr("Clear selection, ruler and probe"), QStringLiteral("Esc")}
          << BindingRow{layout, tr("Copy view as image"), QStringLiteral("Ctrl+C")};
 
-    // Layout Field keys
-    rows << BindingRow{field, tr("Field on/off"), QStringLiteral("Shift+F")}
+    // Fields page keys (layout + field slice)
+    rows << BindingRow{layout, tr("Switch between the Substrate and Fields pages"), QStringLiteral("Shift+F")}
          << BindingRow{field, tr("Open the 3D field viewer"), QStringLiteral("3")}
          << BindingRow{field, tr("Move the Z slice up / down"), QStringLiteral("PgUp · PgDn")}
          << BindingRow{field, tr("Log scale on/off"), QStringLiteral("L")}

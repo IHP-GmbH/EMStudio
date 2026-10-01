@@ -942,3 +942,81 @@ void LayoutViewTest::iso3d_viewFromBelow_reversesStackOrder()
     settings.endGroup();
     settings.sync();
 }
+
+/*! Iso3D draws each port's surface (as gds2palace builds it) and points via-port arrows
+ *  from From to To, reversed by -z (swapping From/To reverses it as well). */
+void LayoutViewTest::iso3d_portsShowSurfaceAndFromToDirection()
+{
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(400, 300);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+
+    QVector<GdsFlatPolygon> polys;
+    polys << makeRect(1, 0, 0, 10, 8) << makeRect(2, 2, 2, 6, 6);
+    polys << makeRect(201, 1, 1, 1, 4);   // via port: zero-width line along y
+    polys << makeRect(202, 7, 1, 9, 3);   // in-plane port with area
+    QHash<int, LayoutView::LayerStyle> styles;
+    auto s1 = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+    s1.hasZ = true;
+    s1.zminUm = 0.0;
+    s1.zmaxUm = 0.5;
+    auto s2 = style(QStringLiteral("M2"), QStringLiteral("conductor"), QColor(40, 120, 200), 20);
+    s2.hasZ = true;
+    s2.zminUm = 3.0;
+    s2.zmaxUm = 3.4;
+    styles.insert(1, s1);
+    styles.insert(2, s2);
+
+    auto layer = [](LayoutView::PortInfo &p, bool from, double z0, double z1) {
+        if (from) {
+            p.fromZminUm = z0; p.fromZmaxUm = z1; p.hasFromRange = true;
+            p.zFromUm = z1; p.hasFromZ = true;
+        } else {
+            p.toZminUm = z0; p.toZmaxUm = z1; p.hasToRange = true;
+            p.zToUm = 0.5 * (z0 + z1); p.hasToZ = true;
+        }
+    };
+    // Vertical arrow direction of port P1 in scene space: <0 = points up on screen.
+    auto arrowDy = [&](const QString &dir, bool fromM1) -> qreal {
+        QHash<int, LayoutView::PortInfo> ports;
+        LayoutView::PortInfo via;
+        via.direction = dir;
+        via.fromLayer = fromM1 ? QStringLiteral("M1") : QStringLiteral("M2");
+        via.toLayer = fromM1 ? QStringLiteral("M2") : QStringLiteral("M1");
+        layer(via, true, fromM1 ? 0.0 : 3.0, fromM1 ? 0.5 : 3.4);
+        layer(via, false, fromM1 ? 3.0 : 0.0, fromM1 ? 3.4 : 0.5);
+        ports.insert(201, via);
+        LayoutView::PortInfo inPlane;
+        inPlane.direction = QStringLiteral("-x");
+        inPlane.toLayer = QStringLiteral("M2");
+        layer(inPlane, false, 3.0, 3.4);
+        ports.insert(202, inPlane);
+        view.setPolygons(polys, styles, ports);
+        view.setViewMode(LayoutView::ViewMode::Iso3D);
+
+        qreal dy = 0.0;
+        for (QGraphicsItem *item : view.scene()->items()) {
+            auto *line = qgraphicsitem_cast<QGraphicsLineItem *>(item);
+            if (line && item->data(4).toBool() && item->data(3).toInt() == 201
+                && item->toolTip().contains(QStringLiteral("direction")))
+                dy = line->line().p2().y() - line->line().p1().y();  // tail -> tip
+        }
+        return dy;
+    };
+
+    QVERIFY(arrowDy(QStringLiteral("z"), true) < 0);    // M1 -> M2: up
+    QVERIFY(arrowDy(QStringLiteral("-z"), true) > 0);   // reversed: down
+    QVERIFY(arrowDy(QStringLiteral("z"), false) > 0);   // M2 -> M1: down
+    QVERIFY(arrowDy(QStringLiteral("-z"), false) < 0);  // both swapped: up
+
+    // Port surfaces: the via sheet (vertical, has area in Iso3D) and the in-plane rectangle.
+    QSet<int> surfaces;
+    for (QGraphicsItem *item : view.scene()->items())
+        if (qgraphicsitem_cast<QGraphicsPolygonItem *>(item) && item->data(4).toBool()
+            && item->toolTip().contains(QStringLiteral("surface")))
+            surfaces.insert(item->data(3).toInt());
+    QCOMPARE(surfaces, QSet<int>({201, 202}));
+}

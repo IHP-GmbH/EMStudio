@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include "stackupeditor.h"
+#include "appsettings.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -1174,7 +1175,7 @@ QString StackupEditor::resolveAdsConvertScript() const
 
 QString StackupEditor::resolveHostPython() const
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("Preferences"));
     const QString elmerPy = settings.value(QStringLiteral("ELMER_PYTHON")).toString().trimmed();
     const QString openemsPy = settings.value(QStringLiteral("OPENEMS_PYTHON")).toString().trimmed();

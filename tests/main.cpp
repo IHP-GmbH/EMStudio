@@ -5,6 +5,8 @@
 #include <QDebug>
 #include <QFileInfo>
 #include <QStringList>
+#include <QSettings>
+#include <QTemporaryDir>
 
 #include <functional>
 #include <cstdio>
@@ -127,6 +129,12 @@ static TestEntry makeTestEntry(const QString &name, int argc, char **argv)
 int main(int argc, char **argv)
 {
     QApplication app(argc, argv);
+
+    // Keep the tests away from the user's EMStudio preferences: test builds use
+    // their own INI store (appsettings.h), placed in a folder removed after the run.
+    QTemporaryDir settingsDir;
+    if (settingsDir.isValid())
+        QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDir.path());
 
     int status = 0;
 

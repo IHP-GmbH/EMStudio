@@ -6,6 +6,7 @@
  ************************************************************************/
 
 #include "tst_results_viewer.h"
+#include "appsettings.h"
 
 #include <QtTest/QtTest>
 #include <QCheckBox>
@@ -302,7 +303,7 @@ void ResultsViewerTest::preferredPython_ordersPalaceBeforeOpenems()
     QVERIFY(QFile(palacePy).open(QIODevice::WriteOnly));
     QVERIFY(QFile(openemsPy).open(QIODevice::WriteOnly));
 
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("Preferences"));
     const QVariant oldPalace = settings.value(QStringLiteral("PALACE_PYTHON"));
     const QVariant oldOpenems = settings.value(QStringLiteral("OPENEMS_PYTHON"));
@@ -333,7 +334,7 @@ void ResultsViewerTest::preferredPython_ordersPalaceBeforeOpenems()
 
 void ResultsViewerTest::calculatorToggle_andParamSettingsPersist()
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("Results"));
     settings.setValue(QStringLiteral("sParameters"), QStringList{QStringLiteral("S21")});
     settings.setValue(QStringLiteral("calculatorVisible"), true);

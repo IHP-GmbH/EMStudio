@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include "layoutview.h"
+#include "appsettings.h"
 
 #include <algorithm>
 
@@ -1794,7 +1795,7 @@ void LayoutView::onFieldTempToggled(bool on)
         clearFieldProbe();
     else
         viewport()->update();
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     settings.setValue(QStringLiteral("fieldShowTemp"), on);
 }
@@ -1828,7 +1829,7 @@ void LayoutView::repositionFloatingControls()
 
 void LayoutView::loadViewModeFromSettings()
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     const bool v3d = settings.value(QStringLiteral("view3d"), false).toBool();
     const bool vField = settings.value(QStringLiteral("viewField"), false).toBool();
@@ -1844,7 +1845,7 @@ void LayoutView::loadViewModeFromSettings()
 
 void LayoutView::saveViewModeToSettings() const
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     settings.setValue(QStringLiteral("view3d"), m_viewMode == ViewMode::Iso3D);
     settings.setValue(QStringLiteral("viewField"), m_fieldOn);

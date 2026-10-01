@@ -107,7 +107,9 @@ Key members:
   Simulate, Results.
 
 QSettings: organization `EMStudio`, application `EMStudioApp` (on Linux:
-`~/.config/EMStudio/EMStudioApp.conf`). `saveSettings()` / `loadSettings()` in
+`~/.config/EMStudio/EMStudioApp.conf`). Always open it with
+`emstudioSettings()` (src/appsettings.h), never `QSettings("EMStudio", …)`
+directly: test builds get a separate store there (§6). `saveSettings()` / `loadSettings()` in
 mainwindow.cpp. `ASSISTANT_API_KEY` is stored encrypted (`securestore.cpp`, DPAPI
 on Windows). On first launch `ToolAutoDetect::fillEmptyPreferences` fills empty
 tool paths from `PATH`.
@@ -273,6 +275,11 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   (`updateGoldenOnce()` in test_utils.cpp; the call is commented out in the test).
   `tst_about_linux_probe.txt` pins tool versions (it fails locally when your
   gds2palace version differs from CI's).
+- **Settings isolation:** tests run real `MainWindow`s that save preferences.
+  With `EMSTUDIO_TESTING`, `emstudioSettings()` uses its own INI store, and
+  tests/main.cpp points it at a temporary folder, so local test runs never touch
+  the user's preferences. Tests that read or write settings must use
+  `emstudioSettings()` too.
 - Solver stubs in `tests/tools/` stand in for openEMS, Palace and Elmer. Tests set
   them through preferences, e.g. `testSetPreference("PALACE_RUN_SCRIPT", stub)`.
 - Run locally (Linux):

@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include "resultsviewer.h"
+#include "appsettings.h"
 #include "resultscalculator.h"
 #include "smithchartwidget.h"
 
@@ -397,7 +398,7 @@ ResultsViewer::ResultsViewer(QWidget *parent)
 
 void ResultsViewer::loadResultsSettings()
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("Results"));
 
     m_preferredParams.clear();
@@ -425,7 +426,7 @@ void ResultsViewer::loadResultsSettings()
 
 void ResultsViewer::saveResultsSettings() const
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("Results"));
 
     QStringList tokens;
@@ -932,7 +933,7 @@ QString ResultsViewer::preferredPythonPreferenceKey() const
 
 QStringList ResultsViewer::hostPythonCandidates() const
 {
-    QSettings settings(QStringLiteral("EMStudio"), QStringLiteral("EMStudioApp"));
+    QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("Preferences"));
     const QString openemsPy = settings.value(QStringLiteral("OPENEMS_PYTHON")).toString().trimmed();
     const QString elmerPy = settings.value(QStringLiteral("ELMER_PYTHON")).toString().trimmed();

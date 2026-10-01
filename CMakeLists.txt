@@ -200,6 +200,7 @@ set(HEADERS
     src/layoutview.h
     src/layoutlayerpanel.h
     src/sanitycheck.h
+    src/appsettings.h
     src/resultscalculator.h
     src/exprparser.h
     src/stackupexpr.h

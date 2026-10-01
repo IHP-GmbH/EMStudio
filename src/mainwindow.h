@@ -33,6 +33,7 @@
 
 #include "pythonparser.h"
 #include "sanitycheck.h"
+#include "navigationstyle.h"
 
 class QProcess;
 class QProcessEnvironment;
@@ -165,6 +166,8 @@ public:
     void                            testSetEditorText(const QString& s);
     void                            refreshSimToolOptionsForTests();
     void                            testSetPreference(const QString& key, const QVariant& value);
+    /*! Runs applyNavigationStyle() and returns the style the Layout preview now uses. */
+    NavStyle                        testApplyNavigationStyle();
     QVector<PortInfo>               testParsePortsFromEditor() const;
     bool                            testInitDefaultOpenemsModel();
     int                             testPortsRowCount() const;
@@ -330,6 +333,7 @@ private slots:
     void                            on_actionAbout_EMStudio_triggered();
     void                            updateBoundaryOptionsForCurrentTool();
     void                            on_actionTerminal_triggered();
+    void                            on_actionKeyBindings_triggered();
 
 private:
     void                            saveSettings();
@@ -437,7 +441,7 @@ private:
     void                            onFieldVolumeViewerReadyRead();
     void                            onFieldVolumeViewerFinished(int exitCode, QProcess::ExitStatus status);
     void                            closeFieldVolumeViewerSplash();
-    void                            onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
+    void                            onLayoutFieldSliceRequest(qreal zUm, bool logScale);
     void                            onLayoutFieldHotZRequest();
     void                            scheduleFieldOverlayRefresh(bool force = false);
     void                            onFieldExportFinished(int exitCode, QProcess::ExitStatus status);
@@ -479,6 +483,10 @@ private:
     void                            rebuildLayerMapping();
     void                            refreshLayoutPreview();
     void                            setupLayoutLayerPanel();
+    /*! F5 Run and Ctrl+1…6 tab shortcuts (menu shortcuts are in mainwindow.ui). */
+    void                            setupGlobalShortcuts();
+    /*! Pushes preference VIEWER_NAV_STYLE to the Layout preview and an open 3D field viewer. */
+    void                            applyNavigationStyle();
     QVector<SanityFinding>          collectSanityFindings() const;
 
     bool                            applyPythonScriptFromEditor();
@@ -651,7 +659,6 @@ private:
     QTimer                         *m_fieldSliceDebounce = nullptr;
     qreal                           m_pendingFieldZUm = 0.0;
     bool                            m_pendingFieldLog = false;
-    bool                            m_pendingFieldArrows = true;
     bool                            m_fieldExportBusy = false;
     bool                            m_fieldPreferAutoZ = true;
     bool                            m_fieldRefreshForce = false;

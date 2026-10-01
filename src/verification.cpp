@@ -9,6 +9,7 @@
 
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "layoutview.h"
 
 /*!*******************************************************************************************************************
  * \brief Initializes a default Palace Python model for test purposes without any UI dialogs.
@@ -241,6 +242,17 @@ bool MainWindow::testSetSimToolKey(const QString& simToolKey, QString* outErr)
 void MainWindow::testSetPreference(const QString& key, const QVariant& value)
 {
     m_preferences[key] = value;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Applies the VIEWER_NAV_STYLE preference and reports the Layout preview's style.
+ *
+ * \return Navigation style now used by the Layout preview.
+ **********************************************************************************************************************/
+NavStyle MainWindow::testApplyNavigationStyle()
+{
+    applyNavigationStyle();
+    return m_ui->layoutView->navigationStyle();
 }
 
 /*!*******************************************************************************************************************

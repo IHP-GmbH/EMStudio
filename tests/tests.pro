@@ -31,6 +31,7 @@ SOURCES += \
     tst_sanitycheck.cpp \
     tst_layout_view.cpp \
     tst_layout_layer_panel.cpp \
+    tst_key_bindings.cpp \
     tst_gdslayout.cpp \
     tst_substrate_view.cpp \
     tst_tips.cpp \
@@ -59,6 +60,7 @@ HEADERS += \
     tst_sanitycheck.h \
     tst_layout_view.h \
     tst_layout_layer_panel.h \
+    tst_key_bindings.h \
     tst_gdslayout.h \
     tst_substrate_view.h \
     tst_tips.h \

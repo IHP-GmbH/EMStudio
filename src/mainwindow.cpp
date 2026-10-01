@@ -56,6 +56,8 @@
 #include <QPixmap>
 #include <QSet>
 #include <QEventLoop>
+#include <QShortcut>
+#include <QKeySequence>
 #include <algorithm>
 
 #include "extension/variantmanager.h"
@@ -85,6 +87,7 @@
 #include "pythonparser.h"
 #include "pythoneditor.h"
 #include "keywordseditor.h"
+#include "keybindingsdialog.h"
 #include "sanitycheck.h"
 
 #include <QRegularExpression>
@@ -319,6 +322,8 @@ MainWindow::MainWindow(QWidget *parent)
     loadSettings();
     initRecentMenu();
     setupSettingsPanel();
+    setupGlobalShortcuts();
+    applyNavigationStyle();
 
     connect(m_ui->editRunPythonScript, &PythonEditor::sigFontSizeChanged,
             this, [=](qreal newSize){
@@ -2153,6 +2158,8 @@ QStringList MainWindow::fieldViewerArguments(const QString &script,
     }
     if (!iconPath.isEmpty())
         args << QStringLiteral("--icon") << iconPath;
+    args << QStringLiteral("--nav-style")
+         << NavigationStyle::id(NavigationStyle::fromPreferences(m_preferences));
     args << QStringLiteral("--stdin-control");
     return args;
 }
@@ -2502,13 +2509,12 @@ void MainWindow::onFieldVolumeViewerFinished(int exitCode, QProcess::ExitStatus 
 }
 
 /*!*******************************************************************************************************************
- * \brief Slot: LayoutView Z / Log / Arrows request — queue a forced re-export.
+ * \brief Slot: LayoutView Z / Log request — queue a forced re-export.
  **********************************************************************************************************************/
-void MainWindow::onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showArrows)
+void MainWindow::onLayoutFieldSliceRequest(qreal zUm, bool logScale)
 {
     m_pendingFieldZUm = zUm;
     m_pendingFieldLog = logScale;
-    m_pendingFieldArrows = showArrows;
     m_fieldPreferAutoZ = false; // user moved Z / options
     scheduleFieldOverlayRefresh(true);
 }
@@ -2521,7 +2527,6 @@ void MainWindow::onLayoutFieldHotZRequest()
     if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
         return;
     m_pendingFieldLog = m_ui->layoutView->fieldLogScale();
-    m_pendingFieldArrows = m_ui->layoutView->fieldShowArrows();
     m_fieldPreferAutoZ = true;
     scheduleFieldOverlayRefresh(true);
 }
@@ -2581,7 +2586,6 @@ bool MainWindow::loadFieldOverlayFromCache(const QString &metaPath)
     ov.yminUm = o.value(QStringLiteral("ymin_um")).toDouble();
     ov.ymaxUm = o.value(QStringLiteral("ymax_um")).toDouble();
     ov.logScale = o.value(QStringLiteral("log_scale")).toBool();
-    ov.showArrows = o.value(QStringLiteral("show_arrows")).toBool(true);
     ov.volume = o.value(QStringLiteral("volume")).toBool(false);
     if (o.contains(QStringLiteral("clip_um")) && ov.volume)
         ov.zUm = o.value(QStringLiteral("clip_um")).toDouble(ov.zUm);
@@ -2627,19 +2631,6 @@ bool MainWindow::loadFieldOverlayFromCache(const QString &metaPath)
         }
     }
 
-    const QJsonArray arrows = o.value(QStringLiteral("arrows")).toArray();
-    ov.arrows.reserve(arrows.size());
-    for (const QJsonValue &v : arrows) {
-        const QJsonObject a = v.toObject();
-        LayoutView::FieldArrow fa;
-        fa.xUm = a.value(QStringLiteral("x_um")).toDouble();
-        fa.yUm = a.value(QStringLiteral("y_um")).toDouble();
-        fa.dx = a.value(QStringLiteral("dx")).toDouble();
-        fa.dy = a.value(QStringLiteral("dy")).toDouble();
-        fa.mag = a.value(QStringLiteral("mag")).toDouble(1.0);
-        ov.arrows.push_back(fa);
-    }
-
     m_ui->layoutView->setFieldOverlay(ov);
     {
         const QString qty = ov.quantity.toLower();
@@ -2667,7 +2658,6 @@ void MainWindow::refreshFieldOverlay(bool force)
     LayoutView::FieldOverlay pending;
     pending.zUm = m_pendingFieldZUm;
     pending.logScale = m_pendingFieldLog;
-    pending.showArrows = m_pendingFieldArrows;
 
     // The model's tool / run folder may have changed since the last listing
     // (e.g. the layout loads before the simulation tool is switched).
@@ -2748,14 +2738,12 @@ void MainWindow::refreshFieldOverlay(bool force)
 
     const qreal zUm = m_ui->layoutView->fieldClipZUm();
     const bool logScale = m_ui->layoutView->fieldLogScale();
-    const bool showArrows = m_ui->layoutView->fieldShowArrows();
 
     LayoutView::FieldOverlay busy = m_ui->layoutView->fieldOverlay();
     busy.zUm = zUm;
     busy.volume = false;
     busy.status = tr("Exporting slice…");
     busy.logScale = logScale;
-    busy.showArrows = showArrows;
     m_ui->layoutView->setFieldOverlay(busy);
 
     // New file: pick a fresh hot Z. Another cycle of the same file keeps Z.
@@ -2782,8 +2770,6 @@ void MainWindow::refreshFieldOverlay(bool force)
 
     if (logScale)
         args << QStringLiteral("--log");
-    if (!showArrows)
-        args << QStringLiteral("--no-arrows");
 
     const QRectF layoutBb = m_ui->layoutView->layoutContentBoundsUm();
     if (layoutBb.isValid() && layoutBb.width() > 0 && layoutBb.height() > 0) {
@@ -4784,6 +4770,24 @@ void MainWindow::setupLayoutLayerPanel()
                 if (m_ui->layoutView)
                     m_ui->layoutView->setLayerOpacity(gds, op);
             });
+    // Iso3D rebuilds are costly: apply the opacity when the slider is released.
+    if (m_ui->layoutView) {
+        m_layoutLayerPanel->setDeferOpacityUpdates(m_ui->layoutView->isView3d());
+        connect(m_ui->layoutView, &LayoutView::viewModeChanged,
+                m_layoutLayerPanel, &LayoutLayerPanel::setDeferOpacityUpdates);
+    }
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::allOpacityChanged,
+            this, [this](qreal op) {
+                if (m_ui->layoutView)
+                    m_ui->layoutView->setAllLayerOpacity(op);
+            });
+    // "All layers" selected in the panel: drop the layer highlight everywhere
+    // (LayoutView::highlightCleared also clears the substrate view).
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::layerDeactivated,
+            this, [this]() {
+                if (m_ui->layoutView)
+                    m_ui->layoutView->clearHighlight();
+            });
     connect(m_layoutLayerPanel, &LayoutLayerPanel::layerActivated,
             this, [this](const QString &name, const QString &kind) {
                 if (m_ui->layoutView)
@@ -4934,6 +4938,62 @@ void MainWindow::on_actionPrefernces_triggered()
     configureAssistantAgent();
 
     saveSettings();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Setup → Key Bindings: choose the viewer navigation style; shows all bindings.
+ **********************************************************************************************************************/
+void MainWindow::on_actionKeyBindings_triggered()
+{
+    KeyBindingsDialog dlg(NavigationStyle::fromPreferences(m_preferences), this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    m_preferences[NavigationStyle::preferenceKey()] = NavigationStyle::id(dlg.style());
+    applyNavigationStyle();
+    saveSettings();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Applies the navigation style preference to the Layout preview and a running 3D field viewer.
+ **********************************************************************************************************************/
+void MainWindow::applyNavigationStyle()
+{
+    const NavStyle style = NavigationStyle::fromPreferences(m_preferences);
+    if (m_ui && m_ui->layoutView)
+        m_ui->layoutView->setNavigationStyle(style);
+    if (m_fieldVolumeViewerProcess && m_fieldVolumeViewerProcess->state() == QProcess::Running) {
+        QJsonObject msg;
+        msg.insert(QStringLiteral("nav_style"), NavigationStyle::id(style));
+        m_fieldVolumeViewerProcess->write(QJsonDocument(msg).toJson(QJsonDocument::Compact) + '\n');
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Creates the window-wide shortcuts that have no menu action: F5 Run, Ctrl+1…6 tabs.
+ *
+ * Ctrl+N opens the N-th Run Control entry (Main, Substrate, Python, Ports/Thermal, Simulate,
+ * Results); hidden entries (Results for Elmer Thermal) are skipped.
+ **********************************************************************************************************************/
+void MainWindow::setupGlobalShortcuts()
+{
+    auto *run = new QShortcut(QKeySequence(Qt::Key_F5), this);
+    connect(run, &QShortcut::activated, this, [this]() {
+        // Works from any tab; runOpenEMS / runPalace refuse a second concurrent run.
+        if (m_ui->btnRun->isEnabled())
+            m_ui->btnRun->click();
+    });
+
+    for (int n = 1; n <= 6; ++n) {
+        auto *tab = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(n)), this);
+        connect(tab, &QShortcut::activated, this, [this, n]() {
+            QListWidget *list = m_ui->lstRunControl;
+            QListWidgetItem *item = list ? list->item(n - 1) : nullptr;
+            if (!item || item->isHidden())
+                return;
+            list->setCurrentItem(item);
+            on_lstRunControl_itemClicked(item);
+        });
+    }
 }
 
 /*!*******************************************************************************************************************

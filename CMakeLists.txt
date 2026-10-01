@@ -105,6 +105,8 @@ set(SOURCES
     src/about.cpp
     src/tips.cpp
     src/keywordseditor.cpp
+    src/keybindingsdialog.cpp
+    src/navigationstyle.cpp
 
     QtPropertyBrowser/qtbuttonpropertybrowser.cpp
     QtPropertyBrowser/qteditorfactory.cpp
@@ -167,6 +169,8 @@ set(HEADERS
     src/toolautodetect.h
     src/about.h
     src/keywordseditor.h
+    src/keybindingsdialog.h
+    src/navigationstyle.h
 
     QtPropertyBrowser/qtbuttonpropertybrowser.h
     QtPropertyBrowser/qteditorfactory.h

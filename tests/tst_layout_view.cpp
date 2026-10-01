@@ -15,6 +15,12 @@
 #include <QSettings>
 #include <QSignalSpy>
 #include <QToolButton>
+#include <QCheckBox>
+#include <QSlider>
+#include <QScrollBar>
+#include <QGraphicsPolygonItem>
+#include <QGraphicsScene>
+#include <QGraphicsPixmapItem>
 #include <QCoreApplication>
 #include <QWheelEvent>
 #include <QElapsedTimer>
@@ -22,6 +28,7 @@
 #include <QFileInfo>
 
 #include "layoutview.h"
+#include "navigationstyle.h"
 #include "gdslayout.h"
 
 namespace {
@@ -146,16 +153,18 @@ void LayoutViewTest::setPolygons_conductorsAndPorts_drawAndInteract()
                         Qt::NoModifier);
     QApplication::sendEvent(view.viewport(), &release);
 
-    // Shift+drag measure path
-    QMouseEvent shiftPress(QEvent::MouseButtonPress, QPointF(100, 100), Qt::LeftButton, Qt::LeftButton,
-                           Qt::ShiftModifier);
-    QApplication::sendEvent(view.viewport(), &shiftPress);
-    QMouseEvent shiftMove(QEvent::MouseMove, QPointF(180, 140), Qt::LeftButton, Qt::LeftButton,
-                          Qt::ShiftModifier);
-    QApplication::sendEvent(view.viewport(), &shiftMove);
-    QMouseEvent shiftRelease(QEvent::MouseButtonRelease, QPointF(180, 140), Qt::LeftButton,
-                             Qt::LeftButton, Qt::ShiftModifier);
-    QApplication::sendEvent(view.viewport(), &shiftRelease);
+    // Ctrl+Shift+click measure points (start, end)
+    const Qt::KeyboardModifiers measureMods = Qt::ControlModifier | Qt::ShiftModifier;
+    QMouseEvent measurePress(QEvent::MouseButtonPress, QPointF(100, 100), Qt::LeftButton, Qt::LeftButton,
+                             measureMods);
+    QApplication::sendEvent(view.viewport(), &measurePress);
+    QVERIFY(view.hasMeasure());
+    QMouseEvent measureMove(QEvent::MouseMove, QPointF(180, 140), Qt::NoButton, Qt::NoButton,
+                            Qt::NoModifier);
+    QApplication::sendEvent(view.viewport(), &measureMove);
+    QMouseEvent measureEnd(QEvent::MouseButtonPress, QPointF(180, 140), Qt::LeftButton,
+                           Qt::LeftButton, measureMods);
+    QApplication::sendEvent(view.viewport(), &measureEnd);
     view.clearMeasure();
 
     view.setShowCoordinates(false);
@@ -190,10 +199,24 @@ void LayoutViewTest::visibilityOpacity_andClear()
     view.setPolygons(polys, styles);
 
     QVERIFY(view.isLayerVisible(5));
-    QCOMPARE(view.layerOpacity(5), 1.0);
+    // Opacity is the true 2D fill opacity; untouched layers use the built-in default.
+    QCOMPARE(view.layerOpacity(5), LayoutView::defaultFillOpacity());
+
+    auto fillAlpha = [&view]() {
+        for (QGraphicsItem *it : view.scene()->items())
+            if (auto *poly = qgraphicsitem_cast<QGraphicsPolygonItem *>(it))
+                return poly->brush().color().alpha();
+        return -1;
+    };
+    QCOMPARE(fillAlpha(), int(LayoutView::defaultFillOpacity() * 255 + 0.5));
 
     view.setLayerOpacity(5, 0.4);
     QCOMPARE(view.layerOpacity(5), 0.4);
+    QCOMPARE(fillAlpha(), int(0.4 * 255 + 0.5)); // the slider value is what is drawn
+
+    view.setAllLayerOpacity(0.8);
+    QCOMPARE(view.layerOpacity(5), 0.8);
+    QCOMPARE(fillAlpha(), int(0.8 * 255 + 0.5));
     view.setLayerVisible(5, false);
     QVERIFY(!view.isLayerVisible(5));
     view.setLayerVisible(5, true);
@@ -363,7 +386,6 @@ void LayoutViewTest::fieldMode_keeps2d_and3dOpensExternalSignal()
     ov.zMinUm = 0;
     ov.zMaxUm = 1;
     ov.quantity = QStringLiteral("|E|");
-    ov.showArrows = true;
     view.setFieldOverlay(ov);
     QVERIFY(view.fieldOverlay().valid());
 
@@ -542,4 +564,381 @@ void LayoutViewTest::iso3d_balunExample_flattenAndRebuild_reportsTiming()
              qPrintable(QStringLiteral("Iso3D rebuild too slow: %1 ms").arg(st.ms)));
     QVERIFY2(setMs < 5000,
              qPrintable(QStringLiteral("setPolygons too slow: %1 ms").arg(setMs)));
+}
+
+namespace {
+
+void sendWheel(LayoutView &view, int dy, Qt::KeyboardModifiers mods = Qt::NoModifier)
+{
+    QWheelEvent ev(QPointF(200, 150), QPointF(200, 150), QPoint(0, 0), QPoint(0, dy),
+                   Qt::NoButton, mods, Qt::NoScrollPhase, false);
+    QApplication::sendEvent(view.viewport(), &ev);
+}
+
+void sendDrag(LayoutView &view, Qt::MouseButton button, Qt::KeyboardModifiers mods,
+              const QPointF &from, const QPointF &to)
+{
+    QMouseEvent press(QEvent::MouseButtonPress, from, button, button, mods);
+    QApplication::sendEvent(view.viewport(), &press);
+    QMouseEvent move(QEvent::MouseMove, to, button, button, mods);
+    QApplication::sendEvent(view.viewport(), &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, to, button, Qt::NoButton, mods);
+    QApplication::sendEvent(view.viewport(), &release);
+}
+
+void sendKey(LayoutView &view, int key, Qt::KeyboardModifiers mods = Qt::NoModifier)
+{
+    QKeyEvent ev(QEvent::KeyPress, key, mods);
+    QApplication::sendEvent(&view, &ev);
+}
+
+} // namespace
+
+void LayoutViewTest::navigationStyles_mouseAndKeys()
+{
+    QSettings settings = emstudioSettings();
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    const QVariant prev3d = settings.value(QStringLiteral("view3d"));
+    const QVariant prevField = settings.value(QStringLiteral("viewField"));
+    settings.setValue(QStringLiteral("view3d"), false);
+    settings.setValue(QStringLiteral("viewField"), false);
+    settings.endGroup();
+    settings.sync();
+
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(400, 300);
+    view.show();
+
+    QVector<GdsFlatPolygon> polys;
+    polys << makeRect(1, 0, 0, 100, 80);
+    QHash<int, LayoutView::LayerStyle> styles;
+    auto s1 = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+    s1.hasZ = true;
+    s1.zmaxUm = 2.0;
+    styles.insert(1, s1);
+    view.setPolygons(polys, styles);
+
+    // Keys 3 / 2 switch the view mode (and announce it, e.g. for the layer panel).
+    QSignalSpy modeSpy(&view, &LayoutView::viewModeChanged);
+    sendKey(view, Qt::Key_3);
+    QVERIFY(view.isView3d());
+    QCOMPARE(modeSpy.count(), 1);
+    QVERIFY(modeSpy.last().at(0).toBool());
+
+    // EMStudio: the wheel orbits in 3D (no zoom), Ctrl+wheel zooms, right drag orbits.
+    view.setNavigationStyle(NavStyle::EMStudio);
+    const qreal yaw0 = view.orbitYawDeg();
+    const qreal pitch0 = view.orbitPitchDeg();
+    const qreal scale0 = view.transform().m11();
+    sendWheel(view, -120);
+    QVERIFY(!qFuzzyCompare(view.orbitPitchDeg(), pitch0));
+    QCOMPARE(view.transform().m11(), scale0);
+    sendWheel(view, 120, Qt::ControlModifier);
+    QVERIFY(view.transform().m11() > scale0);
+    const qreal yawBeforeRight = view.orbitYawDeg();
+    sendDrag(view, Qt::RightButton, Qt::NoModifier, QPointF(200, 150), QPointF(260, 150));
+    QVERIFY(view.orbitYawDeg() > yawBeforeRight);
+    QVERIFY(!qFuzzyCompare(view.orbitYawDeg(), yaw0));
+
+    // setupEM: the wheel zooms in 3D, right drag zooms (up = in) instead of orbiting.
+    view.setNavigationStyle(NavStyle::SetupEM);
+    QCOMPARE(view.navigationStyle(), NavStyle::SetupEM);
+    const qreal yaw1 = view.orbitYawDeg();
+    const qreal scale1 = view.transform().m11();
+    sendWheel(view, 120);
+    QVERIFY(view.transform().m11() > scale1);
+    QCOMPARE(view.orbitYawDeg(), yaw1);
+    const qreal scale2 = view.transform().m11();
+    sendDrag(view, Qt::RightButton, Qt::NoModifier, QPointF(200, 150), QPointF(200, 100));
+    QVERIFY(view.transform().m11() > scale2);
+    QCOMPARE(view.orbitYawDeg(), yaw1);
+
+    // Axis views: X looks from +X (yaw -90, pitch 0), I back to isometric, Z to the top view.
+    sendKey(view, Qt::Key_X);
+    QCOMPARE(view.orbitYawDeg(), -90.0);
+    QCOMPARE(view.orbitPitchDeg(), 0.0);
+    sendKey(view, Qt::Key_Y, Qt::ShiftModifier);
+    QCOMPARE(view.orbitYawDeg(), 0.0);
+    sendKey(view, Qt::Key_I);
+    QCOMPARE(view.orbitYawDeg(), 45.0);
+    QCOMPARE(view.orbitPitchDeg(), 30.0);
+    sendKey(view, Qt::Key_Z);
+    QVERIFY(!view.isView3d());
+
+    // 2D: + / - zoom, arrows pan, Shift+left pans in both styles.
+    const qreal scale3 = view.transform().m11();
+    sendKey(view, Qt::Key_Plus);
+    QVERIFY(view.transform().m11() > scale3);
+    sendKey(view, Qt::Key_Plus);
+    sendKey(view, Qt::Key_Plus);
+    const int h0 = view.horizontalScrollBar()->value();
+    sendKey(view, Qt::Key_Right);
+    QVERIFY(view.horizontalScrollBar()->value() > h0);
+    const int h1 = view.horizontalScrollBar()->value();
+    sendDrag(view, Qt::LeftButton, Qt::ShiftModifier, QPointF(200, 150), QPointF(240, 150));
+    QVERIFY(view.horizontalScrollBar()->value() < h1);
+    QVERIFY(!view.hasMeasure());
+
+    // M arms measure mode: two clicks make a ruler; Esc clears ruler and mode.
+    sendKey(view, Qt::Key_M);
+    QVERIFY(view.isMeasureArmed());
+    QSignalSpy measureSpy(&view, &LayoutView::measureChanged);
+    QTest::mouseClick(view.viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+    QTest::mouseClick(view.viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(200, 120));
+    QVERIFY(view.hasMeasure());
+    QVERIFY(measureSpy.count() >= 2);
+    QVERIFY(measureSpy.last().at(0).toBool());
+    QVERIFY(measureSpy.last().at(3).toReal() > 0.0);
+    sendKey(view, Qt::Key_Escape);
+    QVERIFY(!view.isMeasureArmed());
+    QVERIFY(!view.hasMeasure());
+
+    // Field keys: Shift+F toggles Field, L / P toggle the panel checkboxes,
+    // PgUp moves the Z slider, 3 asks for the external 3D viewer.
+    sendKey(view, Qt::Key_F, Qt::ShiftModifier);
+    QVERIFY(view.isFieldMode());
+    const bool log0 = view.fieldLogScale();
+    sendKey(view, Qt::Key_L);
+    QCOMPARE(view.fieldLogScale(), !log0);
+    const bool probe0 = view.fieldShowTemp();
+    sendKey(view, Qt::Key_P);
+    QCOMPARE(view.fieldShowTemp(), !probe0);
+    sendKey(view, Qt::Key_P); // restore the persisted Probe setting
+    auto *zSlider = view.findChild<QSlider *>();
+    QVERIFY(zSlider);
+    const int z0 = zSlider->value();
+    QSignalSpy sliceSpy(&view, &LayoutView::fieldSliceRequest);
+    sendKey(view, Qt::Key_PageUp);
+    QCOMPARE(zSlider->value(), z0 + 50);
+    QTRY_VERIFY_WITH_TIMEOUT(sliceSpy.count() >= 1, 2000);
+    QSignalSpy extSpy(&view, &LayoutView::fieldExternalVolumeRequested);
+    sendKey(view, Qt::Key_3);
+    QCOMPARE(extSpy.count(), 1);
+    QVERIFY(!view.isView3d());
+    sendKey(view, Qt::Key_F, Qt::ShiftModifier);
+    QVERIFY(!view.isFieldMode());
+
+    // The mode button tooltip follows the style.
+    auto *modeBtn = view.findChild<QToolButton *>(QStringLiteral("layoutViewModeBtn"));
+    QVERIFY(modeBtn);
+    QVERIFY(modeBtn->toolTip().contains(QStringLiteral("setupEM")));
+    view.setNavigationStyle(NavStyle::EMStudio);
+    QVERIFY(modeBtn->toolTip().contains(QStringLiteral("EMStudio")));
+
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    if (prev3d.isValid())
+        settings.setValue(QStringLiteral("view3d"), prev3d);
+    else
+        settings.remove(QStringLiteral("view3d"));
+    if (prevField.isValid())
+        settings.setValue(QStringLiteral("viewField"), prevField);
+    else
+        settings.remove(QStringLiteral("viewField"));
+    settings.endGroup();
+    settings.sync();
+}
+
+namespace {
+
+/*! Sum of alpha over the Iso3D pixmap (dense scenes are one pre-rendered image); -1 if none. */
+qint64 iso3dPixmapAlpha(LayoutView &view)
+{
+    for (QGraphicsItem *it : view.scene()->items()) {
+        if (auto *pix = qgraphicsitem_cast<QGraphicsPixmapItem *>(it)) {
+            const QImage img = pix->pixmap().toImage().convertToFormat(QImage::Format_ARGB32);
+            qint64 sum = 0;
+            for (int y = 0; y < img.height(); y += 2) {
+                const QRgb *row = reinterpret_cast<const QRgb *>(img.constScanLine(y));
+                for (int x = 0; x < img.width(); x += 2)
+                    sum += qAlpha(row[x]);
+            }
+            return sum;
+        }
+    }
+    return -1;
+}
+
+} // namespace
+
+void LayoutViewTest::iso3d_opacityAndVisibility_redrawDenseScene()
+{
+    QSettings settings = emstudioSettings();
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    const QVariant prev3d = settings.value(QStringLiteral("view3d"));
+    const QVariant prevField = settings.value(QStringLiteral("viewField"));
+    settings.setValue(QStringLiteral("view3d"), false);
+    settings.setValue(QStringLiteral("viewField"), false);
+    settings.endGroup();
+
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(500, 400);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+
+    // 10 x 10 separate metal squares: 500 faces, above the pixmap threshold.
+    QVector<GdsFlatPolygon> polys;
+    for (int i = 0; i < 10; ++i)
+        for (int j = 0; j < 10; ++j)
+            polys << makeRect(1, i * 10.0, j * 10.0, i * 10.0 + 6.0, j * 10.0 + 6.0);
+    QHash<int, LayoutView::LayerStyle> styles;
+    auto s1 = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+    s1.hasZ = true;
+    s1.zmaxUm = 2.0;
+    styles.insert(1, s1);
+    view.setPolygons(polys, styles);
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    QVERIFY(view.lastIso3dRebuildStats().usedPixmap);
+
+    const qint64 alphaDefault = iso3dPixmapAlpha(view);
+    QVERIFY(alphaDefault > 0);
+    const qreal yaw = view.orbitYawDeg();
+    const QTransform zoom = view.transform();
+
+    // Measure ruler survives an opacity change (same projection).
+    sendKey(view, Qt::Key_M);
+    QTest::mouseClick(view.viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+    QTest::mouseClick(view.viewport(), Qt::LeftButton, Qt::NoModifier, QPoint(200, 120));
+    sendKey(view, Qt::Key_M);
+    QVERIFY(view.hasMeasure());
+
+    // The slider value must show up at once, not at the next orbit.
+    view.setAllLayerOpacity(0.2);
+    const qint64 alphaLow = iso3dPixmapAlpha(view);
+    QVERIFY2(alphaLow > 0 && alphaLow < alphaDefault * 0.6,
+             qPrintable(QStringLiteral("%1 vs %2").arg(alphaLow).arg(alphaDefault)));
+    QVERIFY(view.hasMeasure());
+    QCOMPARE(view.orbitYawDeg(), yaw);
+    QCOMPARE(view.transform(), zoom);
+
+    view.setLayerOpacity(1, 1.0);
+    QVERIFY(iso3dPixmapAlpha(view) > alphaDefault);
+
+    // Orbiting must not move the scene extent, the scrollbars or the view center.
+    sendKey(view, Qt::Key_Plus); // zoomed in: scrollbars are in use
+    sendKey(view, Qt::Key_Plus);
+    QCoreApplication::processEvents();
+    const QRectF rect0 = view.sceneRect();
+    const int hMax0 = view.horizontalScrollBar()->maximum();
+    const int vMax0 = view.verticalScrollBar()->maximum();
+    const QPointF center0 = view.mapToScene(view.viewport()->rect().center());
+    QPointF pos(250, 200);
+    QMouseEvent press(QEvent::MouseButtonPress, pos, Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+    QApplication::sendEvent(view.viewport(), &press);
+    for (int i = 0; i < 12; ++i) {
+        pos += QPointF(15, (i % 2) ? 9 : -6);
+        QMouseEvent move(QEvent::MouseMove, pos, Qt::LeftButton, Qt::LeftButton, Qt::ControlModifier);
+        QApplication::sendEvent(view.viewport(), &move);
+        QTest::qWait(40); // let the coalesced orbit rebuild run
+        QCOMPARE(view.sceneRect(), rect0);
+        QCOMPARE(view.horizontalScrollBar()->maximum(), hMax0);
+        QCOMPARE(view.verticalScrollBar()->maximum(), vMax0);
+        const QPointF c = view.mapToScene(view.viewport()->rect().center());
+        QVERIFY2(QLineF(c, center0).length() < 2.0 / view.transform().m11(),
+                 qPrintable(QStringLiteral("center moved by %1").arg(QLineF(c, center0).length())));
+    }
+    QMouseEvent release(QEvent::MouseButtonRelease, pos, Qt::LeftButton, Qt::NoButton, Qt::ControlModifier);
+    QApplication::sendEvent(view.viewport(), &release);
+    QVERIFY(!qFuzzyCompare(view.orbitYawDeg(), yaw));
+    QCOMPARE(view.sceneRect(), rect0);
+
+    // Visibility checkbox: hidden layer disappears from the 3D image at once.
+    view.setLayerVisible(1, false);
+    QVERIFY(iso3dPixmapAlpha(view) <= 0);
+    view.setLayerVisible(1, true);
+    QVERIFY(iso3dPixmapAlpha(view) > alphaDefault);
+
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    if (prev3d.isValid())
+        settings.setValue(QStringLiteral("view3d"), prev3d);
+    else
+        settings.remove(QStringLiteral("view3d"));
+    if (prevField.isValid())
+        settings.setValue(QStringLiteral("viewField"), prevField);
+    else
+        settings.remove(QStringLiteral("viewField"));
+    settings.endGroup();
+    settings.sync();
+}
+
+namespace {
+
+/*! Highest Z value (paint order) of the polygons named \a name; -1 if none. */
+qreal topPaintZ(LayoutView &view, const QString &name)
+{
+    qreal z = -1.0;
+    for (QGraphicsItem *it : view.scene()->items()) {
+        if (qgraphicsitem_cast<QGraphicsPolygonItem *>(it) && it->data(0).toString() == name)
+            z = qMax(z, it->zValue());
+    }
+    return z;
+}
+
+} // namespace
+
+void LayoutViewTest::iso3d_viewFromBelow_reversesStackOrder()
+{
+    QSettings settings = emstudioSettings();
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    const QVariant prev3d = settings.value(QStringLiteral("view3d"));
+    const QVariant prevField = settings.value(QStringLiteral("viewField"));
+    settings.setValue(QStringLiteral("view3d"), false);
+    settings.setValue(QStringLiteral("viewField"), false);
+    settings.endGroup();
+
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(400, 300);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+
+    // Two stacked, overlapping metals: few faces, so they stay individual scene items.
+    QVector<GdsFlatPolygon> polys;
+    polys << makeRect(1, 0, 0, 20, 20) << makeRect(2, 5, 5, 25, 25);
+    QHash<int, LayoutView::LayerStyle> styles;
+    auto low = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+    low.hasZ = true;
+    low.zminUm = 0.0;
+    low.zmaxUm = 0.5;
+    auto high = style(QStringLiteral("M2"), QStringLiteral("conductor"), QColor(40, 120, 200), 20);
+    high.hasZ = true;
+    high.zminUm = 2.0;
+    high.zmaxUm = 2.5;
+    styles.insert(1, low);
+    styles.insert(2, high);
+    view.setPolygons(polys, styles);
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    QVERIFY(!view.lastIso3dRebuildStats().usedPixmap);
+
+    // From above (default pitch 30°): the upper metal is painted last (nearest the camera).
+    QVERIFY(view.orbitPitchDeg() > 0);
+    QVERIFY(topPaintZ(view, QStringLiteral("M2")) > topPaintZ(view, QStringLiteral("M1")));
+
+    // Dragging down orbits below the layout: now the lower metal is nearest and on top.
+    sendDrag(view, Qt::LeftButton, Qt::ControlModifier, QPointF(200, 100), QPointF(200, 260));
+    QVERIFY(view.orbitPitchDeg() < 0);
+    QVERIFY(topPaintZ(view, QStringLiteral("M1")) > topPaintZ(view, QStringLiteral("M2")));
+
+    // Shift+Z jumps to the view from below.
+    sendKey(view, Qt::Key_I);
+    QVERIFY(view.orbitPitchDeg() > 0);
+    sendKey(view, Qt::Key_Z, Qt::ShiftModifier);
+    QVERIFY(view.isView3d());
+    QCOMPARE(view.orbitPitchDeg(), -85.0);
+    QVERIFY(topPaintZ(view, QStringLiteral("M1")) > topPaintZ(view, QStringLiteral("M2")));
+
+    settings.beginGroup(QStringLiteral("LayoutPreview"));
+    if (prev3d.isValid())
+        settings.setValue(QStringLiteral("view3d"), prev3d);
+    else
+        settings.remove(QStringLiteral("view3d"));
+    if (prevField.isValid())
+        settings.setValue(QStringLiteral("viewField"), prevField);
+    else
+        settings.remove(QStringLiteral("viewField"));
+    settings.endGroup();
+    settings.sync();
 }

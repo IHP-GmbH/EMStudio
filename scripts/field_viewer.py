@@ -31,6 +31,19 @@ Launch:
 EMStudio passes --stdin-control: while the window is open, a JSON line on
 stdin ({"files": [...], "run_path": ..., "source": ..., "cycle": N}) makes
 the window reload those files (or just come to the front if unchanged).
+{"nav_style": "emstudio"|"setupem"} alone switches the mouse navigation
+without raising the window.
+
+Navigation (--nav-style, EMStudio Setup -> Key Bindings):
+    setupem   VTK trackball: left drag orbit, Ctrl+left roll, right drag and
+              wheel zoom, middle / Shift+left / Alt+left pan.
+    emstudio  As the EMStudio Layout 3D view: left or right drag and wheel /
+              trackpad scroll orbit, Ctrl+wheel zoom, middle / Shift+left /
+              Alt+left pan.
+Keys (plot focused): R/F/Home reset camera, I isometric, X/Y/Z axis views
+(Shift: negative side), +/- zoom, arrows pan, O parallel projection,
+M find max., A arrows, PgUp/PgDn clip plane, Ctrl+C copy. VTK's own
+letter keys (w, s, 3, q, e, ...) are disabled.
 """
 
 from __future__ import annotations
@@ -47,11 +60,11 @@ try:
     import pyvista as pv
     from PySide6.QtWidgets import (
         QApplication, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
-        QLabel, QPushButton, QRadioButton, QButtonGroup, QCheckBox,
+        QLabel, QPushButton, QRadioButton, QButtonGroup, QCheckBox, QWidget,
         QSlider, QComboBox, QLineEdit, QStyleFactory, QColorDialog, QMenu,
     )
-    from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal
-    from PySide6.QtGui import QShortcut, QKeySequence, QColor, QIcon
+    from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal, QEvent, QPoint
+    from PySide6.QtGui import QShortcut, QKeySequence, QColor, QIcon, QMouseEvent
     from pyvistaqt import QtInteractor
 except ImportError as _exc:  # pragma: no cover - depends on the host Python
     print(f"field_viewer: missing Python package ({_exc}).\n"
@@ -67,6 +80,15 @@ _AXIS_BOUNDS_INDEX = {"X": (0, 1), "Y": (2, 3), "Z": (4, 5)}
 _AXIS_POINT_INDEX = {"X": 0, "Y": 1, "Z": 2}
 # Up vector for the axis-view buttons: +Z for X/Y views, +Y for Z views.
 _VIEW_UP = {"X": (0.0, 0.0, 1.0), "Y": (0.0, 0.0, 1.0), "Z": (0.0, 1.0, 0.0)}
+# Mouse navigation presets (same ids as EMStudio's VIEWER_NAV_STYLE).
+NAV_STYLES = ("emstudio", "setupem")
+# Log color scale: range below the maximum, in dB (dropdown; default 70).
+_LOG_RANGE_DB_CHOICES = (10, 20, 30, 40, 50, 60, 70)
+_LOG_RANGE_DB_DEFAULT = 70
+# Opacity changes that are not a drag (wheel, keys) redraw after this pause.
+_OPACITY_SETTLE_MS = 300
+# Right press that moves less than this is a click (context menu), not a drag.
+_CLICK_SLOP_PX = 6
 
 # Fine enough that "Find max." lands within a nanometre on mm-scale domains.
 _SLIDER_STEPS = 1_000_000
@@ -186,9 +208,11 @@ class _StdinListener(QObject):
 class FieldViewerWindow(QDialog):
     """Top-level field viewer window for a list of candidate result files."""
 
-    def __init__(self, file_paths, source, off_screen=False, icon_path=None):
+    def __init__(self, file_paths, source, off_screen=False, icon_path=None, nav_style="setupem"):
         super().__init__()
         self.setAttribute(Qt.WA_DeleteOnClose)
+        self.nav_style = nav_style if nav_style in NAV_STYLES else "setupem"
+        self._right_press_pos = None
         self._icon_path = icon_path
         if icon_path:
             self.setWindowIcon(QIcon(icon_path))
@@ -342,7 +366,12 @@ class FieldViewerWindow(QDialog):
         self.opacity_slider.setRange(0, 100)
         self.opacity_slider.setValue(100)
         self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
-        self.opacity_slider.sliderReleased.connect(self._schedule_redraw)
+        self.opacity_slider.sliderReleased.connect(self._on_opacity_released)
+        # Wheel / keys / track clicks change the value without a drag: redraw once they settle.
+        self._opacity_settle = QTimer(self)
+        self._opacity_settle.setSingleShot(True)
+        self._opacity_settle.setInterval(_OPACITY_SETTLE_MS)
+        self._opacity_settle.timeout.connect(self._schedule_redraw)
         display_layout.addWidget(self.opacity_slider)
 
         self.arrow_size_label = QLabel(f"Arrow size: {_ARROW_SIZE_DEFAULT_PERCENT}%")
@@ -393,14 +422,32 @@ class FieldViewerWindow(QDialog):
         self.array_combo.currentIndexChanged.connect(self._on_array_changed)
         field_layout.addWidget(self.array_combo)
         self.log_scale_cb = QCheckBox("Log color scale")
-        self.log_scale_cb.toggled.connect(self._on_redraw_needed)
+        self.log_scale_cb.toggled.connect(self._on_log_toggled)
         field_layout.addWidget(self.log_scale_cb)
-        min_layout = QHBoxLayout()
+        # Min: typed value on the linear scale, a dB range below Max in log mode.
+        self.clim_min_row = QWidget()
+        min_layout = QHBoxLayout(self.clim_min_row)
+        min_layout.setContentsMargins(0, 0, 0, 0)
         min_layout.addWidget(QLabel("Min:"))
         self.clim_min_edit = QLineEdit()
         self.clim_min_edit.editingFinished.connect(self._on_redraw_needed)
         min_layout.addWidget(self.clim_min_edit)
-        field_layout.addLayout(min_layout)
+        field_layout.addWidget(self.clim_min_row)
+        self.log_range_row = QWidget()
+        range_layout = QHBoxLayout(self.log_range_row)
+        range_layout.setContentsMargins(0, 0, 0, 0)
+        range_layout.addWidget(QLabel("Min:"))
+        self.log_range_combo = QComboBox()
+        for db in _LOG_RANGE_DB_CHOICES:
+            self.log_range_combo.addItem(f"-{db} dB", db)
+        self.log_range_combo.setCurrentIndex(self.log_range_combo.findData(_LOG_RANGE_DB_DEFAULT))
+        self.log_range_combo.setToolTip(
+            "Lowest value shown, in dB below Max (field amplitudes such as |E| "
+            "use 20*log10, power-like quantities 10*log10).")
+        self.log_range_combo.currentIndexChanged.connect(self._on_redraw_needed)
+        range_layout.addWidget(self.log_range_combo, 1)
+        field_layout.addWidget(self.log_range_row)
+        self.log_range_row.setVisible(False)  # shown by _sync_log_widgets
         max_layout = QHBoxLayout()
         max_layout.addWidget(QLabel("Max:"))
         self.clim_max_edit = QLineEdit()
@@ -457,8 +504,9 @@ class FieldViewerWindow(QDialog):
         else:
             self.plotter = QtInteractor(self)
             main_layout.addWidget(self.plotter, 1)
-            self.plotter.setContextMenuPolicy(Qt.CustomContextMenu)
-            self.plotter.customContextMenuRequested.connect(self._show_plotter_context_menu)
+            # Right *drag* navigates; a right *click* opens the menu (eventFilter).
+            self.plotter.setContextMenuPolicy(Qt.PreventContextMenu)
+            self.plotter.installEventFilter(self)
 
         QShortcut(QKeySequence.Copy, self).activated.connect(self._copy_view)
 
@@ -471,6 +519,144 @@ class FieldViewerWindow(QDialog):
         menu.addAction("Copy to Clipboard")
         if menu.exec(self.plotter.mapToGlobal(pos)):
             self._copy_view()
+
+
+    # ---------- Navigation (mouse style, keys) ----------
+
+    def set_nav_style(self, style):
+        """Switch the mouse preset; unknown ids are ignored."""
+        if style in NAV_STYLES:
+            self.nav_style = style
+
+    def _mapped_press(self, button, mods):
+        """(button, modifiers) VTK's trackball should see for a press."""
+        left = button == Qt.LeftButton
+        if left and mods in (Qt.ShiftModifier, Qt.AltModifier):
+            return Qt.MiddleButton, Qt.NoModifier  # pan
+        if self.nav_style == "emstudio":
+            if button == Qt.RightButton or (left and mods == Qt.ControlModifier):
+                return Qt.LeftButton, Qt.NoModifier  # orbit
+        return button, mods
+
+    def eventFilter(self, obj, event):
+        if obj is not getattr(self, "plotter", None):
+            return super().eventFilter(obj, event)
+        etype = event.type()
+        if etype in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+            if event.button() == Qt.RightButton:
+                self._right_press_pos = event.position().toPoint()
+            mods = event.modifiers() & ~Qt.KeypadModifier
+            button, new_mods = self._mapped_press(event.button(), mods)
+            if (button, new_mods) != (event.button(), mods):
+                self.plotter.mousePressEvent(QMouseEvent(
+                    etype, event.position(), event.globalPosition(),
+                    button, button, new_mods))
+                return True
+            return False
+        if etype == QEvent.MouseButtonRelease and event.button() == Qt.RightButton:
+            self.plotter.mouseReleaseEvent(event)
+            start, self._right_press_pos = self._right_press_pos, None
+            pos = event.position().toPoint()
+            if start is not None and (pos - start).manhattanLength() < _CLICK_SLOP_PX:
+                QTimer.singleShot(0, lambda p=pos: self._show_plotter_context_menu(p))
+            return True
+        if etype == QEvent.Wheel and self.nav_style == "emstudio" \
+                and not event.modifiers() & Qt.ControlModifier:
+            self._orbit_by_wheel(event)
+            return True
+        if etype == QEvent.KeyPress:
+            self._handle_key(event)
+            return True  # never reach VTK's own key bindings
+        if etype == QEvent.KeyRelease:
+            return True
+        return False
+
+    def _orbit_by_wheel(self, event):
+        """EMStudio style: scroll orbits like the Layout 3D view."""
+        pixel = event.pixelDelta()
+        angle = event.angleDelta()
+        if not pixel.isNull():
+            dx, dy = pixel.x() * 0.35, pixel.y() * 0.35
+        else:
+            dx, dy = angle.x() * 0.08, angle.y() * 0.08
+        if not dx and not dy:
+            return
+        cam = self.plotter.camera
+        cam.Azimuth(-dx)
+        cam.Elevation(-dy)
+        cam.OrthogonalizeViewUp()
+        self.plotter.reset_camera_clipping_range()
+        self.plotter.render()
+
+    def _pan_camera(self, fx, fy):
+        """Move the view by a fraction of its half height (right / up positive)."""
+        cam = self.plotter.camera
+        pos = np.array(cam.position, dtype=float)
+        focal = np.array(cam.focal_point, dtype=float)
+        direction = focal - pos
+        dist = float(np.linalg.norm(direction))
+        if dist <= 0.0:
+            return
+        direction /= dist
+        up = np.array(cam.up, dtype=float)
+        right = np.cross(direction, up)
+        if np.linalg.norm(right) == 0.0:
+            return
+        right /= np.linalg.norm(right)
+        up = np.cross(right, direction)
+        half = cam.parallel_scale if cam.parallel_projection \
+            else dist * np.tan(np.radians(cam.view_angle) / 2.0)
+        shift = (right * fx + up * fy) * half
+        cam.position = tuple(pos + shift)
+        cam.focal_point = tuple(focal + shift)
+        self.plotter.render()
+
+    def _step_clip(self, steps):
+        self.clip_slider.setValue(self.clip_slider.value() + steps * (_SLIDER_STEPS // 50))
+        if not self.clip_enabled_cb.isChecked():
+            self.clip_enabled_cb.setChecked(True)
+
+    def _reset_view_camera(self):
+        self.plotter.reset_camera()
+        self.plotter.render()
+
+    def _handle_key(self, event):
+        """Viewer keys (see module doc); True if the key did something."""
+        key = event.key()
+        mods = event.modifiers() & ~Qt.KeypadModifier
+        shift = mods == Qt.ShiftModifier
+        if mods not in (Qt.NoModifier, Qt.ShiftModifier):
+            return False
+        axis = {Qt.Key_X: "X", Qt.Key_Y: "Y", Qt.Key_Z: "Z"}.get(key)
+        if axis:
+            self._set_view(axis, -1 if shift else 1)
+            return True
+        if shift and key not in (Qt.Key_Plus,):
+            return False
+        cam = self.plotter.camera
+        actions = {
+            Qt.Key_R: self._reset_view_camera,
+            Qt.Key_F: self._reset_view_camera,
+            Qt.Key_Home: self._reset_view_camera,
+            Qt.Key_I: lambda: (self.plotter.view_isometric(), self.plotter.render()),
+            Qt.Key_Plus: lambda: (cam.Zoom(1.15), self.plotter.render()),
+            Qt.Key_Equal: lambda: (cam.Zoom(1.15), self.plotter.render()),
+            Qt.Key_Minus: lambda: (cam.Zoom(1.0 / 1.15), self.plotter.render()),
+            Qt.Key_Left: lambda: self._pan_camera(-0.2, 0.0),
+            Qt.Key_Right: lambda: self._pan_camera(0.2, 0.0),
+            Qt.Key_Up: lambda: self._pan_camera(0.0, 0.2),
+            Qt.Key_Down: lambda: self._pan_camera(0.0, -0.2),
+            Qt.Key_O: self.orthographic_cb.toggle,
+            Qt.Key_M: self._move_slider_to_max,
+            Qt.Key_A: lambda: self.show_vectors_cb.isEnabled() and self.show_vectors_cb.toggle(),
+            Qt.Key_PageUp: lambda: self._step_clip(1),
+            Qt.Key_PageDown: lambda: self._step_clip(-1),
+        }
+        action = actions.get(key)
+        if action is None:
+            return False
+        action()
+        return True
 
     # ---------- Result file / cycle pickers ----------
 
@@ -610,6 +796,7 @@ class FieldViewerWindow(QDialog):
         self.log_scale_cb.blockSignals(True)
         self.log_scale_cb.setChecked(log_scale)
         self.log_scale_cb.blockSignals(False)
+        self._sync_log_widgets()
         if default_array is not None:
             self.array_combo.blockSignals(True)
             self._select_array(default_array)
@@ -619,9 +806,11 @@ class FieldViewerWindow(QDialog):
 
     def replaced_by(self, file_paths, source):
         """New window for another run at this window's place; closes this one."""
-        new = FieldViewerWindow(file_paths, source, icon_path=self._icon_path)
+        new = FieldViewerWindow(file_paths, source, icon_path=self._icon_path,
+                                nav_style=self.nav_style)
         new.setGeometry(self.geometry())
         new.show()
+        new.plotter.setFocus()
         self.close()
         return new
 
@@ -687,9 +876,15 @@ class FieldViewerWindow(QDialog):
             self._schedule_redraw()
 
     def _on_opacity_changed(self, value):
+        # The label follows the slider; the 3D view is redrawn only on release
+        # (drag) or after the value settles (wheel, keys, track click).
         self.opacity_label.setText(f"Opacity: {value}%")
         if not self.opacity_slider.isSliderDown():
-            self._schedule_redraw()
+            self._opacity_settle.start()
+
+    def _on_opacity_released(self):
+        self._opacity_settle.stop()
+        self._schedule_redraw()
 
     def _on_arrow_size_changed(self, value):
         self.arrow_size_label.setText(f"Arrow size: {value * _ARROW_SIZE_STEP_PERCENT:g}%")
@@ -782,12 +977,40 @@ class FieldViewerWindow(QDialog):
         self._reset_clim_range()
         self._schedule_redraw()
 
+    def _sync_log_widgets(self):
+        """Min input (linear) or dB range dropdown (log), per the Log checkbox."""
+        log = self.log_scale_cb.isChecked()
+        self.clim_min_row.setVisible(not log)
+        self.log_range_row.setVisible(log)
+
+    def _on_log_toggled(self, _checked):
+        self._sync_log_widgets()
+        self._schedule_redraw()
+
+    def set_log_range_db(self, db):
+        """Select the log range (adds an entry for values outside the list)."""
+        idx = self.log_range_combo.findData(db)
+        if idx < 0:
+            self.log_range_combo.addItem(f"-{db:g} dB", db)
+            idx = self.log_range_combo.count() - 1
+        self.log_range_combo.setCurrentIndex(idx)
+
+    def _log_range_per_decade(self):
+        name = self._current_array()
+        return 20.0 if name and field_io.is_amplitude_array(name) else 10.0
+
     def _get_clim(self):
-        """(min, max) from the fields, or None = auto-scale (invalid / min >= max)."""
+        """(min, max), or None = auto-scale (invalid / min >= max).
+
+        Log mode: Max from the field, Min = Max reduced by the dB range."""
         try:
-            lo = float(self.clim_min_edit.text())
             hi = float(self.clim_max_edit.text())
-        except ValueError:
+            if self.log_scale_cb.isChecked():
+                db = float(self.log_range_combo.currentData())
+                lo = hi / 10.0 ** (db / self._log_range_per_decade()) if hi > 0 else hi
+            else:
+                lo = float(self.clim_min_edit.text())
+        except (ValueError, TypeError):
             return None
         return (lo, hi) if lo < hi else None
 
@@ -1012,8 +1235,7 @@ def _apply_cli_options(window, args, die):
         result = field_io.db_range_to_clim(mesh, name, args.log_range_db) if name else None
         if result is None:
             die(f"--log-range-db: array {name!r} has no positive values to scale from")
-        window.clim_min_edit.setText(f"{result[0]:.6g}")
-        window.clim_max_edit.setText(f"{result[1]:.6g}")
+        window.set_log_range_db(args.log_range_db)
         window._schedule_redraw()
 
     if args.opacity is not None:
@@ -1074,7 +1296,8 @@ def main(argv=None):
     parser.add_argument("--array", help="exact array name (overrides --field)")
     parser.add_argument("--log-scale", action="store_true", help="log color scale")
     parser.add_argument("--log-range-db", type=float,
-                        help="Min this many dB below the data maximum (implies --log-scale)")
+                        help="log scale range: Min this many dB below Max, default 70 "
+                             "(implies --log-scale)")
     parser.add_argument("--clip-axis", choices=["X", "Y", "Z"], help="enable clipping on this axis")
     parser.add_argument("--clip-position", type=float, help="plane position in um")
     parser.add_argument("--clip-max", action="store_true", help="plane at the field maximum")
@@ -1087,6 +1310,8 @@ def main(argv=None):
     parser.add_argument("--orthographic", action="store_true", help="parallel projection")
     parser.add_argument("--screenshot", help="render off-screen to this PNG and exit")
     parser.add_argument("--icon", help="window icon file")
+    parser.add_argument("--nav-style", choices=NAV_STYLES, default="setupem",
+                        help="mouse navigation preset (default: setupem, VTK trackball)")
     parser.add_argument("--stdin-control", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
 
@@ -1120,7 +1345,8 @@ def main(argv=None):
         sys.exit(1)
 
     icon_path = _find_icon(args.icon)
-    window = FieldViewerWindow(files, source, off_screen=bool(args.screenshot), icon_path=icon_path)
+    window = FieldViewerWindow(files, source, off_screen=bool(args.screenshot), icon_path=icon_path,
+                               nav_style=args.nav_style)
     if window._full_mesh is None and not args.select_file:
         die(window._load_error or "failed to load the field-result file")
     _apply_cli_options(window, args, die)
@@ -1144,11 +1370,16 @@ def main(argv=None):
 
     state = {"window": window, "files": files, "source": source}
     if args.stdin_control:
-        # EMStudio re-open: {"run_path"|"files", "source", "select_file", "cycle"}.
+        # EMStudio re-open: {"run_path"|"files", "source", "select_file", "cycle"};
+        # {"nav_style": ...} switches the mouse preset.
         listener = _StdinListener()
 
         def _on_message(msg):
             win = state["window"]
+            if "nav_style" in msg:
+                win.set_nav_style(msg["nav_style"])
+                if set(msg) == {"nav_style"}:
+                    return  # style change only: don't raise the window
             src = msg.get("source") or state["source"]
             new_files = [os.path.abspath(f) for f in msg.get("files") or []] or \
                 _resolve_files(None, msg.get("run_path"), src)
@@ -1169,6 +1400,7 @@ def main(argv=None):
         state["listener"] = listener
 
     window.show()
+    window.plotter.setFocus()  # viewer keys work without clicking first
     app.processEvents()
     print(f"field_viewer: ready ({len(files)} file(s), source {window.source or 'unknown'})",
           flush=True)

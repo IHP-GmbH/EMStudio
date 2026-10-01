@@ -32,6 +32,7 @@
 #include <QGraphicsScene>
 
 #include "gdslayout.h"
+#include "navigationstyle.h"
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
 
@@ -46,15 +47,19 @@
  * \c zmin/\c zmax; Field shows a Z-clip heatmap (pane stays 2D; 3D opens PyVista).
  * Choices are stored under QSettings LayoutPreview/view3d and viewField.
  *
- * Interaction mirrors SubstrateView:
+ * Interaction:
  * - Left-click a polygon to highlight it and emit \c layerClicked.
  *   Repeated clicks at the same spot cycle through overlapping layers under the cursor
  *   (top → next below → … → top).
- * - Shift+Left-click: measure ruler (start / end); Esc clears measure + highlight.
- * - Escape clears the highlight and emits \c highlightCleared.
- * - Mouse wheel zooms; F / Home fits the view; pan via scroll-hand drag.
+ * - Mouse navigation (wheel, drags) follows the \c NavStyle preset set with
+ *   \c setNavigationStyle (Setup → Key Bindings); the full list of mouse and key
+ *   bindings is \c NavigationStyle::bindingTable.
+ * - M arms the measure ruler (clicks set start / end); Ctrl+Shift+click measures any time.
+ * - Escape clears highlight, ruler and probe and emits \c highlightCleared.
  *
  * Per-GDS-layer visibility and fill opacity can be driven from LayoutLayerPanel.
+ * The opacity value is the true 2D fill opacity; ports, highlights and Iso3D scale
+ * their own styling by the same ratio to the default (\c opacityFor).
  *
  * Y coordinates from GDS (Y-up) are flipped for Qt display (Y-down) when polygons are added.
  * Cursor readout (µm) follows the mouse in the view.
@@ -101,16 +106,6 @@ public:
     /*! Top-down (2D) vs isometric extrusion (3D) preview. */
     enum class ViewMode { Top2D, Iso3D };
 
-    /*! In-plane vector sample on a Z clip (GDS µm, Y-up). */
-    struct FieldArrow
-    {
-        qreal xUm = 0.0;
-        qreal yUm = 0.0;
-        qreal dx = 0.0; //!< In-plane X component (GDS)
-        qreal dy = 0.0; //!< In-plane Y component (GDS, Y-up)
-        qreal mag = 1.0;
-    };
-
     /*! Heatmap / volume frame from \c field_slice_export.py cache. */
     struct FieldOverlay
     {
@@ -124,13 +119,11 @@ public:
         qreal   zMaxUm = 1.0;
         QString quantity;
         QString status; //!< Empty when overlay is valid; else user-facing message
-        QVector<FieldArrow> arrows;
         /*! Scalar grid matching \c image (row 0 = ymax); enables click-to-probe. */
         QVector<float> sampleGrid;
         int     sampleNx = 0;
         int     sampleNy = 0;
         bool    logScale = false;
-        bool    showArrows = true;
         bool    volume = false; //!< True for Field+3D offscreen volume PNG
         bool    valid() const { return !image.isNull() && xmaxUm > xminUm && ymaxUm > yminUm; }
         bool    hasSamples() const
@@ -150,15 +143,29 @@ public:
     void                        clearHighlight();
 
     void                        setLayerVisible(int gdsLayer, bool visible);
+    /*! Sets the 2D fill opacity (0..1) of one layer's shapes, as drawn. */
     void                        setLayerOpacity(int gdsLayer, qreal opacity);
+    /*! Sets the 2D fill opacity (0..1) of all layers in one pass; the Field image is unaffected. */
+    void                        setAllLayerOpacity(qreal opacity);
     bool                        isLayerVisible(int gdsLayer) const;
+    /*! 2D fill opacity (0..1) actually used for the layer's shapes. */
     qreal                       layerOpacity(int gdsLayer) const;
+    /*! Fill opacity of layers that were never changed (\c kBaseFillAlpha / 255). */
+    static qreal                defaultFillOpacity() { return kBaseFillAlpha / 255.0; }
 
     void                        clearMeasure();
     /*! Clears Field click-probe marker and readout. */
     void                        clearFieldProbe();
     void                        setShowCoordinates(bool on);
     bool                        showCoordinates() const;
+
+    /*! Selects the mouse navigation preset (wheel / drag mapping); updates tooltips. */
+    void                        setNavigationStyle(NavStyle style);
+    NavStyle                    navigationStyle() const { return m_navStyle; }
+    /*! True while M measure mode is armed (left clicks place ruler points). */
+    bool                        isMeasureArmed() const { return m_measureArmed; }
+    /*! True when a measure start point is set. */
+    bool                        hasMeasure() const { return m_measureHasStart; }
 
     void                        setViewMode(ViewMode mode);
     ViewMode                    viewMode() const { return m_viewMode; }
@@ -189,9 +196,9 @@ public:
     /*!*******************************************************************************************************************
      * \brief Replaces the current Field overlay and refreshes the floating panel.
      *
-     * When Field mode is on, rebuilds the scene so the heatmap / arrows redraw.
+     * When Field mode is on, rebuilds the scene so the heatmap redraws.
      *
-     * \param overlay Heatmap image, GDS µm bounds, Z range, quantity, arrows.
+     * \param overlay Heatmap image, GDS µm bounds, Z range, quantity.
      **********************************************************************************************************************/
     void                        setFieldOverlay(const FieldOverlay &overlay);
     /*! Clears heatmap / status and rebuilds the scene if Field mode is on. */
@@ -204,8 +211,6 @@ public:
     qreal                       fieldClipZUm() const;
     /*! True when the Field panel Log checkbox is checked. */
     bool                        fieldLogScale() const;
-    /*! True when the Field panel Arrows checkbox is checked. */
-    bool                        fieldShowArrows() const;
     /*! True when the Field panel Probe/Temp checkbox is checked (click-probe). */
     bool                        fieldShowTemp() const;
     /*!*******************************************************************************************************************
@@ -239,12 +244,14 @@ signals:
     void                        layerClicked(const QString &name, const QString &kind, int gdsLayer);
     /*! Emitted when Esc (or equivalent) clears the layout highlight. */
     void                        highlightCleared();
+    /*! The preview switched between top view and Iso3D. */
+    void                        viewModeChanged(bool iso3d);
     /*! Field mode toggled (MainWindow should load / clear field dumps). */
     void                        fieldModeChanged(bool on);
     /*! Field is on and user pressed 3D — open external PyVista volume window. */
     void                        fieldExternalVolumeRequested();
     /*! Z-clip or display options changed; MainWindow should re-export the slice. */
-    void                        fieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
+    void                        fieldSliceRequest(qreal zUm, bool logScale);
     /*! User asked to jump to the hottest Z (max |E| / temperature in layout ROI). */
     void                        fieldHotZRequest();
     /*! User picked another result file / cycle in the Field panel. */
@@ -271,7 +278,7 @@ private slots:
     void                        onModeButtonToggled(bool on);
     /*! Field toolbutton toggled → \c setFieldMode. */
     void                        onFieldButtonToggled(bool on);
-    /*! Log / Arrows changed; may re-export or only redraw arrows. */
+    /*! Log changed; re-exports the slice. */
     void                        onFieldControlsChanged();
     void                        onFieldTempToggled(bool on);
     /*! Live Z readout while dragging; export deferred until release. */
@@ -285,6 +292,9 @@ private:
     void                        applyHighlight();
     void                        setLayerHighlightVisual(const QString &name, bool on);
     void                        applyLayerVisual(int gdsLayer);
+    void                        applyItemVisual(QGraphicsItem *item);
+    bool                        rebuildIso3dForStyleChange();
+    /*! Styling multiplier: layer fill opacity relative to \c defaultFillOpacity(). */
     qreal                       opacityFor(int gdsLayer) const;
     bool                        visibleFor(int gdsLayer) const;
     /*!*******************************************************************************************************************
@@ -293,7 +303,7 @@ private:
     void                        addFieldOverlayItems();
     /*! Full-pane volume screenshot (Field+3D); scene = image pixel rectangle. */
     void                        addFieldVolumeItems();
-    /*! Syncs Z slider / Log / Arrows widgets from \c m_field without re-export. */
+    /*! Syncs Z slider / Log widgets from \c m_field without re-export. */
     void                        updateFieldControlsFromOverlay();
     /*! Shows/hides Field panel, updates status line, repositions floating controls. */
     void                        syncFloatingControls();
@@ -333,6 +343,18 @@ private:
                                                    bool visible,
                                                    qreal z,
                                                    const QString &dirLabel);
+    /*! Zooms by \a factor keeping the scene point under \a viewPos fixed. */
+    void                        zoomAt(qreal factor, const QPoint &viewPos);
+    /*! Pans by a viewport pixel delta (content follows the mouse). */
+    void                        panBy(int dx, int dy);
+    /*! Iso3D view from \a yawDeg / \a pitchDeg (default: side view; switches to 3D if needed). */
+    void                        setSideView(qreal yawDeg, qreal pitchDeg = 0.0);
+    /*! Places a measure point (start, then end; a third point starts a new ruler). */
+    void                        addMeasurePoint(const QPointF &scenePt);
+    /*! Mode button tooltip built from \c NavigationStyle::bindingTable. */
+    QString                     modeButtonToolTip() const;
+    /*! Handles the 2/3, Field, measure, Field-panel and copy keys; true if consumed. */
+    bool                        handleViewKey(QKeyEvent *event);
     static QPointF              sceneToGdsUm(const QPointF &scenePt);
     void                        emitMeasure();
     /*! Bilinear sample of \c m_field.sampleGrid at GDS µm (Y-up). */
@@ -371,7 +393,6 @@ private:
     class QSlider              *m_fieldZSlider = nullptr;
     class QToolButton          *m_fieldHotZBtn = nullptr;
     class QCheckBox            *m_fieldLogChk = nullptr;
-    class QCheckBox            *m_fieldArrowsChk = nullptr;
     class QCheckBox            *m_fieldTempChk = nullptr;
     class QLabel               *m_fieldStatusLbl = nullptr;
     class QComboBox            *m_fieldChoiceCombo = nullptr;
@@ -390,13 +411,17 @@ private:
     bool                        m_zoomLocked = false;
     QString                     m_highlightedName;
     QHash<int, bool>            m_layerVisible;  // missing => true
-    QHash<int, qreal>           m_layerOpacity;  // missing => 1.0
+    QHash<int, qreal>           m_layerOpacity;  // 2D fill opacity; missing => defaultFillOpacity()
 
     bool                        m_cursorValid = false;
     bool                        m_showCoordinates = true;
     bool                        m_panning = false;
     bool                        m_orbiting = false;
     bool                        m_leftPressPending = false; //!< Left down; select on release if not dragged
+    bool                        m_dollying = false;         //!< Right drag zoom (setupEM style)
+    bool                        m_measureArmed = false;     //!< M pressed: left clicks measure
+    NavStyle                    m_navStyle = NavStyle::EMStudio;
+    class QTimer               *m_fieldZKeyTimer = nullptr; //!< Debounce PgUp/PgDn slice export
     QPoint                      m_panLast;
     QPoint                      m_pressPos;
     qreal                       m_yawDeg = 45.0;   //!< Orbit around stack Z [deg]
@@ -405,6 +430,9 @@ private:
     qreal                       m_orbitCx = 0.0;
     qreal                       m_orbitCy = 0.0;
     qreal                       m_orbitCz = 0.0;
+    qreal                       m_orbitRadius = 1.0;   //!< Half 3D diagonal of the layout box [µm]
+    QRectF                      m_iso3dContentRect;    //!< Projected Iso3D geometry (+ margin)
+    qreal                       m_iso3dSceneHalf = 0.0; //!< Half size of the square Iso3D sceneRect
     QPointF                     m_cursorScene;
     QPoint                      m_cursorView;
     bool                        m_measureHasStart = false;

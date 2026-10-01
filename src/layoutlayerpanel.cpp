@@ -32,6 +32,11 @@
 #include <QFont>
 #include <QMenu>
 #include <QAction>
+#include <QEvent>
+#include <QTimer>
+#include <QKeyEvent>
+#include <QMouseEvent>
+#include <climits>
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
 
@@ -39,6 +44,7 @@ namespace {
 constexpr int kRoleGds = Qt::UserRole;
 constexpr int kRoleName = Qt::UserRole + 1;
 constexpr int kRoleKind = Qt::UserRole + 2;
+constexpr int kGdsAllLayers = INT_MIN; // kRoleGds of the "All layers" row
 }
 
 LayoutLayerPanel::LayoutLayerPanel(QWidget *parent)
@@ -68,14 +74,22 @@ LayoutLayerPanel::LayoutLayerPanel(QWidget *parent)
     connect(m_list, &QListWidget::itemChanged, this, &LayoutLayerPanel::onItemChanged);
     connect(m_list, &QListWidget::currentItemChanged, this, &LayoutLayerPanel::onCurrentItemChanged);
     connect(m_list, &QWidget::customContextMenuRequested, this, &LayoutLayerPanel::onListContextMenu);
+    // Esc / click below the last row → back to "All layers".
+    m_list->installEventFilter(this);
+    m_list->viewport()->installEventFilter(this);
 
+    // True 2D fill opacity in percent (Field image is not affected).
     m_opacityLabel = new QLabel(tr("Opacity"), this);
     m_opacity = new QSlider(Qt::Horizontal, this);
-    m_opacity->setRange(10, 100);
+    m_opacity->setRange(0, 100);
     m_opacity->setValue(100);
     m_opacity->setEnabled(false);
-    m_opacity->setToolTip(tr("Fill opacity for the selected layer (layout preview)."));
     connect(m_opacity, &QSlider::valueChanged, this, &LayoutLayerPanel::onOpacitySlider);
+    connect(m_opacity, &QSlider::sliderReleased, this, &LayoutLayerPanel::flushPendingOpacity);
+    m_opacitySettle = new QTimer(this);
+    m_opacitySettle->setSingleShot(true);
+    m_opacitySettle->setInterval(300);
+    connect(m_opacitySettle, &QTimer::timeout, this, &LayoutLayerPanel::flushPendingOpacity);
 
     auto *lay = new QVBoxLayout(this);
     lay->setContentsMargins(0, 0, 0, 0);
@@ -128,9 +142,8 @@ void LayoutLayerPanel::clear()
     m_all.clear();
     m_block = true;
     m_list->clear();
-    m_opacity->setEnabled(false);
-    m_opacity->setValue(100);
     m_block = false;
+    updateOpacityControls();
 }
 
 void LayoutLayerPanel::setLayers(const QVector<Entry> &layers)
@@ -150,18 +163,116 @@ void LayoutLayerPanel::setHighlightedName(const QString &name)
             break;
         }
     }
-    m_list->setCurrentItem(match);
+    if (match)
+        m_list->setCurrentItem(match);
     m_block = false;
     if (match)
         onCurrentItemChanged(match, nullptr);
+    else
+        selectAllLayersMode(false);
 }
 
 void LayoutLayerPanel::clearHighlight()
 {
+    selectAllLayersMode(false);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Selects the "All layers" row, so the opacity slider acts on every layer.
+ *
+ * \param notify Emit \c layerDeactivated (user action) so other views drop their highlight.
+ **********************************************************************************************************************/
+void LayoutLayerPanel::selectAllLayersMode(bool notify)
+{
     m_block = true;
-    m_list->setCurrentItem(nullptr);
-    m_opacity->setEnabled(false);
+    QListWidgetItem *all = m_list->count() > 0 && isAllLayersItem(m_list->item(0))
+            ? m_list->item(0) : nullptr;
+    m_list->setCurrentItem(all);
     m_block = false;
+    updateOpacityControls();
+    if (notify)
+        emit layerDeactivated();
+}
+
+bool LayoutLayerPanel::isAllLayersItem(const QListWidgetItem *item) const
+{
+    return item && item->data(kRoleGds).toInt() == kGdsAllLayers;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Shows the true fill opacity on the slider: the selected layer's, or the average of
+ *        all layers in the layout (marked "mixed" when they differ).
+ **********************************************************************************************************************/
+void LayoutLayerPanel::updateOpacityControls()
+{
+    QListWidgetItem *cur = m_list->currentItem();
+    const bool allMode = !cur || isAllLayersItem(cur);
+
+    bool enabled = false;
+    qreal op = 1.0;
+    QString label = tr("Opacity");
+    QString tip;
+    if (allMode) {
+        int n = 0;
+        qreal sum = 0.0, lo = 1.0, hi = 0.0;
+        for (const Entry &e : m_all) {
+            if (!e.used)
+                continue;
+            ++n;
+            sum += e.opacity;
+            lo = qMin(lo, e.opacity);
+            hi = qMax(hi, e.opacity);
+        }
+        enabled = n > 0;
+        if (enabled) {
+            op = sum / n;
+            const int pct = int(op * 100.0 + 0.5);
+            label = (hi - lo > 0.005) ? tr("Opacity %1% · all layers (mixed)").arg(pct)
+                                      : tr("Opacity %1% · all layers").arg(pct);
+        }
+        tip = tr("Fill opacity of all layout shapes (not the Field image).\n"
+                 "Select a layer to change only that layer.");
+    } else {
+        const int gds = cur->data(kRoleGds).toInt();
+        for (const Entry &e : m_all) {
+            if (e.gdsLayer == gds) {
+                op = e.opacity;
+                enabled = e.used; // unused stackup layers are not drawn
+                break;
+            }
+        }
+        if (enabled) {
+            label = tr("Opacity %1%").arg(int(op * 100.0 + 0.5));
+            tip = tr("Fill opacity of the selected layer.\n"
+                     "Esc or click below the list: all layers.");
+        } else {
+            tip = tr("Layer is not present in the current GDS — opacity has no effect.");
+        }
+    }
+
+    m_block = true;
+    m_opacity->setEnabled(enabled);
+    m_opacity->setValue(qBound(0, int(op * 100.0 + 0.5), 100));
+    m_opacity->setToolTip(tip);
+    m_opacityLabel->setText(label);
+    m_block = false;
+}
+
+bool LayoutLayerPanel::eventFilter(QObject *watched, QEvent *event)
+{
+    if (watched == m_list && event->type() == QEvent::KeyPress
+        && static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+        selectAllLayersMode(true);
+        return true;
+    }
+    if (watched == m_list->viewport() && event->type() == QEvent::MouseButtonPress) {
+        const auto *me = static_cast<QMouseEvent *>(event);
+        if (!m_list->itemAt(me->pos())) {
+            selectAllLayersMode(true);
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 void LayoutLayerPanel::onUsedOnlyToggled(bool on)
@@ -179,6 +290,16 @@ void LayoutLayerPanel::rebuildList()
 
     m_block = true;
     m_list->clear();
+
+    if (!m_all.isEmpty()) {
+        auto *all = new QListWidgetItem(tr("All layers"), m_list);
+        all->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+        all->setData(kRoleGds, kGdsAllLayers);
+        all->setToolTip(tr("Opacity slider acts on all layers (also: Esc, or click below the list)."));
+        QFont f = all->font();
+        f.setBold(true);
+        all->setFont(f);
+    }
 
     for (const Entry &e : m_all) {
         if (m_usedOnlyOn && !e.used)
@@ -205,7 +326,7 @@ void LayoutLayerPanel::rebuildList()
     if (!keepName.isEmpty())
         setHighlightedName(keepName);
     else
-        m_opacity->setEnabled(false);
+        selectAllLayersMode(false);
 }
 
 QListWidgetItem *LayoutLayerPanel::itemForGds(int gdsLayer) const
@@ -235,7 +356,7 @@ QIcon LayoutLayerPanel::swatchIcon(const QColor &c)
 
 void LayoutLayerPanel::onItemChanged(QListWidgetItem *item)
 {
-    if (m_block || !item)
+    if (m_block || !item || isAllLayersItem(item))
         return;
     const int gds = item->data(kRoleGds).toInt();
     const bool vis = item->checkState() == Qt::Checked;
@@ -252,57 +373,80 @@ void LayoutLayerPanel::onCurrentItemChanged(QListWidgetItem *current, QListWidge
 {
     if (m_block)
         return;
-    if (!current) {
-        m_opacity->setEnabled(false);
-        m_opacityLabel->setText(tr("Opacity"));
+    flushPendingOpacity(); // belongs to the previous selection
+    updateOpacityControls();
+    if (!current || isAllLayersItem(current)) {
+        emit layerDeactivated();
         return;
     }
     const int gds = current->data(kRoleGds).toInt();
-    qreal op = 1.0;
-    QString name, kind;
-    bool used = false;
     for (const Entry &e : m_all) {
         if (e.gdsLayer == gds) {
-            op = e.opacity;
-            name = e.name;
-            kind = e.kind;
-            used = e.used;
+            if (!e.name.isEmpty())
+                emit layerActivated(e.name, e.kind);
             break;
         }
     }
-    m_block = true;
-    // Unused stackup layers are not drawn — opacity would do nothing.
-    m_opacity->setEnabled(used);
-    m_opacity->setValue(qBound(10, int(op * 100.0 + 0.5), 100));
-    if (used) {
-        m_opacityLabel->setText(tr("Opacity %1%").arg(m_opacity->value()));
-        m_opacity->setToolTip(tr("Fill opacity for the selected layer (layout preview)."));
-    } else {
-        m_opacityLabel->setText(tr("Opacity"));
-        m_opacity->setToolTip(tr("Layer is not present in the current GDS — opacity has no effect."));
-    }
-    m_block = false;
-    if (!name.isEmpty())
-        emit layerActivated(name, kind);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Slider value changed: updates the entries and label, then tells the view (now or deferred).
+ *
+ * \param value Slider position 0..100 (percent).
+ **********************************************************************************************************************/
 void LayoutLayerPanel::onOpacitySlider(int value)
 {
     if (m_block)
         return;
-    auto *cur = m_list->currentItem();
-    if (!cur)
-        return;
-    const int gds = cur->data(kRoleGds).toInt();
     const qreal op = value / 100.0;
-    m_opacityLabel->setText(tr("Opacity %1%").arg(value));
-    for (Entry &e : m_all) {
-        if (e.gdsLayer == gds) {
+    QListWidgetItem *cur = m_list->currentItem();
+    int target = kGdsAllLayers;
+    if (!cur || isAllLayersItem(cur)) {
+        for (Entry &e : m_all)
             e.opacity = op;
-            break;
+    } else {
+        target = cur->data(kRoleGds).toInt();
+        for (Entry &e : m_all) {
+            if (e.gdsLayer == target) {
+                e.opacity = op;
+                break;
+            }
         }
     }
-    emit opacityChanged(gds, op);
+    updateOpacityControls();
+
+    m_pendingGds = target;
+    m_pendingOpacity = op;
+    m_opacityPending = true;
+    if (!m_deferOpacity) {
+        flushPendingOpacity();
+        return;
+    }
+    // Dragging: wait for sliderReleased. Wheel / keys / track click: wait until it settles.
+    if (!m_opacity->isSliderDown())
+        m_opacitySettle->start();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Emits the held-back opacity change (if any) for the layer or "All layers" it was made on.
+ **********************************************************************************************************************/
+void LayoutLayerPanel::flushPendingOpacity()
+{
+    m_opacitySettle->stop();
+    if (!m_opacityPending)
+        return;
+    m_opacityPending = false;
+    if (m_pendingGds == kGdsAllLayers)
+        emit allOpacityChanged(m_pendingOpacity);
+    else
+        emit opacityChanged(m_pendingGds, m_pendingOpacity);
+}
+
+void LayoutLayerPanel::setDeferOpacityUpdates(bool defer)
+{
+    m_deferOpacity = defer;
+    if (!defer)
+        flushPendingOpacity();
 }
 
 void LayoutLayerPanel::onListContextMenu(const QPoint &pos)
@@ -323,6 +467,8 @@ void LayoutLayerPanel::setAllVisible(bool visible)
     m_block = true;
     for (int i = 0; i < m_list->count(); ++i) {
         auto *it = m_list->item(i);
+        if (isAllLayersItem(it))
+            continue;
         const int gds = it->data(kRoleGds).toInt();
         it->setCheckState(visible ? Qt::Checked : Qt::Unchecked);
         for (Entry &e : m_all) {

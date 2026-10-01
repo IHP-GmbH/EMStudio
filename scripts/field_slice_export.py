@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Export a Z-clip field heatmap (+ optional in-plane arrows) or a 3D volume
+"""Export a Z-clip field heatmap or a 3D volume
 render for EMStudio Layout Field view.
 
 Reads Palace .pvd / OpenEMS VTK / Elmer .vtu via PyVista, writes either:
@@ -8,6 +8,13 @@ Reads Palace .pvd / OpenEMS VTK / Elmer .vtu via PyVista, writes either:
   <outdir>/field_volume_meta.json + field_volume.png   (--volume / Field+3D)
 
 Coordinates in 2D meta are micrometres, GDS-style Y-up (same as LayoutView polygons).
+
+2D color scale (``_slice_clim``):
+  linear  EM: 2nd..98th percentile of the slice; thermal: full-mesh min..max.
+  --log   EM: the slice maximum down to the slice minimum, but at most
+          LOG_RANGE_DB (40 dB) below the maximum (20*log10 for field
+          amplitudes such as |E|, 10*log10 for power-like arrays);
+          thermal: log10 of the full-mesh min..max.
 Volume meta places the screenshot in image-pixel space for full-pane display.
 """
 
@@ -27,6 +34,10 @@ import field_io  # noqa: E402
 def _die(msg: str, code: int = 1) -> None:
     print(f"field_slice_export: {msg}", file=sys.stderr)
     sys.exit(code)
+
+
+# Log color scale of the 2D slice spans at most this many dB below the slice maximum.
+LOG_RANGE_DB = 40.0
 
 
 def _try_import_pyvista():
@@ -98,21 +109,6 @@ def _pick_scalar(names, prefer: Optional[str]):
             continue
         return n
     return names[0] if names else None
-
-
-def _pick_vector(names: list[str], mesh=None) -> str | None:
-    for key in ("S", "Poynting", "S_abs", "H", "E"):
-        for n in names:
-            if n.lower() == key.lower():
-                return n
-    for n in names:
-        nl = n.lower()
-        if "poynt" in nl or nl == "s" or nl.startswith("s_"):
-            return n
-    # No Poynting vector (Elmer EM, openEMS): E-field real part.
-    if mesh is not None:
-        return field_io.resolve_field_shorthand("e", mesh)
-    return None
 
 
 def _load_field_mesh(mesh_path: str, source: Optional[str], cycle: Optional[int]):
@@ -380,90 +376,6 @@ def _atomic_save_json(meta: dict, meta_path: str) -> None:
         raise
 
 
-def _write_slice_outputs(
-    outdir,
-    img_vals,
-    log_scale,
-    global_vmin,
-    global_vmax,
-    z_clip,
-    zmin,
-    zmax,
-    xmin,
-    xmax,
-    ymin,
-    ymax,
-    scalar_name,
-    scale,
-    arrows,
-    arrow_list,
-    names,
-    mesh_path,
-    status="",
-):
-    import numpy as np
-
-    ny, nx = img_vals.shape
-    local = img_vals[np.isfinite(img_vals)].ravel()
-    local_plot = np.log10(np.maximum(local, 1e-30)) if log_scale else local
-    local_span = (
-        float(np.percentile(local_plot, 98) - np.percentile(local_plot, 2))
-        if local_plot.size
-        else 0.0
-    )
-    global_span = (
-        (global_vmax - global_vmin)
-        if (global_vmin is not None and global_vmax is not None)
-        else 0.0
-    )
-    # Prefer full-mesh clim when available (thermal / volume cache). Fall back to
-    # slice-local only if the slice is nearly flat vs the global range (EM).
-    use_local = (
-        global_span <= 1e-30
-        or (local_span > 0 and local_span < 0.15 * global_span
-            and not _is_thermal_quantity(scalar_name))
-    )
-    if use_local:
-        rgba, vmin, vmax = _colormap_rgba(img_vals, log_scale, None, None)
-    else:
-        rgba, vmin, vmax = _colormap_rgba(img_vals, log_scale, global_vmin, global_vmax)
-    rgba = rgba.reshape(ny, nx, 4)
-    png_path = os.path.join(outdir, "field_slice.png")
-    _atomic_save_png(rgba, png_path)
-    try:
-        _atomic_save_values(img_vals, os.path.join(outdir, "field_slice_values.bin"))
-    except Exception as exc:
-        print(f"field_slice_export: values grid skipped: {exc}", file=sys.stderr)
-
-    meta = {
-        "version": 1,
-        "quantity": scalar_name,
-        "z_um": z_clip,
-        "zmin_um": zmin,
-        "zmax_um": zmax,
-        "xmin_um": xmin,
-        "xmax_um": xmax,
-        "ymin_um": ymin,
-        "ymax_um": ymax,
-        "png": "field_slice.png",
-        "values": "field_slice_values.bin",
-        "log_scale": bool(log_scale),
-        "show_arrows": bool(arrows),
-        "vmin": vmin,
-        "vmax": vmax,
-        "scale_to_um": scale,
-        "arrows": arrow_list or [],
-        "status": status,
-        "arrays": names or [],
-        "source": os.path.abspath(mesh_path),
-        "from_volume_cache": True,
-    }
-    meta_path = os.path.join(outdir, "field_slice_meta.json")
-    _atomic_save_json(meta, meta_path)
-    print(json.dumps({"ok": True, "meta": meta_path, "png": png_path, "cache": True}))
-    return meta
-
-
 def _plane_from_volume(volume, zs, z_clip):
     import numpy as np
 
@@ -482,7 +394,6 @@ def _try_export_from_volume_cache(
     mesh_path,
     z_um,
     log_scale,
-    arrows,
     layout_roi,
     resolution,
 ):
@@ -491,7 +402,7 @@ def _try_export_from_volume_cache(
     Kept as a stub so older call sites stay valid; always falls through to a
     direct probe of the requested Z plane (with vtkValidPointMask).
     """
-    del mesh_path, z_um, log_scale, arrows, layout_roi, resolution
+    del mesh_path, z_um, log_scale, layout_roi, resolution
     # Drop stale caches so they are not reused by older script copies.
     path = _volume_cache_path(outdir)
     if os.path.isfile(path):
@@ -725,6 +636,34 @@ def _mesh_scalar_clim(data_mesh, scalar_name: str, log_scale: bool = False):
     return lo, hi
 
 
+def _slice_clim(img_vals, data_mesh, scalar_name: str, log_scale: bool):
+    """(vmin, vmax) of the 2D slice in the space ``_colormap_rgba`` maps
+    (log10 values when ``log_scale``); see the module doc."""
+    import numpy as np
+
+    if _is_thermal_quantity(scalar_name):
+        # Full-mesh min/max (like Field 3D): a hot slice does not turn all red.
+        lo, hi = _mesh_scalar_clim(data_mesh, scalar_name, log_scale)
+        if lo is not None:
+            return lo, hi
+    vals = np.asarray(img_vals, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size == 0:
+        return 0.0, 1.0
+    if log_scale:
+        pos = vals[vals > 0]
+        if pos.size == 0:
+            return 0.0, 1.0
+        top = float(np.log10(pos.max()))
+        per_decade = 20.0 if field_io.is_amplitude_array(scalar_name) else 10.0
+        # Down to the slice minimum, but at most LOG_RANGE_DB below the maximum.
+        floor = max(float(np.log10(pos.min())), top - LOG_RANGE_DB / per_decade)
+        if floor >= top:
+            floor = top - LOG_RANGE_DB / per_decade  # flat slice
+        return floor, top
+    return float(np.percentile(vals, 2)), float(np.percentile(vals, 98))
+
+
 def _frame_from_layout(layout_roi, mxmin, mxmax, mymin, mymax, pad_frac=0.35, max_aspect=2.5):
     """Keep the heatmap framed on the layout (not the full air-box)."""
     return _union_and_frame(
@@ -771,8 +710,6 @@ def export_slice(
     z_um: Optional[float],
     resolution: int,
     log_scale: bool,
-    arrows: bool,
-    arrow_count: int,
     quantity: Optional[str],
     scale_to_um: Optional[float],
     roi_xmin_um: Optional[float] = None,
@@ -794,7 +731,7 @@ def export_slice(
     # like an older broken build; fingerprint still gates reuse.
     if not auto_z and z_um is not None:
         hit = _try_export_from_volume_cache(
-            outdir, mesh_path, z_um, log_scale, arrows, layout_roi, resolution
+            outdir, mesh_path, z_um, log_scale, layout_roi, resolution
         )
         if hit is not None:
             return hit
@@ -884,8 +821,6 @@ def export_slice(
             "ymax_um": ymax,
             "png": "field_slice.png",
             "log_scale": bool(log_scale),
-            "show_arrows": bool(arrows),
-            "arrows": [],
             "status": f"Empty slice at Z={z_clip:.4g} µm",
             "arrays": names,
             "source": os.path.abspath(mesh_path),
@@ -901,25 +836,10 @@ def export_slice(
     finite = np.isfinite(img_vals)
     is_thermal = _is_thermal_quantity(scalar_name)
 
-    # Thermal: use full-mesh min/max (like Field 3D) so a hot Z-slice does not
-    # flatten into an all-red blob. EM: keep slice-local percentiles.
-    mesh_vmin, mesh_vmax = (None, None)
-    if is_thermal:
-        mesh_vmin, mesh_vmax = _mesh_scalar_clim(data_mesh, scalar_name, log_scale)
-
-    if mesh_vmin is not None and mesh_vmax is not None:
-        # Outside-mesh fill in *raw* value space (colormap applies log itself).
-        raw = _as_magnitude(data_mesh.point_data[scalar_name])
-        raw = raw[np.isfinite(raw)]
-        fill = float(np.min(raw)) if raw.size else 0.0
-        img_filled = np.where(finite, img_vals, fill)
-        rgba, vmin, vmax = _colormap_rgba(img_filled, log_scale, mesh_vmin, mesh_vmax)
-    else:
-        fill = float(np.nanpercentile(img_vals, 2)) if finite.any() else 0.0
-        img_filled = np.where(finite, img_vals, fill)
-        local_vmin = float(np.nanpercentile(img_vals, 2))
-        local_vmax = float(np.nanpercentile(img_vals, 98))
-        rgba, vmin, vmax = _colormap_rgba(img_filled, log_scale, local_vmin, local_vmax)
+    vmin, vmax = _slice_clim(img_vals, data_mesh, scalar_name, log_scale)
+    # Outside-mesh samples get the bottom color (alpha 0 below anyway).
+    img_filled = np.where(finite, img_vals, 0.0)
+    rgba, vmin, vmax = _colormap_rgba(img_filled, log_scale, vmin, vmax)
 
     rgba = rgba.reshape(img_vals.shape[0], img_vals.shape[1], 4)
     # Restore alpha for out-of-mesh samples.
@@ -937,46 +857,6 @@ def export_slice(
     except Exception as exc:
         print(f"field_slice_export: values grid skipped: {exc}", file=sys.stderr)
 
-    arrow_list = []
-    if arrows and not is_thermal:
-        vec_name = _pick_vector(names, mesh)
-        if vec_name:
-            try:
-                n_arr = max(4, int(math.sqrt(arrow_count)))
-                axs = np.linspace(xmin, xmax, n_arr)
-                ays = np.linspace(ymin, ymax, n_arr)
-                axx, ayy = np.meshgrid(axs / scale, ays / scale, indexing="xy")
-                azz = np.full_like(axx, z_clip / scale)
-                apts = np.column_stack([axx.ravel(), ayy.ravel(), azz.ravel()])
-                asamp = pv.PolyData(apts).sample(data_mesh)
-                vec = np.asarray(asamp.point_data[vec_name], dtype=float)
-                mask = None
-                if "vtkValidPointMask" in asamp.point_data:
-                    mask = np.asarray(asamp.point_data["vtkValidPointMask"]).ravel()
-                if vec.ndim == 1:
-                    vec = None
-                else:
-                    vec = vec.reshape(-1, vec.shape[-1])
-                if vec is not None and vec.shape[1] >= 2:
-                    for i in range(vec.shape[0]):
-                        if mask is not None and int(mask[i]) == 0:
-                            continue
-                        dx, dy = float(vec[i, 0]), float(vec[i, 1])
-                        mag = math.hypot(dx, dy)
-                        if mag < 1e-30:
-                            continue
-                        arrow_list.append(
-                            {
-                                "x_um": float(apts[i, 0] * scale),
-                                "y_um": float(apts[i, 1] * scale),
-                                "dx": dx / mag,
-                                "dy": dy / mag,
-                                "mag": mag,
-                            }
-                        )
-            except Exception as exc:
-                print(f"field_slice_export: arrows skipped: {exc}", file=sys.stderr)
-
     meta = {
         "version": 1,
         "quantity": scalar_name,
@@ -990,11 +870,10 @@ def export_slice(
         "png": "field_slice.png",
         "values": "field_slice_values.bin",
         "log_scale": bool(log_scale),
-        "show_arrows": bool(arrows),
+        "log_range_db": LOG_RANGE_DB if log_scale and not is_thermal else None,
         "vmin": vmin,
         "vmax": vmax,
         "scale_to_um": scale,
-        "arrows": arrow_list,
         "status": "",
         "arrays": names,
         "source": os.path.abspath(mesh_path),
@@ -1406,7 +1285,6 @@ def _serve_volume_loop(initial: dict) -> int:
             "ymin_um": 0.0,
             "ymax_um": float(res),
             "log_scale": log_scale,
-            "show_arrows": False,
             "azimuth_deg": az,
             "elevation_deg": el,
             "scale_to_um": float(state["scale"]),
@@ -1664,7 +1542,6 @@ def export_volume(
         "ymin_um": 0.0,
         "ymax_um": float(res),
         "log_scale": bool(log_scale),
-        "show_arrows": False,
         "azimuth_deg": float(azimuth_deg),
         "elevation_deg": float(elevation_deg),
         "scale_to_um": float(scale),
@@ -1690,8 +1567,6 @@ def main(argv=None) -> int:
     p.add_argument("--z-um", type=float, default=None, help="Clip Z (or clip axis) in micrometres")
     p.add_argument("--resolution", type=int, default=256, help="Grid / render resolution per side")
     p.add_argument("--log", action="store_true", help="Log10 color scale")
-    p.add_argument("--no-arrows", action="store_true", help="Skip vector glyphs (2D slice only)")
-    p.add_argument("--arrow-count", type=int, default=64)
     p.add_argument("--quantity", default=None, help="Preferred scalar array name")
     p.add_argument("--source", default=None, choices=sorted(field_io.SOURCES),
                    help="Field source preset (units, default field); guessed if omitted")
@@ -1753,8 +1628,6 @@ def main(argv=None) -> int:
             z_um=args.z_um,
             resolution=args.resolution,
             log_scale=args.log,
-            arrows=not args.no_arrows,
-            arrow_count=args.arrow_count,
             quantity=args.quantity,
             scale_to_um=args.scale_to_um,
             roi_xmin_um=args.xmin_um,

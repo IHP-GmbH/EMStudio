@@ -58,6 +58,9 @@
 #include <QHBoxLayout>
 #include <QGraphicsPixmapItem>
 #include <QPixmap>
+#include <QClipboard>
+#include <QCoreApplication>
+#include <QGuiApplication>
 #include <QImage>
 #include <QElapsedTimer>
 #include <QHash>
@@ -254,7 +257,7 @@ LayoutView::LayoutView(QWidget *parent)
     m_fieldBtn->setFixedSize(48, 26);
     m_fieldBtn->setText(QStringLiteral("Field"));
     m_fieldBtn->setStyleSheet(m_modeBtn->styleSheet());
-    m_fieldBtn->setToolTip(tr("Field view: Z-clip heatmap + optional arrows.\n"
+    m_fieldBtn->setToolTip(tr("Field view: Z-clip heatmap.\n"
                               "While Field is on, 3D opens the Field 3D viewer window.\n"
                               "Click the heatmap to probe the value (Esc clears).\n"
                               "Requires a field dump (fdump / VTK / VTU)."));
@@ -311,13 +314,10 @@ LayoutView::LayoutView(QWidget *parent)
     auto *optRow = new QHBoxLayout;
     optRow->setSpacing(8);
     m_fieldLogChk = new QCheckBox(tr("Log"), m_fieldPanel);
-    m_fieldArrowsChk = new QCheckBox(tr("Arrows"), m_fieldPanel);
-    m_fieldArrowsChk->setChecked(true);
     m_fieldTempChk = new QCheckBox(tr("Probe"), m_fieldPanel);
     m_fieldTempChk->setChecked(true);
     m_fieldTempChk->setToolTip(tr("Click the Field heatmap to probe the value.\nEsc clears the probe."));
     optRow->addWidget(m_fieldLogChk);
-    optRow->addWidget(m_fieldArrowsChk);
     optRow->addWidget(m_fieldTempChk);
     optRow->addStretch(1);
     panelLay->addLayout(optRow);
@@ -328,10 +328,15 @@ LayoutView::LayoutView(QWidget *parent)
     connect(m_fieldZSlider, &QSlider::sliderReleased, this, &LayoutView::onFieldZSliderCommitted);
     connect(m_fieldHotZBtn, &QToolButton::clicked, this, &LayoutView::onFieldHotZClicked);
     connect(m_fieldLogChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
-    connect(m_fieldArrowsChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
     connect(m_fieldTempChk, &QCheckBox::toggled, this, &LayoutView::onFieldTempToggled);
     connect(m_fieldChoiceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
             this, &LayoutView::fieldChoiceChanged);
+
+    // PgUp / PgDn step the Z slider; export once the keys settle.
+    m_fieldZKeyTimer = new QTimer(this);
+    m_fieldZKeyTimer->setSingleShot(true);
+    m_fieldZKeyTimer->setInterval(350);
+    connect(m_fieldZKeyTimer, &QTimer::timeout, this, &LayoutView::onFieldZSliderCommitted);
 
     loadViewModeFromSettings();
     {
@@ -339,12 +344,7 @@ LayoutView::LayoutView(QWidget *parent)
         m_modeBtn->setChecked(m_viewMode == ViewMode::Iso3D);
         m_modeBtn->setText(m_viewMode == ViewMode::Iso3D ? QStringLiteral("3D")
                                                          : QStringLiteral("2D"));
-        m_modeBtn->setToolTip(m_viewMode == ViewMode::Iso3D
-                                  ? tr("3D view (click for top view).\n"
-                                       "Drag: orbit · Click: select · Two-finger scroll: orbit\n"
-                                       "Alt+drag / Middle: pan · Pinch / Ctrl+scroll: zoom · R: reset")
-                                  : tr("Top view (click for 3D).\n"
-                                       "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom · F: fit layout · Home: full field"));
+        m_modeBtn->setToolTip(modeButtonToolTip());
     }
     {
         const QSignalBlocker block(m_fieldBtn);
@@ -363,6 +363,7 @@ LayoutView::LayoutView(QWidget *parent)
  **********************************************************************************************************************/
 void LayoutView::clear()
 {
+    m_iso3dSceneHalf = 0.0;
     m_polys.clear();
     m_styles.clear();
     m_ports.clear();
@@ -405,6 +406,7 @@ void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
                              const QHash<int, LayerStyle> &styles,
                              const QHash<int, PortInfo> &ports)
 {
+    m_iso3dSceneHalf = 0.0;
     m_polys = polys;
     m_styles = styles;
     m_ports = ports;
@@ -415,6 +417,11 @@ void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
 void LayoutView::rebuildScene(bool refit)
 {
     const QString keepHighlight = m_highlightedName;
+    // Iso3D redraw without refit (orbit, opacity): the square sceneRect does not change, so
+    // restoring the exact scroll position keeps the view still (centerOn would round and drift).
+    const bool keepScroll = !refit && m_viewMode == ViewMode::Iso3D && !m_fieldOn;
+    const int hScroll = horizontalScrollBar()->value();
+    const int vScroll = verticalScrollBar()->value();
     m_cursorValid = false;
     clearMeasure();
     m_scene->clear();
@@ -434,6 +441,10 @@ void LayoutView::rebuildScene(bool refit)
         // Dense Iso3D (thousands of vias) — BSP build dominates load/orbit time.
         m_scene->setItemIndexMethod(QGraphicsScene::NoIndex);
         rebuildScene3D(refit);
+        if (keepScroll) {
+            horizontalScrollBar()->setValue(hScroll);
+            verticalScrollBar()->setValue(vScroll);
+        }
     } else {
         m_scene->setItemIndexMethod(QGraphicsScene::BspTreeIndex);
         rebuildScene2D(refit);
@@ -729,42 +740,6 @@ void LayoutView::rebuildScene2D(bool refit)
         }
     }
 
-    if (m_fieldOn && m_field.valid() && m_field.showArrows && !m_field.arrows.isEmpty()) {
-        qreal maxMag = 1e-30;
-        constexpr int kMaxFieldArrows = 96;
-        const int nDraw = qMin(m_field.arrows.size(), kMaxFieldArrows);
-        for (int i = 0; i < nDraw; ++i)
-            maxMag = qMax(maxMag, qAbs(m_field.arrows.at(i).mag));
-        const qreal extent = qMax(qAbs(m_field.xmaxUm - m_field.xminUm),
-                                  qAbs(m_field.ymaxUm - m_field.yminUm));
-        const qreal baseLen = qMax(0.5, extent * 0.04);
-        for (int i = 0; i < nDraw; ++i) {
-            const FieldArrow &a = m_field.arrows.at(i);
-            const qreal len = baseLen * qBound(0.25, qAbs(a.mag) / maxMag, 1.0);
-            QPointF dir(a.dx, -a.dy); // GDS Y-up → scene Y-down
-            const qreal n = std::hypot(dir.x(), dir.y());
-            if (n < 1e-12)
-                continue;
-            dir /= n;
-            const QPointF origin(a.xUm, -a.yUm);
-            const QPointF tip = origin + dir * len;
-            QPen pen(QColor(20, 20, 20, 200));
-            pen.setWidthF(0);
-            pen.setCosmetic(true);
-            auto *shaft = m_scene->addLine(QLineF(origin, tip), pen);
-            shaft->setZValue(20000);
-            shaft->setFlag(QGraphicsItem::ItemIgnoresTransformations, false);
-            // Arrowhead in scene units
-            const QPointF ortho(-dir.y(), dir.x());
-            const QPointF h1 = tip - dir * (len * 0.28) + ortho * (len * 0.18);
-            const QPointF h2 = tip - dir * (len * 0.28) - ortho * (len * 0.18);
-            QPolygonF head;
-            head << tip << h1 << h2;
-            auto *headItem = m_scene->addPolygon(head, Qt::NoPen, QBrush(QColor(20, 20, 20, 200)));
-            headItem->setZValue(20001);
-        }
-    }
-
     if (m_fieldOn && m_field.valid()) {
         // Scene Y-down: field image covers [xmin,-ymax] .. [xmax,-ymin].
         const QRectF fieldScene(QPointF(m_field.xminUm, -m_field.ymaxUm),
@@ -829,6 +804,9 @@ void LayoutView::updateOrbitCenter()
     m_orbitCx = anyXy ? 0.5 * (xLo + xHi) : 0.0;
     m_orbitCy = anyXy ? 0.5 * (yLo + yHi) : 0.0;
     m_orbitCz = 0.5 * (zLo + zHi);
+    // Every orbit projects the layout box inside this radius around the orbit center.
+    m_orbitRadius = 0.5 * std::sqrt((xHi - xLo) * (xHi - xLo) + (yHi - yLo) * (yHi - yLo)
+                                    + (zHi - zLo) * (zHi - zLo));
 }
 
 bool LayoutView::layerMidZ(const QString &nameOrGds, qreal *zMid) const
@@ -991,7 +969,7 @@ void LayoutView::rebuildScene3D(bool refit)
         bool isPort = false;
         qreal depth = 0.0;   //!< Camera depth (farther = larger); tie-break within a stack band
         qreal zMid = 0.0;    //!< Stack mid-Z [µm] — primary back-to-front key
-        int faceKind = 1;    //!< 0 = bottom, 1 = wall, 2 = top
+        int faceKind = 1;    //!< 1 = wall, 2 = cap (top, or bottom when seen from below)
     };
     QVector<Face> faces;
     faces.reserve(extrudeItems.size() * 5);
@@ -1120,7 +1098,9 @@ void LayoutView::rebuildScene3D(bool refit)
         portBounds |= QRectF(labelPos.x() - 2, labelPos.y() - 2, 4, 4);
     }
 
-    // Metals + via envelopes: full 3D (top + walls).
+    // Metals + via envelopes: walls + the cap that faces the camera (top from above,
+    // bottom when orbiting below the layout, pitch < 0).
+    const bool fromBelow = m_pitchDeg < 0.0;
     for (const Item &it : extrudeItems) {
         if (it.poly.pointsUm.size() < 3)
             continue;
@@ -1140,13 +1120,14 @@ void LayoutView::rebuildScene3D(bool refit)
         const int fillAlpha = qBound(0, int(kBaseFillAlpha * op * fillScale + 0.5), 230);
         const int wallAlpha = qBound(0, int(kBaseFillAlpha * op * 0.85 * fillScale + 0.5), 220);
 
+        const qreal zCap = fromBelow ? z0 : z1;
         QPolygonF topPoly;
         topPoly.reserve(it.poly.pointsUm.size());
         qreal topDepthFar = -1e300;
         for (const QPointF &p : it.poly.pointsUm) {
-            topPoly << project3D(p.x(), p.y(), z1);
+            topPoly << project3D(p.x(), p.y(), zCap);
             // Farthest vertex (larger depth) — better than average for large translucent slabs.
-            topDepthFar = qMax(topDepthFar, depth3D(p.x(), p.y(), z1));
+            topDepthFar = qMax(topDepthFar, depth3D(p.x(), p.y(), zCap));
         }
 
         const int n = it.poly.pointsUm.size();
@@ -1174,17 +1155,20 @@ void LayoutView::rebuildScene3D(bool refit)
                          topDepthFar, zMid, 2});
     }
 
-    // Stack-aware painter's algorithm: lower metals/vias first, then higher layers.
+    // Stack-aware painter's algorithm: the layers farthest from the camera first — lower
+    // metals/vias first from above, higher ones first from below.
     // Pure camera-depth sort makes near vias paint over translucent TopMetal2 (see palace_core_dev).
     std::stable_sort(faces.begin(), faces.end(),
-                     [](const Face &a, const Face &b) {
+                     [fromBelow](const Face &a, const Face &b) {
                          constexpr qreal kEpsZ = 1e-4;
-                         if (a.zMid + kEpsZ < b.zMid)
+                         const qreal za = fromBelow ? -a.zMid : a.zMid;
+                         const qreal zb = fromBelow ? -b.zMid : b.zMid;
+                         if (za + kEpsZ < zb)
                              return true;
-                         if (b.zMid + kEpsZ < a.zMid)
+                         if (zb + kEpsZ < za)
                              return false;
                          if (a.faceKind != b.faceKind)
-                             return a.faceKind < b.faceKind; // walls before tops in a band
+                             return a.faceKind < b.faceKind; // walls before the cap in a band
                          return a.depth > b.depth; // farther first within the same face class
                      });
     m_lastIso3dStats.faceCount = faces.size();
@@ -1246,7 +1230,16 @@ void LayoutView::rebuildScene3D(bool refit)
     if (!bounds.isNull()) {
         bounds.adjust(-bounds.width() * 0.08, -bounds.height() * 0.08,
                       bounds.width() * 0.08, bounds.height() * 0.08);
-        m_scene->setSceneRect(bounds);
+        m_iso3dContentRect = bounds; // what F / auto-fit frames
+        // Scene extent must not follow the rotation: a changing sceneRect makes the scroll
+        // ranges, the scrollbars and the view center jump on every orbit frame. The projected
+        // orbit center is the scene origin, so a square of the bounding-sphere radius holds
+        // the layout at any yaw / pitch.
+        // Grow-only (reset with new polygons), in case port labels stick out of the sphere.
+        qreal r = qMax(m_iso3dSceneHalf, qMax<qreal>(m_orbitRadius, 1e-6) * 1.25);
+        r = qMax(r, qMax(qMax(-bounds.left(), bounds.right()), qMax(-bounds.top(), bounds.bottom())));
+        m_iso3dSceneHalf = r;
+        m_scene->setSceneRect(QRectF(-r, -r, 2 * r, 2 * r));
         if (refit) {
             m_zoomLocked = false;
             fitContent();
@@ -1323,6 +1316,7 @@ void LayoutView::setViewMode(ViewMode mode)
         mode = ViewMode::Top2D;
 
     m_viewMode = mode;
+    emit viewModeChanged(mode == ViewMode::Iso3D);
     if (mode == ViewMode::Iso3D)
         resetOrbitAngles();
     saveViewModeToSettings();
@@ -1338,8 +1332,7 @@ void LayoutView::onModeButtonToggled(bool on)
         const QSignalBlocker block(m_modeBtn);
         m_modeBtn->setChecked(false);
         m_modeBtn->setText(QStringLiteral("3D"));
-        m_modeBtn->setToolTip(tr("Open interactive PyVista volume window (layout stays 2D).\n"
-                                "Drag: pan · Pinch / Ctrl+scroll: zoom · F: fit · Home: full"));
+        m_modeBtn->setToolTip(modeButtonToolTip());
         emit fieldExternalVolumeRequested();
         return;
     }
@@ -1373,8 +1366,10 @@ void LayoutView::setFieldMode(bool on)
         m_fieldProbeActive = false;
     if (m_fieldOn)
         m_zoomLocked = false;
-    if (m_fieldOn && m_viewMode == ViewMode::Iso3D)
+    if (m_fieldOn && m_viewMode == ViewMode::Iso3D) {
         m_viewMode = ViewMode::Top2D;
+        emit viewModeChanged(false);
+    }
     if (m_fieldBtn) {
         const QSignalBlocker block(m_fieldBtn);
         m_fieldBtn->setChecked(m_fieldOn);
@@ -1389,7 +1384,7 @@ void LayoutView::setFieldMode(bool on)
 /*!*******************************************************************************************************************
  * \brief Replaces the current Field overlay and refreshes the floating panel.
  *
- * \param overlay Heatmap, GDS µm frame, Z range, quantity, arrows, status.
+ * \param overlay Heatmap, GDS µm frame, Z range, quantity, status.
  **********************************************************************************************************************/
 void LayoutView::setFieldOverlay(const FieldOverlay &overlay)
 {
@@ -1400,8 +1395,6 @@ void LayoutView::setFieldOverlay(const FieldOverlay &overlay)
             && qFuzzyCompare(overlay.xmaxUm, m_field.xmaxUm)
             && qFuzzyCompare(overlay.yminUm, m_field.yminUm)
             && qFuzzyCompare(overlay.ymaxUm, m_field.ymaxUm)
-            && (overlay.showArrows == m_field.showArrows)
-            && (overlay.arrows.size() == m_field.arrows.size())
             && (overlay.volume == m_field.volume);
     const bool sameZ = qFuzzyCompare(overlay.zUm, m_field.zUm);
     const bool statusOnly = sameImage && sameFrame && sameZ && m_field.valid();
@@ -1468,14 +1461,6 @@ qreal LayoutView::fieldClipZUm() const
 bool LayoutView::fieldLogScale() const
 {
     return m_fieldLogChk && m_fieldLogChk->isChecked();
-}
-
-/*!*******************************************************************************************************************
- * \brief True when the Field panel Arrows checkbox is checked.
- **********************************************************************************************************************/
-bool LayoutView::fieldShowArrows() const
-{
-    return m_fieldArrowsChk && m_fieldArrowsChk->isChecked();
 }
 
 bool LayoutView::fieldShowTemp() const
@@ -1635,8 +1620,6 @@ void LayoutView::updateFieldControlsFromOverlay()
     m_fieldZSlider->setValue(qBound(0, slider, 1000));
     if (m_fieldLogChk)
         m_fieldLogChk->setChecked(m_field.logScale);
-    if (m_fieldArrowsChk)
-        m_fieldArrowsChk->setChecked(m_field.showArrows);
     m_blockFieldControls = false;
 }
 
@@ -1652,22 +1635,13 @@ void LayoutView::syncFloatingControls()
             // Field pane is always Top2D; the button launches the external viewer.
             m_modeBtn->setChecked(false);
             m_modeBtn->setText(QStringLiteral("3D"));
-            m_modeBtn->setToolTip(tr("Open interactive PyVista volume window (layout stays 2D).\n"
-                                     "Drag: pan · Pinch / Ctrl+scroll: zoom · F: fit · Home: full"));
         } else {
             m_modeBtn->setChecked(m_viewMode == ViewMode::Iso3D);
             m_modeBtn->setText(m_viewMode == ViewMode::Iso3D ? QStringLiteral("3D")
                                                             : QStringLiteral("2D"));
-            m_modeBtn->setToolTip(m_viewMode == ViewMode::Iso3D
-                                      ? tr("3D view (click for top view).\n"
-                                           "Drag: orbit · Click: select · Two-finger scroll: orbit\n"
-                                           "Alt+drag / Middle: pan · Pinch / Ctrl+scroll: zoom · R: reset")
-                                      : tr("Top view (click for 3D).\n"
-                                           "Drag: pan · Click: select · Pinch / Ctrl+scroll: zoom · F: fit layout · Home: full field"));
         }
+        m_modeBtn->setToolTip(modeButtonToolTip());
     }
-    if (m_fieldArrowsChk)
-        m_fieldArrowsChk->setVisible(m_fieldOn && !isFieldVolume());
     if (m_fieldHotZBtn) {
         m_fieldHotZBtn->setToolTip(isFieldVolume()
                                        ? tr("Jump clip to hottest Z (max temperature or |E|).")
@@ -1725,7 +1699,7 @@ void LayoutView::syncFloatingControls()
  **********************************************************************************************************************/
 void LayoutView::emitFieldSliceRequest()
 {
-    emit fieldSliceRequest(fieldClipZUm(), fieldLogScale(), fieldShowArrows());
+    emit fieldSliceRequest(fieldClipZUm(), fieldLogScale());
 }
 
 /*!*******************************************************************************************************************
@@ -1768,7 +1742,6 @@ void LayoutView::wipeFieldSceneForModeSwitch(bool toVolume)
     blank.zMinUm = m_field.zMinUm;
     blank.zMaxUm = m_field.zMaxUm;
     blank.logScale = fieldLogScale();
-    blank.showArrows = false;
     blank.status = toVolume ? tr("Exporting volume…") : tr("Exporting slice…");
     // Bypass setFieldOverlay status-only short-circuit: force empty image + rebuild.
     m_field = blank;
@@ -1816,19 +1789,13 @@ void LayoutView::onFieldHotZClicked()
 }
 
 /*!*******************************************************************************************************************
- * \brief Log / Arrows changed; arrow-only toggles redraw without re-export.
+ * \brief Log changed → re-export the slice with the new color scale.
  **********************************************************************************************************************/
 void LayoutView::onFieldControlsChanged()
 {
     if (m_blockFieldControls || !m_fieldOn)
         return;
     m_field.logScale = fieldLogScale();
-    m_field.showArrows = fieldShowArrows();
-    // Arrow toggle alone can redraw without re-export.
-    if (sender() == m_fieldArrowsChk && m_field.valid()) {
-        rebuildScene(false);
-        return;
-    }
     emitFieldSliceRequest();
 }
 
@@ -2085,6 +2052,11 @@ void LayoutView::fitPreferredContent()
  **********************************************************************************************************************/
 void LayoutView::fitFullContent()
 {
+    // Iso3D: the scene is a rotation-proof square; frame the visible geometry instead.
+    if (m_viewMode == ViewMode::Iso3D && !m_fieldOn && m_iso3dContentRect.isValid()) {
+        fitInView(m_iso3dContentRect, Qt::KeepAspectRatio);
+        return;
+    }
     if (m_scene->sceneRect().isEmpty())
         return;
     fitInView(m_scene->sceneRect(), Qt::KeepAspectRatio);
@@ -2112,9 +2084,12 @@ void LayoutView::drawBackground(QPainter *painter, const QRectF &rect)
 }
 
 /*!*******************************************************************************************************************
- * \brief Zooms the view with the mouse wheel and locks auto-fit on resize.
+ * \brief Wheel / trackpad scroll per navigation style; locks auto-fit on resize.
  *
- * \param event Wheel event (angle delta selects zoom in/out).
+ * setupEM: always zooms under the cursor. EMStudio: scroll orbits (Iso3D) or pans (2D trackpad),
+ * a plain mouse wheel in 2D and Ctrl+wheel zoom.
+ *
+ * \param event Wheel event.
  **********************************************************************************************************************/
 void LayoutView::wheelEvent(QWheelEvent *event)
 {
@@ -2166,6 +2141,22 @@ void LayoutView::wheelEvent(QWheelEvent *event)
         // Proportional to delta — trackpads send many small steps; fixed 1.12 felt broken.
         const double factor = std::pow(1.0035, static_cast<double>(dy));
         applyVolumeCamZoomFactor(factor);
+        event->accept();
+        return;
+    }
+
+    // setupEM (VTK trackball): the wheel always zooms, in 2D and 3D.
+    if (m_navStyle == NavStyle::SetupEM) {
+        qreal factor = 1.0;
+        if (angle.y() != 0)
+            factor = std::pow(1.15, angle.y() / 120.0);
+        else if (pixel.y() != 0)
+            factor = std::pow(1.0035, static_cast<double>(pixel.y()));
+        if (qFuzzyCompare(factor, 1.0)) {
+            QGraphicsView::wheelEvent(event);
+            return;
+        }
+        zoomAt(factor, event->position().toPoint());
         event->accept();
         return;
     }
@@ -2303,7 +2294,10 @@ bool LayoutView::viewportEvent(QEvent *event)
 }
 
 /*!*******************************************************************************************************************
- * \brief Handles Escape (clear highlight) and F/Home (fit view).
+ * \brief Handles the Layout keys (see \c NavigationStyle::bindingTable, "Layout*" rows).
+ *
+ * Esc clears highlight, ruler, measure mode and probe; everything else goes through
+ * \c handleViewKey, unhandled keys to QGraphicsView.
  *
  * \param event Key event.
  **********************************************************************************************************************/
@@ -2313,36 +2307,288 @@ void LayoutView::keyPressEvent(QKeyEvent *event)
         clearHighlight();
         clearMeasure();
         clearFieldProbe();
+        m_measureArmed = false;
+        viewport()->setCursor(Qt::ArrowCursor);
         emit highlightCleared();
         event->accept();
         return;
     }
-    if (event->key() == Qt::Key_R && m_viewMode == ViewMode::Iso3D) {
-        resetOrbitAngles();
-        m_zoomLocked = false;
-        if (isFieldVolume()) {
-            emitFieldSliceRequest();
-        } else if (!m_polys.isEmpty()) {
-            rebuildScene(true);
-        }
-        event->accept();
-        return;
-    }
-    if (event->key() == Qt::Key_F) {
-        m_zoomLocked = false;
-        resetTransform();
-        fitPreferredContent();
-        event->accept();
-        return;
-    }
-    if (event->key() == Qt::Key_Home) {
-        m_zoomLocked = false;
-        resetTransform();
-        fitFullContent();
+    if (handleViewKey(event)) {
         event->accept();
         return;
     }
     QGraphicsView::keyPressEvent(event);
+}
+
+/*!*******************************************************************************************************************
+ * \brief View, mode, measure, Field-panel and copy keys of the Layout preview.
+ *
+ * \param event Key event (keypad modifier ignored).
+ * \return True if the key was handled.
+ **********************************************************************************************************************/
+bool LayoutView::handleViewKey(QKeyEvent *event)
+{
+    const Qt::KeyboardModifiers mods = event->modifiers() & ~Qt::KeypadModifier;
+    const bool plain = (mods == Qt::NoModifier);
+    const bool shift = (mods == Qt::ShiftModifier);
+    const bool iso = (m_viewMode == ViewMode::Iso3D);
+    const QPoint center = viewport()->rect().center();
+    const int panStepX = qMax(1, viewport()->width() / 10);
+    const int panStepY = qMax(1, viewport()->height() / 10);
+
+    switch (event->key()) {
+    case Qt::Key_C:
+        if (mods != Qt::ControlModifier)
+            return false;
+        if (QClipboard *cb = QGuiApplication::clipboard())
+            cb->setPixmap(viewport()->grab());
+        return true;
+    case Qt::Key_F:
+        if (shift) {
+            setFieldMode(!m_fieldOn);
+            return true;
+        }
+        if (!plain)
+            return false;
+        m_zoomLocked = false;
+        resetTransform();
+        fitPreferredContent();
+        return true;
+    case Qt::Key_Home:
+        if (!plain)
+            return false;
+        m_zoomLocked = false;
+        resetTransform();
+        fitFullContent();
+        return true;
+    case Qt::Key_2:
+        if (!plain)
+            return false;
+        setViewMode(ViewMode::Top2D);
+        return true;
+    case Qt::Key_3:
+        if (!plain)
+            return false;
+        if (m_fieldOn)
+            emit fieldExternalVolumeRequested();
+        else
+            setViewMode(ViewMode::Iso3D);
+        return true;
+    case Qt::Key_R:
+        if (!plain || !iso)
+            return false;
+        resetOrbitAngles();
+        m_zoomLocked = false;
+        if (isFieldVolume())
+            emitFieldSliceRequest();
+        else if (!m_polys.isEmpty())
+            rebuildScene(true);
+        return true;
+    case Qt::Key_I:
+        if (!plain || m_fieldOn)
+            return false;
+        if (!iso) {
+            setViewMode(ViewMode::Iso3D); // resets to the isometric angles
+        } else {
+            resetOrbitAngles();
+            if (!m_polys.isEmpty())
+                rebuildScene(false);
+        }
+        return true;
+    case Qt::Key_X:
+        if ((!plain && !shift) || m_fieldOn)
+            return false;
+        setSideView(shift ? 90.0 : -90.0);
+        return true;
+    case Qt::Key_Y:
+        if ((!plain && !shift) || m_fieldOn)
+            return false;
+        setSideView(shift ? 0.0 : 180.0);
+        return true;
+    case Qt::Key_Z:
+        if (shift) {
+            if (m_fieldOn)
+                return false;
+            setSideView(0.0, -85.0); // from below (pitch limit)
+            return true;
+        }
+        if (!plain || !iso)
+            return false;
+        setViewMode(ViewMode::Top2D);
+        return true;
+    case Qt::Key_Plus:
+    case Qt::Key_Equal:
+        if (!plain && !shift)
+            return false;
+        zoomAt(1.15, center);
+        return true;
+    case Qt::Key_Minus:
+        if (!plain)
+            return false;
+        zoomAt(1.0 / 1.15, center);
+        return true;
+    case Qt::Key_Left:
+    case Qt::Key_Right:
+    case Qt::Key_Up:
+    case Qt::Key_Down:
+        if (!plain)
+            return false;
+        // The view moves in the arrow direction, the content the other way.
+        if (event->key() == Qt::Key_Left)
+            panBy(panStepX, 0);
+        else if (event->key() == Qt::Key_Right)
+            panBy(-panStepX, 0);
+        else if (event->key() == Qt::Key_Up)
+            panBy(0, panStepY);
+        else
+            panBy(0, -panStepY);
+        return true;
+    case Qt::Key_M:
+        if (!plain)
+            return false;
+        m_measureArmed = !m_measureArmed;
+        viewport()->setCursor(m_measureArmed ? Qt::CrossCursor : Qt::ArrowCursor);
+        return true;
+    case Qt::Key_L:
+        if (!plain || !m_fieldOn || !m_fieldLogChk)
+            return false;
+        m_fieldLogChk->toggle();
+        return true;
+    case Qt::Key_P:
+        if (!plain || !m_fieldOn || !m_fieldTempChk)
+            return false;
+        m_fieldTempChk->toggle();
+        return true;
+    case Qt::Key_PageUp:
+    case Qt::Key_PageDown:
+        if (!plain || !m_fieldOn || !m_fieldZSlider)
+            return false;
+        m_fieldZSlider->setValue(m_fieldZSlider->value()
+                                 + (event->key() == Qt::Key_PageUp ? 50 : -50));
+        m_fieldZKeyTimer->start();
+        return true;
+    default:
+        return false;
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Zooms by a factor, keeping the scene point under a viewport position in place.
+ *
+ * \param factor  Scale factor (> 1 zooms in).
+ * \param viewPos Viewport position that stays fixed.
+ **********************************************************************************************************************/
+void LayoutView::zoomAt(qreal factor, const QPoint &viewPos)
+{
+    if (factor <= 0.0)
+        return;
+    m_zoomLocked = true;
+    const QPointF scenePt = mapToScene(viewPos);
+    const QGraphicsView::ViewportAnchor oldAnchor = transformationAnchor();
+    setTransformationAnchor(QGraphicsView::NoAnchor);
+    scale(factor, factor);
+    setTransformationAnchor(oldAnchor);
+    const QPoint drift = mapFromScene(scenePt) - viewPos;
+    horizontalScrollBar()->setValue(horizontalScrollBar()->value() + drift.x());
+    verticalScrollBar()->setValue(verticalScrollBar()->value() + drift.y());
+}
+
+/*!*******************************************************************************************************************
+ * \brief Pans the view; the content moves by the given viewport pixel delta.
+ *
+ * \param dx Horizontal content shift [px].
+ * \param dy Vertical content shift [px].
+ **********************************************************************************************************************/
+void LayoutView::panBy(int dx, int dy)
+{
+    m_zoomLocked = true;
+    horizontalScrollBar()->setValue(horizontalScrollBar()->value() - dx);
+    verticalScrollBar()->setValue(verticalScrollBar()->value() - dy);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Iso3D view from a fixed direction; switches from 2D when needed.
+ *
+ * Yaw −90° looks from +X, 90° from −X, 180° from +Y, 0° from −Y; pitch 0 is a side view,
+ * negative pitch looks from below.
+ *
+ * \param yawDeg   Orbit yaw [deg].
+ * \param pitchDeg Orbit pitch [deg].
+ **********************************************************************************************************************/
+void LayoutView::setSideView(qreal yawDeg, qreal pitchDeg)
+{
+    if (m_fieldOn)
+        return;
+    const bool switching = (m_viewMode != ViewMode::Iso3D);
+    m_viewMode = ViewMode::Iso3D;
+    if (switching)
+        emit viewModeChanged(true);
+    m_yawDeg = yawDeg;
+    m_pitchDeg = qBound(-85.0, pitchDeg, 85.0);
+    m_volumeCamZoom = 1.0;
+    m_zoomLocked = false;
+    if (switching)
+        saveViewModeToSettings();
+    syncFloatingControls();
+    if (!m_polys.isEmpty())
+        rebuildScene(true);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Adds a measure point: start, then end; a further point starts a new ruler.
+ *
+ * \param scenePt Scene position of the click.
+ **********************************************************************************************************************/
+void LayoutView::addMeasurePoint(const QPointF &scenePt)
+{
+    if (!m_measureHasStart || m_measureHasEnd) {
+        m_measureStart = scenePt;
+        m_measureHasStart = true;
+        m_measureHasEnd = false;
+        m_measureEnd = scenePt;
+    } else {
+        m_measureEnd = scenePt;
+        m_measureHasEnd = true;
+    }
+    emitMeasure();
+    viewport()->update();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Tooltip for the 2D/3D button: what a click does plus the mouse bindings of the current style.
+ *
+ * \return Tooltip text.
+ **********************************************************************************************************************/
+QString LayoutView::modeButtonToolTip() const
+{
+    // Viewer names are the binding table's (NavigationStyle context).
+    const QString layout2d = QCoreApplication::translate("NavigationStyle", "Layout 2D");
+    const QString layout3d = QCoreApplication::translate("NavigationStyle", "Layout 3D");
+    QString head;
+    QString viewer = layout2d;
+    if (m_fieldOn) {
+        head = tr("Open the 3D field viewer window (the layout stays 2D).");
+    } else if (m_viewMode == ViewMode::Iso3D) {
+        head = tr("3D view (click for top view).");
+        viewer = layout3d;
+    } else {
+        head = tr("Top view (click for 3D).");
+    }
+    return tr("%1\nNavigation: %2\n%3\nAll keys: Setup → Key Bindings")
+            .arg(head, NavigationStyle::displayName(m_navStyle),
+                 NavigationStyle::tooltipFor(m_navStyle, viewer));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Selects the mouse navigation preset and refreshes the tooltips.
+ *
+ * \param style EMStudio or setupEM.
+ **********************************************************************************************************************/
+void LayoutView::setNavigationStyle(NavStyle style)
+{
+    m_navStyle = style;
+    if (m_modeBtn)
+        m_modeBtn->setToolTip(modeButtonToolTip());
 }
 
 /*!*******************************************************************************************************************
@@ -2359,59 +2605,63 @@ void LayoutView::resizeEvent(QResizeEvent *event)
 }
 
 /*!*******************************************************************************************************************
- * \brief Highlights the clicked polygon and emits \c layerClicked.
+ * \brief Starts a drag (orbit / pan / zoom per \c NavStyle), a measure point, or a pending click.
  *
- * Collects named layers under the cursor in top-to-bottom stacking order. The first
- * click selects the topmost; further clicks cycle to the next layer below (wrapping).
+ * A plain left press becomes a drag after 6 px, otherwise a click on release, which selects
+ * the named layers under the cursor in top-to-bottom order (repeated clicks cycle down).
  *
- * \param event Mouse event; only the left button triggers selection.
+ * \param event Mouse event.
  **********************************************************************************************************************/
 void LayoutView::mousePressEvent(QMouseEvent *event)
 {
-    // Explicit orbit shortcuts (also available via plain left-drag after threshold).
-    if (m_viewMode == ViewMode::Iso3D
-        && (event->button() == Qt::RightButton
-            || (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ControlModifier)))) {
-        m_orbiting = true;
-        m_leftPressPending = false;
-        m_panLast = event->pos();
-        viewport()->setCursor(Qt::ClosedHandCursor);
-        event->accept();
-        return;
-    }
+    const Qt::KeyboardModifiers mods = event->modifiers();
+    const bool left = (event->button() == Qt::LeftButton);
+    const bool iso = (m_viewMode == ViewMode::Iso3D);
+    const bool vtk = (m_navStyle == NavStyle::SetupEM);
 
-    // Middle button or Alt+Left: pan.
-    if (event->button() == Qt::MiddleButton
-        || (event->button() == Qt::LeftButton && (event->modifiers() & Qt::AltModifier))) {
-        m_panning = true;
-        m_leftPressPending = false;
-        m_panLast = event->pos();
-        viewport()->setCursor(Qt::ClosedHandCursor);
-        event->accept();
-        return;
-    }
-
-    if (event->button() == Qt::LeftButton && (event->modifiers() & Qt::ShiftModifier)) {
+    // Measure: Ctrl+Shift+click any time, or a plain click while M is armed.
+    if (left && (mods == (Qt::ControlModifier | Qt::ShiftModifier)
+                 || (m_measureArmed && mods == Qt::NoModifier))) {
         m_leftPressPending = false;
         setFocus(Qt::MouseFocusReason);
-        const QPointF p = mapToScene(event->pos());
-        if (!m_measureHasStart || m_measureHasEnd) {
-            m_measureStart = p;
-            m_measureHasStart = true;
-            m_measureHasEnd = false;
-            m_measureEnd = p;
-        } else {
-            m_measureEnd = p;
-            m_measureHasEnd = true;
-        }
-        emitMeasure();
-        viewport()->update();
+        addMeasurePoint(mapToScene(event->pos()));
         event->accept();
+        return;
+    }
+
+    auto beginDrag = [&](bool *flag, Qt::CursorShape cursor) {
+        *flag = true;
+        m_leftPressPending = false;
+        m_pressPos = event->pos();
+        m_panLast = event->pos();
+        viewport()->setCursor(cursor);
+        event->accept();
+    };
+
+    // Right drag: zoom (setupEM, 2D and 3D) or orbit (EMStudio, 3D).
+    if (event->button() == Qt::RightButton && (vtk || iso)) {
+        if (vtk)
+            beginDrag(&m_dollying, Qt::SizeVerCursor);
+        else
+            beginDrag(&m_orbiting, Qt::ClosedHandCursor);
+        return;
+    }
+
+    // Ctrl+left: orbit in 3D (both styles; the layout has no roll).
+    if (iso && left && mods == Qt::ControlModifier) {
+        beginDrag(&m_orbiting, Qt::ClosedHandCursor);
+        return;
+    }
+
+    // Middle, Shift+left or Alt+left: pan.
+    if (event->button() == Qt::MiddleButton
+        || (left && (mods == Qt::ShiftModifier || mods == Qt::AltModifier))) {
+        beginDrag(&m_panning, Qt::ClosedHandCursor);
         return;
     }
 
     // Plain left: defer select vs drag (orbit in 3D / pan in 2D).
-    if (event->button() == Qt::LeftButton && event->modifiers() == Qt::NoModifier) {
+    if (left && mods == Qt::NoModifier) {
         setFocus(Qt::MouseFocusReason);
         m_leftPressPending = true;
         m_pressPos = event->pos();
@@ -2434,6 +2684,16 @@ void LayoutView::mouseMoveEvent(QMouseEvent *event)
                 m_panning = true;
             viewport()->setCursor(Qt::ClosedHandCursor);
         }
+    }
+
+    if (m_dollying) {
+        // Drag up zooms in (VTK dolly), about the press point.
+        const int dy = event->pos().y() - m_panLast.y();
+        m_panLast = event->pos();
+        if (dy != 0)
+            zoomAt(std::pow(1.01, -dy), m_pressPos);
+        event->accept();
+        return;
     }
 
     if (m_orbiting) {
@@ -2517,10 +2777,17 @@ void LayoutView::mouseReleaseEvent(QMouseEvent *event)
         return;
     }
 
+    const Qt::CursorShape idleCursor = m_measureArmed ? Qt::CrossCursor : Qt::ArrowCursor;
+    if (m_dollying && event->button() == Qt::RightButton) {
+        m_dollying = false;
+        viewport()->setCursor(idleCursor);
+        event->accept();
+        return;
+    }
     if (m_orbiting
         && (event->button() == Qt::RightButton || event->button() == Qt::LeftButton)) {
         m_orbiting = false;
-        viewport()->setCursor(Qt::ArrowCursor);
+        viewport()->setCursor(idleCursor);
         if (isFieldVolume())
             emitFieldSliceRequest();
         else
@@ -2531,7 +2798,7 @@ void LayoutView::mouseReleaseEvent(QMouseEvent *event)
     if (m_panning
         && (event->button() == Qt::MiddleButton || event->button() == Qt::LeftButton)) {
         m_panning = false;
-        viewport()->setCursor(Qt::ArrowCursor);
+        viewport()->setCursor(idleCursor);
         event->accept();
         return;
     }
@@ -2785,7 +3052,7 @@ void LayoutView::emitMeasure()
 
 qreal LayoutView::opacityFor(int gdsLayer) const
 {
-    return m_layerOpacity.value(gdsLayer, 1.0);
+    return m_layerOpacity.value(gdsLayer, defaultFillOpacity()) / defaultFillOpacity();
 }
 
 bool LayoutView::visibleFor(int gdsLayer) const
@@ -2800,81 +3067,147 @@ bool LayoutView::isLayerVisible(int gdsLayer) const
 
 qreal LayoutView::layerOpacity(int gdsLayer) const
 {
-    return opacityFor(gdsLayer);
+    return m_layerOpacity.value(gdsLayer, defaultFillOpacity());
 }
 
 void LayoutView::setLayerVisible(int gdsLayer, bool visible)
 {
     m_layerVisible.insert(gdsLayer, visible);
-    applyLayerVisual(gdsLayer);
+    if (!rebuildIso3dForStyleChange())
+        applyLayerVisual(gdsLayer);
 }
 
 void LayoutView::setLayerOpacity(int gdsLayer, qreal opacity)
 {
     m_layerOpacity.insert(gdsLayer, qBound(0.0, opacity, 1.0));
-    applyLayerVisual(gdsLayer);
+    if (!rebuildIso3dForStyleChange())
+        applyLayerVisual(gdsLayer);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Iso3D: redraws the scene after a visibility / opacity change; no-op in 2D.
+ *
+ * Iso3D faces cannot be restyled in place: dense scenes are one pre-rendered pixmap, and
+ * the per-face shading (darker walls, via boost) is only computed in \c rebuildScene3D.
+ * Zoom, orbit and the measure ruler are kept.
+ *
+ * \return True if the scene was rebuilt (the caller skips the 2D item restyle).
+ **********************************************************************************************************************/
+bool LayoutView::rebuildIso3dForStyleChange()
+{
+    if (m_viewMode != ViewMode::Iso3D || m_polys.isEmpty())
+        return false;
+    // Same projection, so the ruler's scene points stay valid.
+    const bool hasStart = m_measureHasStart;
+    const bool hasEnd = m_measureHasEnd;
+    const QPointF start = m_measureStart;
+    const QPointF end = m_measureEnd;
+    rebuildScene(false);
+    if (hasStart) {
+        m_measureHasStart = hasStart;
+        m_measureHasEnd = hasEnd;
+        m_measureStart = start;
+        m_measureEnd = end;
+        emitMeasure();
+    }
+    viewport()->update();
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets every layer's fill opacity: restyles 2D items in one pass, or redraws Iso3D.
+ *
+ * Layers drawn later (not yet in the scene) also get \a opacity. Items without a GDS layer
+ * (Field image, probe) are left alone.
+ *
+ * \param opacity Fill opacity 0..1.
+ **********************************************************************************************************************/
+void LayoutView::setAllLayerOpacity(qreal opacity)
+{
+    const qreal op = qBound(0.0, opacity, 1.0);
+    for (auto it = m_styles.constBegin(); it != m_styles.constEnd(); ++it)
+        m_layerOpacity.insert(it.key(), op);
+    for (const GdsFlatPolygon &p : m_polys)
+        m_layerOpacity.insert(p.layer, op);
+    for (auto it = m_layerOpacity.begin(); it != m_layerOpacity.end(); ++it)
+        it.value() = op;
+    if (!m_scene || rebuildIso3dForStyleChange())
+        return;
+    for (QGraphicsItem *item : m_scene->items()) {
+        if (item->data(kRoleGds).isValid())
+            applyItemVisual(item);
+    }
+    viewport()->update();
 }
 
 void LayoutView::applyLayerVisual(int gdsLayer)
 {
     if (!m_scene)
         return;
-    const bool vis = visibleFor(gdsLayer);
-    const qreal op = opacityFor(gdsLayer);
-
     for (QGraphicsItem *item : m_scene->items()) {
-        if (item->data(kRoleGds).toInt() != gdsLayer)
-            continue;
-        item->setVisible(vis);
-
-        const bool isHi = !m_highlightedName.isEmpty()
-                && item->data(kRoleName).toString() == m_highlightedName;
-
-        if (auto *line = qgraphicsitem_cast<QGraphicsLineItem *>(item)) {
-            QColor c = isHi ? QColor(255, 220, 0)
-                            : (item->data(kRolePen).isValid()
-                               ? item->data(kRolePen).value<QColor>()
-                               : QColor(220, 40, 180));
-            c.setAlpha(qBound(40, int(255 * op + 0.5), 255));
-            QPen p(c);
-            p.setCosmetic(true);
-            p.setWidth(isHi ? kPortPenWidth + 1 : kPortPenWidth);
-            p.setCapStyle(Qt::FlatCap);
-            line->setPen(p);
-            continue;
-        }
-
-        if (auto *text = qgraphicsitem_cast<QGraphicsSimpleTextItem *>(item)) {
-            QColor c = isHi ? QColor(255, 180, 0)
-                            : (item->data(kRolePen).isValid()
-                               ? item->data(kRolePen).value<QColor>()
-                               : QColor(220, 40, 180));
-            c.setAlpha(qBound(40, int(255 * op + 0.5), 255));
-            text->setBrush(c);
-            continue;
-        }
-
-        if (auto *shape = qgraphicsitem_cast<QAbstractGraphicsShapeItem *>(item)) {
-            if (isHi) {
-                if (!item->data(kRoleBrush).isValid())
-                    item->setData(kRoleBrush, shape->brush().color());
-                const QColor base = item->data(kRoleBrush).value<QColor>();
-                QColor fill(qMin(255, int(0.35 * base.red()   + 0.65 * 255)),
-                            qMin(255, int(0.35 * base.green() + 0.65 * 210)),
-                            qMin(255, int(0.35 * base.blue()  + 0.65 * 0)));
-                fill.setAlpha(qBound(40, int(230 * op + 0.5), 255));
-                shape->setBrush(fill);
-            } else {
-                QColor fill = shape->brush().color();
-                if (item->data(kRoleBrush).isValid())
-                    fill = item->data(kRoleBrush).value<QColor>();
-                fill.setAlpha(qBound(0, int(kBaseFillAlpha * op + 0.5), 255));
-                shape->setBrush(fill);
-                item->setData(kRoleBrush, QVariant());
-            }
-        }
+        const QVariant gds = item->data(kRoleGds);
+        if (gds.isValid() && gds.toInt() == gdsLayer)
+            applyItemVisual(item);
     }
     viewport()->update();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Applies its layer's visibility and opacity (and highlight state) to one layout item.
+ **********************************************************************************************************************/
+void LayoutView::applyItemVisual(QGraphicsItem *item)
+{
+    const int gdsLayer = item->data(kRoleGds).toInt();
+    const bool vis = visibleFor(gdsLayer);
+    const qreal op = opacityFor(gdsLayer);
+    item->setVisible(vis);
+
+    const bool isHi = !m_highlightedName.isEmpty()
+            && item->data(kRoleName).toString() == m_highlightedName;
+
+    if (auto *line = qgraphicsitem_cast<QGraphicsLineItem *>(item)) {
+        QColor c = isHi ? QColor(255, 220, 0)
+                        : (item->data(kRolePen).isValid()
+                           ? item->data(kRolePen).value<QColor>()
+                           : QColor(220, 40, 180));
+        c.setAlpha(qBound(40, int(255 * op + 0.5), 255));
+        QPen p(c);
+        p.setCosmetic(true);
+        p.setWidth(isHi ? kPortPenWidth + 1 : kPortPenWidth);
+        p.setCapStyle(Qt::FlatCap);
+        line->setPen(p);
+        return;
+    }
+
+    if (auto *text = qgraphicsitem_cast<QGraphicsSimpleTextItem *>(item)) {
+        QColor c = isHi ? QColor(255, 180, 0)
+                        : (item->data(kRolePen).isValid()
+                           ? item->data(kRolePen).value<QColor>()
+                           : QColor(220, 40, 180));
+        c.setAlpha(qBound(40, int(255 * op + 0.5), 255));
+        text->setBrush(c);
+        return;
+    }
+
+    if (auto *shape = qgraphicsitem_cast<QAbstractGraphicsShapeItem *>(item)) {
+        if (isHi) {
+            if (!item->data(kRoleBrush).isValid())
+                item->setData(kRoleBrush, shape->brush().color());
+            const QColor base = item->data(kRoleBrush).value<QColor>();
+            QColor fill(qMin(255, int(0.35 * base.red()   + 0.65 * 255)),
+                        qMin(255, int(0.35 * base.green() + 0.65 * 210)),
+                        qMin(255, int(0.35 * base.blue()  + 0.65 * 0)));
+            fill.setAlpha(qBound(40, int(230 * op + 0.5), 255));
+            shape->setBrush(fill);
+        } else {
+            QColor fill = shape->brush().color();
+            if (item->data(kRoleBrush).isValid())
+                fill = item->data(kRoleBrush).value<QColor>();
+            fill.setAlpha(qBound(0, int(kBaseFillAlpha * op + 0.5), 255));
+            shape->setBrush(fill);
+            item->setData(kRoleBrush, QVariant());
+        }
+    }
 }
 
 void LayoutView::addPortArrow(const QPointF &origin,

@@ -95,7 +95,7 @@ Key members:
   `StackupVariableOverrides`. The generic writer skips the structural ones
   (`keyIsExcludedForEm`, `shouldSkipPalaceSettingKey`).
 - `m_preferences` (`QMap<QString,QVariant>`): app preferences (tool paths, Python
-  interpreters, WSL distro, assistant config, recent models, …), persisted under
+  interpreters, WSL distro, assistant config, viewer navigation style, recent models, …), persisted under
   QSettings group `Preferences`.
 - `m_sysSettings`: misc. state (last dirs), QSettings group `SystemSettings`.
 - `m_curPythonData` (`PythonParser::Result`): last parse of the model script,
@@ -204,8 +204,9 @@ sanitycheck.cpp) → `runOpenEMS()` or `runPalace()`. Both save first.
 | Stackup model | substrate, layer, material, dielectric, stackupexpr | Parses and writes the XML stackup. Schema 3.x: Variables with expressions, derived layers, thermal tables. `resolve(overrides)` evaluates expressions. |
 | Stackup cross-section | substrateview | 2.5D stack drawing; clicking a layer highlights it in the layout view |
 | Stackup editor | stackupeditor | Dialog that edits the XML; emits saved → reload |
-| Layout preview | gdslayout (flattening), layoutview, layoutlayerpanel | Substrate tab: top view, Iso3D extrusion, ports, layer panel, **Layout Field** overlay |
-| Layout Field | layoutview + mainwindow.cpp `*Field*` methods | All Python, run with host Python `FIELD_VIEWER_PYTHON`. `scripts/field_io.py` is the shared reader: discovery per source (`palace`, `elmer_em`, `elmer_thermal`, `openems` FD `_abs`/`_arg.vtr`), cycle-aware `.pvd` reading, frequency labels, units → µm, derived \|E\| magnitudes, grouped field list. EMStudio lists the run's files with `field_io.py --list` (`refreshFieldChoices` → the Field panel's file/cycle combo). The 2D slice is `field_slice_export.py --source --cycle` (Z-slice PNG plus meta JSON). Field→3D starts `field_viewer.py --run-path --source --select-file --cycle --stdin-control`, a PySide6/pyvistaqt window ported from setupEM. A second 3D click sends JSON on the viewer's stdin, so the open window reloads / comes to the front. Spec: FIELD_VIEWER_SPEC.md (setupEM). |
+| Layout preview | gdslayout (flattening), layoutview, layoutlayerpanel | Substrate tab: top view, Iso3D extrusion, ports, layer panel, **Layout Field** overlay. Iso3D: dense scenes are one pre-rendered pixmap, so style changes rebuild the scene (`rebuildIso3dForStyleChange`); the sceneRect is a fixed square around the orbit center so orbiting doesn't move the scrollbars; pitch < 0 draws bottom caps and reverses the stack order. Mouse wheel / drag mapping depends on `NavStyle` (`LayoutView::setNavigationStyle`); keys in `LayoutView::handleViewKey`. |
+| Navigation / key bindings | navigationstyle, keybindingsdialog | `NavStyle` EMStudio / setupEM, preference `VIEWER_NAV_STYLE` ("emstudio" / "setupem"). Setup → Key Bindings (`on_actionKeyBindings_triggered`) → `applyNavigationStyle()` sets the Layout preview and sends `{"nav_style": …}` to an open Field 3D viewer; new viewers get `--nav-style`. `NavigationStyle::bindingTable` is the one list of all bindings (dialog and tooltips): **change it together with LayoutView and `scripts/field_viewer.py`**. Window-wide shortcuts: menu actions in mainwindow.ui, F5 / Ctrl+1…6 in `setupGlobalShortcuts()`. |
+| Layout Field | layoutview + mainwindow.cpp `*Field*` methods | All Python, run with host Python `FIELD_VIEWER_PYTHON`. `scripts/field_io.py` is the shared reader: discovery per source (`palace`, `elmer_em`, `elmer_thermal`, `openems` FD `_abs`/`_arg.vtr`), cycle-aware `.pvd` reading, frequency labels, units → µm, derived \|E\| magnitudes, grouped field list. EMStudio lists the run's files with `field_io.py --list` (`refreshFieldChoices` → the Field panel's file/cycle combo). The 2D slice is `field_slice_export.py --source --cycle` (Z-slice PNG plus meta JSON, no arrows; color limits in `_slice_clim`: `--log` spans the slice max down to the slice min, at most 40 dB). Field→3D starts `field_viewer.py --run-path --source --select-file --cycle --stdin-control`, a PySide6/pyvistaqt window ported from setupEM. A second 3D click sends JSON on the viewer's stdin, so the open window reloads / comes to the front. The viewer remaps mouse presses and swallows VTK's own letter keys in `FieldViewerWindow.eventFilter` (`--nav-style`, stdin `nav_style`). Spec: FIELD_VIEWER_SPEC.md (setupEM). |
 | Results | resultsviewer, touchstone, smithchartwidget, resultscalculator, exprparser | Scans the run folder for `.sNp`; dB/phase/Smith; Compare; RF calculator (`cser($1)`, `ydiff_cser($1,$2)`, …); Model Fit via `snp2le` |
 | Python editor | pythoneditor, pythonsyntaxhighlighter, finddialog | `editRunPythonScript` on the Python tab |
 | Preferences | preferences (+ preferences.ui) | Property-browser dialog over `m_preferences` |
@@ -289,7 +290,8 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
 - Python tests for the field scripts: `python -m pytest tests/python` (needs
   pyvista; the viewer tests also need PySide6 + pyvistaqt, run with
   `QT_QPA_PLATFORM=offscreen`). They build small synthetic dumps; they are not
-  part of the Qt test binary or CI yet.
+  part of the Qt test binary or CI yet. Creating several `QtInteractor` windows
+  in one offscreen process aborts VTK; share one window per module.
 - Solver stubs in `tests/tools/` stand in for openEMS, Palace and Elmer. Tests set
   them through preferences, e.g. `testSetPreference("PALACE_RUN_SCRIPT", stub)`.
 - Run locally (Linux):

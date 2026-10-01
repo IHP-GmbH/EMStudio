@@ -21,6 +21,11 @@ private slots:
     void boundaryOptions_updateOnToolChange_withoutCrash();
     void saveAction_writesScriptToFile_and_updatesState();
     void saveAction_keepsEditedTextSettings();
+    void settingsGrid_groupsByTopic();
+    void settingsGrid_nestedEditSurvivesSave();
+    void fileNew_createsTemplateForEachTool();
+    void openemsSave_needsModulesOnlyWithoutPackage();
+    void stackupDialog_startsInConfiguredFolder();
     void collectSanityFindings_reportsMissingInputs();
     void layoutPreview_withGoldenGds_populatesLayerPanel();
 };

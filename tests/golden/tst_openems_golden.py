@@ -1,8 +1,12 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'modules')))
-from modules import *
+# gds2openEMS installed with pip, else a local copy in the 'modules' folder next to this script
+try:
+    from gds2openEMS import *
+except ImportError:
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), 'modules')))
+    from modules import *
 
 from openEMS import openEMS
 import numpy as np

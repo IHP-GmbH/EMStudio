@@ -32,6 +32,8 @@
 #include <QProcess>
 #include <QJsonObject>
 
+#include <functional>
+
 #include "pythonparser.h"
 #include "sanitycheck.h"
 #include "navigationstyle.h"
@@ -147,6 +149,16 @@ class MainWindow : public QMainWindow
 
 
 public:
+    /*! One line of keywords/<tool>.csv. */
+    struct KeywordEntry
+    {
+        QString                     keyword;
+        QString                     description;
+        QString                     topic;          //!< Settings grid group; empty = "Other"
+        QString                     defaultValue;   //!< Python literal the workflow uses when the key is missing
+        bool                        required = false; //!< The workflow needs it (shown in bold in the grid)
+    };
+
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
@@ -280,6 +292,18 @@ public:
     }
     QString                         testResolveKeywordsPath(const QString &simKeyLower) const;
     QMap<QString, QString>          testLoadKeywordTipsCsv(const QString &simKeyLower) const;
+    QVector<KeywordEntry>           testLoadKeywordTable(const QString &simKeyLower) const;
+    /*! Settings grid layout: one "Topic: key1, key2" line per topic group, in display order. */
+    QStringList                     testSettingTopicLayout() const;
+    void                            testSetSettingTopicExpanded(const QString &topic, bool expanded);
+    bool                            testIsSettingTopicExpanded(const QString &topic) const;
+    /*! True if the grid draws this setting as required (bold name). */
+    bool                            testIsSettingShownRequired(const QString &key) const;
+    void                            testRebuildSettingsGrid(const QString &script);
+    /*! Sets a value through the settings grid property (as the editor does). */
+    bool                            testSetGridSettingValue(const QString &key, const QVariant &value);
+    bool                            testValidateRequiredFolder(const QString &dir, const QString &simKey);
+    QString                         testStackupDialogStartDir();
     void                            testRefreshKeywordTipsForCurrentTool();
     QMap<QString, QString>          testMergeTipsPreferModel(const QMap<QString, QString> &modelTips,
                                                             const QMap<QString, QString> &fallbackTips) const;
@@ -518,6 +542,7 @@ private:
                                                                 const QString &suggestedName) const;
     QString                         ensurePySuffix(QString path) const;
     QString                         requiredFolderForSim(const QString &simKeyLower) const;
+    bool                            pythonHasModule(const QString &python, const QString &module) const;
     bool                            validateRequiredFolderForSim(const QString &dirPath,
                                                                  const QString &simKeyLower,
                                                                  QString *missingName) const;
@@ -532,7 +557,20 @@ private:
                                                                         const QMap<QString, QVariant>& topLevelVars);
 
     void                            refreshKeywordTipsForCurrentTool();
+    QVector<KeywordEntry>           loadKeywordTable(const QString& simKeyLower) const;
+    QVector<PythonParser::WorkflowParam> loadWorkflowSignatures() const;
     QMap<QString, QString>          loadKeywordTipsCsv(const QString& simKeyLower) const;
+    QString                         settingKeyword(const QString &key) const;
+    qreal                           currentViaMergeSize() const;
+    void                            applyLayoutPreviewPreferences();
+    /*! File → New (one entry per tool) and the default-template helper behind it. */
+    void                            setupNewModelMenu();
+    void                            updateNewModelActions();
+    void                            newModel(const QString &simKey);
+    void                            clearModelInputs();
+    QString                         stackupDialogStartDir() const;
+    bool                            generateDefaultModelScript(bool askReplace);
+    void                            forEachSimSettingProperty(const std::function<void(QtProperty *)> &fn) const;
     QMap<QString, QString>          mergeTipsPreferModel(const QMap<QString, QString>& modelTips,
                                                          const QMap<QString, QString>& fallbackTips) const;
 
@@ -646,6 +684,7 @@ private:
     QStringList                     m_tabTitles;
     QMap<QString, int>              m_tabMap;
     QString                         m_gdsTopCell;   //!< First top-level cell of the GDS (gdstk top_level()[0])
+    bool                            m_importingModelGds = false; //!< loadPythonModel is reading the model's GDS
 
     QString                         m_modelGdsKey;
     QString                         m_modelXmlKey;
@@ -658,6 +697,10 @@ private:
     QHash<int, QString>             m_gdsToSubName;
     QHash<QString, int>             m_subNameToGds;
     QMap<QString, QString>          m_keywordTips;
+    QVector<KeywordEntry>           m_keywordTable;   //!< keywords/<tool>.csv in file order (topics)
+    QSet<QtProperty *>              m_settingTopicGroups;     //!< Topic group properties in "Simulation Settings"
+    QSet<QString>                   m_collapsedSettingTopics; //!< Topics the user collapsed
+    bool                            m_rebuildingSettingsGrid = false; //!< Ignore expand/collapse signals meanwhile
 
     QMap<QString, QVariant>         m_preferences;
     QMap<QString, QVariant>         m_simSettings;
@@ -672,6 +715,8 @@ private:
     QAction                        *m_actionAssistant = nullptr;
     QTableWidget                   *m_tblThermalObjects = nullptr;
     class LayoutLayerPanel         *m_layoutLayerPanel = nullptr;
+    QMenu                          *m_newModelMenu = nullptr;      //!< File → New
+    mutable QHash<QString, bool>    m_pythonModuleCache;            //!< "python|module" → installed
     QWidget                        *m_layoutPaneSplit = nullptr;   //!< Layout view + Layers, moved between pages
     bool                            m_layoutOnFieldsPage = false;
     bool                            m_substrateIso3d = false;       //!< Substrate's 2D/3D while on Fields

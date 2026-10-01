@@ -15,7 +15,9 @@
 #include <QtTest/QtTest>
 
 #include <QDir>
+#include <QComboBox>
 #include <QFile>
+#include <QHeaderView>
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSortFilterProxyModel>
@@ -78,7 +80,7 @@ void KeywordsEditorDialogTest::load_add_filter_sort_save_roundtrip()
     QVERIFY2(proxy, "Proxy model not found");
 
     QCOMPARE(model->rowCount(), 2);
-    QCOMPARE(model->columnCount(), 2);
+    QCOMPARE(model->columnCount(), 5); // keyword, description, topic, default, required
 
     filter->setText("banana");
     QCOMPARE(proxy->rowCount(), 1);
@@ -109,8 +111,10 @@ void KeywordsEditorDialogTest::load_add_filter_sort_save_roundtrip()
     QTest::mouseClick(btnAdd, Qt::LeftButton);
     QCOMPARE(model->rowCount(), 3);
 
-    model->item(model->rowCount() - 1, 0)->setText("cherry");
-    model->item(model->rowCount() - 1, 1)->setText("Dark red fruit");
+    const QList<QStandardItem *> added = model->findItems(QStringLiteral("new_keyword"));
+    QCOMPARE(added.size(), 1);
+    model->item(added.first()->row(), 0)->setText("cherry");
+    model->item(added.first()->row(), 1)->setText("Dark red fruit");
 
     QTest::mouseClick(btnSort, Qt::LeftButton);
     QTest::mouseClick(btnSave, Qt::LeftButton);
@@ -120,4 +124,58 @@ void KeywordsEditorDialogTest::load_add_filter_sort_save_roundtrip()
     QVERIFY2(saved.contains("apple\tRed fruit"), qPrintable(saved));
     QVERIFY2(saved.contains("banana\tYellow fruit"), qPrintable(saved));
     QVERIFY2(saved.contains("cherry\tDark red fruit"), qPrintable(saved));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Topic and default columns survive load and save, and the file order (= grid order) is kept.
+ **********************************************************************************************************************/
+void KeywordsEditorDialogTest::topicAndDefaultColumns_roundtrip()
+{
+    QTemporaryDir tmpDir;
+    QVERIFY(tmpDir.isValid());
+    const QString csvPath = QDir(tmpDir.path()).filePath("palace.csv");
+    {
+        QFile f(csvPath);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write("unit\tUnit, typically 1e-6\tInput files\t1e-6\tyes\n"
+                "order\tFEM order\tMesh size and accuracy\t2\n"
+                "legacy\tOld two-column line\n");
+    }
+
+    KeywordsEditorDialog dlg(csvPath, "Keywords Test");
+    auto *model = dlg.findChild<QStandardItemModel *>();
+    QVERIFY(model);
+    QCOMPARE(model->item(0, 2)->text(), QStringLiteral("Input files"));
+    QCOMPARE(model->item(0, 4)->text(), QStringLiteral("yes"));
+    QCOMPARE(model->item(1, 3)->text(), QStringLiteral("2"));
+    QCOMPARE(model->item(2, 2)->text(), QString());
+
+    // On screen the description is the last column; the model (and file) order is unchanged.
+    auto *view = dlg.findChild<QTableView *>();
+    QVERIFY(view);
+    QCOMPARE(view->horizontalHeader()->logicalIndex(model->columnCount() - 1), 1);
+    QCOMPARE(view->horizontalHeader()->logicalIndex(1), 2);
+
+    // Required is a yes / no dropdown; "no" is stored as an empty cell.
+    QAbstractItemDelegate *reqDelegate = view->itemDelegateForColumn(4);
+    QVERIFY(reqDelegate);
+    QWidget *editor = reqDelegate->createEditor(view->viewport(), QStyleOptionViewItem(), model->index(1, 4));
+    auto *combo = qobject_cast<QComboBox *>(editor);
+    QVERIFY(combo);
+    QCOMPARE(combo->count(), 2);
+    combo->setCurrentIndex(1);
+    reqDelegate->setModelData(combo, model, model->index(1, 4));
+    QCOMPARE(model->item(1, 4)->text(), QStringLiteral("yes"));
+    combo->setCurrentIndex(0);
+    reqDelegate->setModelData(combo, model, model->index(1, 4));
+    QCOMPARE(model->item(1, 4)->text(), QString());
+    delete editor;
+
+    model->item(2, 2)->setText(QStringLiteral("Other"));
+    QVERIFY(dlg.save());
+
+    QCOMPARE(readUtf8Text(csvPath),
+             QStringLiteral("unit\tUnit, typically 1e-6\tInput files\t1e-6\tyes\n"
+                            "order\tFEM order\tMesh size and accuracy\t2\n"
+                            "legacy\tOld two-column line\tOther\n"));
 }

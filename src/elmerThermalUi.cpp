@@ -64,6 +64,12 @@ void MainWindow::setupThermalObjectsUi()
 
     // Insert above the ports table so show/hide keeps button row shared.
     m_ui->verticalLayout_6->insertWidget(0, m_tblThermalObjects);
+
+    // A changed source layer maps a marker layer (layers list: "not mapped" note).
+    connect(m_tblThermalObjects, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
+        if (item && item->column() == 2)
+            refreshLayoutPreview();
+    });
 }
 
 void MainWindow::updateExcitationUiForCurrentTool()
@@ -271,6 +277,7 @@ void MainWindow::appendThermalObjectRow(const QString &type,
             targetBox->setCurrentIndex(idx);
     }
     m_tblThermalObjects->setCellWidget(row, 3, targetBox);
+    connect(targetBox, &QComboBox::currentTextChanged, this, [this]() { refreshLayoutPreview(); });
 }
 
 void MainWindow::addThermalObjectRow()
@@ -284,8 +291,10 @@ void MainWindow::removeSelectedThermalObjectRow()
     if (!m_tblThermalObjects)
         return;
     const int row = m_tblThermalObjects->currentRow();
-    if (row >= 0)
+    if (row >= 0) {
         m_tblThermalObjects->removeRow(row);
+        refreshLayoutPreview();
+    }
     setStateChanged();
 }
 

@@ -21,6 +21,8 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QSet>
 #include <QTextStream>
 
 #include "mainwindow.h"
@@ -31,20 +33,24 @@
  * \brief Resolves the absolute path to the keywords CSV/TSV file for a given simulation tool key.
  *
  * The file is expected to live under the application directory:
- *   "<app>/keywords/<simKeyLower>.csv"
+ *   "<app>/keywords/<tool>.csv" with tool openems, palace, elmer_em or elmer_thermal.
+ * Elmer tools fall back to palace.csv when their own file is missing (older keywords folder).
  *
- * \param simKeyLower Simulation tool key in lower case ("openems" / "palace").
+ * \param simKeyLower Simulation tool key in lower case.
  * \return Absolute file path to the keywords file.
  **********************************************************************************************************************/
 QString MainWindow::resolveKeywordsPath(const QString& simKeyLower) const
 {
     QString key = simKeyLower;
-    if (key == QLatin1String("elmer") || key == QLatin1String("elmer_em")
-        || key == QLatin1String("elmer_thermal"))
-        key = QStringLiteral("palace");
+    if (key == QLatin1String("elmer"))
+        key = QStringLiteral("elmer_em");
 
-    const QString base = QCoreApplication::applicationDirPath();
-    return QDir(base).filePath(QStringLiteral("keywords/%1.csv").arg(key));
+    const QDir base(QCoreApplication::applicationDirPath());
+    const QString path = base.filePath(QStringLiteral("keywords/%1.csv").arg(key));
+    if ((key == QLatin1String("elmer_em") || key == QLatin1String("elmer_thermal"))
+        && !QFileInfo::exists(path))
+        return base.filePath(QStringLiteral("keywords/palace.csv"));
+    return path;
 }
 
 /*!*******************************************************************************************************************
@@ -79,35 +85,27 @@ void MainWindow::on_actionKeywords_triggered()
 }
 
 /*!*******************************************************************************************************************
- * \brief Loads keyword tips from a CSV/TSV file for the given simulation tool key.
+ * \brief Reads "keywords/<tool>.csv": keyword, description, topic and default value per line.
  *
- * Reads "keywords/<tool>.csv" from the application directory and parses it as a two-column table:
- *   <keyword><delimiter><description>
+ * Columns: <keyword><delimiter><description>[<delimiter><topic>[<delimiter><default>[<delimiter><required>]]],
+ * required being "yes" for keys the workflow needs.
+ * Supported delimiters: tab (TSV), semicolon, comma, detected from the first non-empty line.
+ * Empty lines are ignored; a line without a delimiter is a keyword without description.
+ * Duplicate keywords keep the first occurrence. File order is kept: it is the topic and key
+ * order of the settings grid.
  *
- * Supported delimiters: tab (TSV), semicolon, comma. The delimiter is detected from the first non-empty line.
- * Empty lines are ignored. If a line has no delimiter, it is treated as keyword-only with an empty description.
- *
- * The result is a map: keyword -> description.
- * Duplicate keywords are resolved by keeping the first occurrence (stable, deterministic behaviour).
- *
- * \param simKeyLower Simulation tool key in lower case ("openems" / "palace").
- * \return Map of keyword tips. Empty when the file does not exist or cannot be read.
+ * \param simKeyLower Simulation tool key in lower case.
+ * \return Entries in file order. Empty when the file does not exist or cannot be read.
  **********************************************************************************************************************/
-QMap<QString, QString> MainWindow::loadKeywordTipsCsv(const QString& simKeyLower) const
+QVector<MainWindow::KeywordEntry> MainWindow::loadKeywordTable(const QString& simKeyLower) const
 {
-    QMap<QString, QString> out;
+    QVector<KeywordEntry> out;
 
-    const QString path = resolveKeywordsPath(simKeyLower);
-    QFile f(path);
-    if (!f.exists())
+    QFile f(resolveKeywordsPath(simKeyLower));
+    if (!f.exists() || !f.open(QIODevice::ReadOnly | QIODevice::Text))
         return out;
-
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return out;
-    }
 
     QTextStream ts(&f);
-
     const QByteArray head = f.peek(4);
     if (head.startsWith("\xFF\xFE") || head.startsWith("\xFE\xFF")) ts.setCodec("UTF-16");
     else ts.setCodec("UTF-8");
@@ -119,40 +117,89 @@ QMap<QString, QString> MainWindow::loadKeywordTipsCsv(const QString& simKeyLower
         return "\t";
     };
 
-    auto splitLine2 = [](const QString& line, const QString& delim) -> QPair<QString, QString> {
-        const int idx = line.indexOf(delim);
-        if (idx < 0)
-            return { line.trimmed(), QString() };
-
-        const QString k = line.left(idx).trimmed();
-        const QString d = line.mid(idx + delim.size()).trimmed();
-        return { k, d };
-    };
-
+    QSet<QString> seen;
     bool firstNonEmpty = true;
     QString delim = "\t";
-
     while (!ts.atEnd()) {
         const QString line = ts.readLine();
         if (line.trimmed().isEmpty())
             continue;
-
         if (firstNonEmpty) {
             delim = detectDelimiter(line);
             firstNonEmpty = false;
         }
-
-        const auto kv = splitLine2(line, delim);
-        const QString key = kv.first;
-        const QString val = kv.second;
-
-        if (key.isEmpty())
+        // Tab files: split all columns. Other delimiters can occur inside descriptions, so they
+        // only separate keyword and description (older 2-column files).
+        const QStringList cols = (delim == QLatin1String("\t"))
+                ? line.split(QLatin1Char('\t'))
+                : QStringList{line.section(delim, 0, 0), line.section(delim, 1)};
+        KeywordEntry e;
+        e.keyword = cols.value(0).trimmed();
+        e.description = cols.value(1).trimmed();
+        e.topic = cols.value(2).trimmed();
+        e.defaultValue = cols.value(3).trimmed();
+        const QString req = cols.value(4).trimmed().toLower();
+        e.required = (req == QLatin1String("yes") || req == QLatin1String("true")
+                      || req == QLatin1String("1") || req == QLatin1String("required"));
+        if (e.keyword.isEmpty() || seen.contains(e.keyword))
             continue;
-
-        if (!out.contains(key))
-            out.insert(key, val);
+        seen.insert(e.keyword);
+        out << e;
     }
+    return out;
+}
 
+/*!*******************************************************************************************************************
+ * \brief Reads keywords/workflow_signatures.csv: function, positional index, parameter, keyword.
+ *
+ * One file for all tools (a model is parsed before its tool is known). Written by
+ * tools/sync_keywords.py from the gds2palace / gds2openEMS sources.
+ *
+ * \return Workflow parameters; empty when the file is missing.
+ **********************************************************************************************************************/
+QVector<PythonParser::WorkflowParam> MainWindow::loadWorkflowSignatures() const
+{
+    QVector<PythonParser::WorkflowParam> out;
+    QFile f(QDir(QCoreApplication::applicationDirPath())
+                .filePath(QStringLiteral("keywords/workflow_signatures.csv")));
+    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
+        return out;
+    QTextStream ts(&f);
+    ts.setCodec("UTF-8");
+    while (!ts.atEnd()) {
+        const QStringList cols = ts.readLine().split(QLatin1Char('\t'));
+        if (cols.size() < 4)
+            continue;
+        bool ok = false;
+        PythonParser::WorkflowParam p;
+        p.function = cols.at(0).trimmed();
+        p.index = cols.at(1).trimmed().toInt(&ok);
+        p.param = cols.at(2).trimmed();
+        p.keyword = cols.at(3).trimmed();
+        if (ok && !p.function.isEmpty() && !p.keyword.isEmpty())
+            out << p;
+    }
+    return out;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Keyword tooltips for a simulation tool: "Required.", description, default value when known.
+ *
+ * \param simKeyLower Simulation tool key in lower case.
+ * \return Map keyword -> tooltip text. Empty when the file does not exist or cannot be read.
+ **********************************************************************************************************************/
+QMap<QString, QString> MainWindow::loadKeywordTipsCsv(const QString& simKeyLower) const
+{
+    QMap<QString, QString> out;
+    for (const KeywordEntry &e : loadKeywordTable(simKeyLower)) {
+        QString tip = e.description;
+        if (e.required)
+            tip = tip.isEmpty() ? tr("Required.") : tr("Required. %1").arg(tip);
+        if (!e.defaultValue.isEmpty())
+            tip += (tip.isEmpty() ? QString() : QStringLiteral("\n"))
+                   + tr("Default: %1").arg(e.defaultValue);
+        out.insert(e.keyword, tip);
+    }
     return out;
 }
 
@@ -167,7 +214,9 @@ QMap<QString, QString> MainWindow::loadKeywordTipsCsv(const QString& simKeyLower
 void MainWindow::refreshKeywordTipsForCurrentTool()
 {
     const QString simKey = currentSimToolKey().toLower();
+    m_keywordTable = loadKeywordTable(simKey);
     m_keywordTips = loadKeywordTipsCsv(simKey);
+    PythonParser::setWorkflowSignatures(loadWorkflowSignatures());
 
     m_ui->editRunPythonScript->setExtraHighlightKeywords(m_keywordTips.keys());
 }

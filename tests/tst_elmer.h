@@ -41,6 +41,7 @@ private slots:
     void applyTopCell_writesOnlyTheReadGdsVariable();
     void loadModel_withoutCellSelectsGdsTopCell();
     void loadModel_findsMissingInputFilesNextToModel();
+    void stackupOverrides_followReadSubstrateArgument();
     void elmerSolverStage_runsSolverWithoutRunElmerScript();
 };
 

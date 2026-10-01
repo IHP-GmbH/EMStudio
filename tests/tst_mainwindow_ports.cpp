@@ -1,7 +1,15 @@
 ﻿#include "tst_mainwindow_ports.h"
 
 #include <QtTest/QtTest>
+#include <QDir>
 #include <QFile>
+#include <QTableWidget>
+#include <QStandardPaths>
+#include <QTabWidget>
+#include <QMenu>
+#include <QLineEdit>
+#include <QComboBox>
+#include <QAction>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QGraphicsView>
@@ -11,6 +19,9 @@
 #include <QWheelEvent>
 
 #include "mainwindow.h"
+#include "layoutlayerpanel.h"
+#include "pythonparser.h"
+#include "test_utils.h"
 
 /*!*******************************************************************************************************************
  * \brief Resolves the platform-specific OpenEMS Python launcher stub for unit tests.
@@ -812,6 +823,19 @@ void MainWindowPortsTest::layoutPreview_withGoldenGds_populatesLayerPanel()
     QVERIFY2(layerList, "LayoutLayerPanel list not found");
     QVERIFY(layerList->count() >= 1);
 
+    // Port markers 201 / 202 have no Ports table rows yet: listed as not mapped.
+    auto *panel = w.findChild<LayoutLayerPanel *>();
+    QVERIFY(panel);
+    auto *panelList = panel->findChild<QListWidget *>();
+    QVERIFY(panelList);
+    QStringList portTexts;
+    for (int i = 0; i < panelList->count(); ++i)
+        if (panelList->item(i)->text().startsWith(QLatin1Char('P')))
+            portTexts << panelList->item(i)->text();
+    QVERIFY2(portTexts.contains(QStringLiteral("P1 (not mapped)"))
+             && portTexts.contains(QStringLiteral("P2 (not mapped)")),
+             qPrintable(portTexts.join(QStringLiteral(" | "))));
+
     QListWidgetItem *item = layerList->item(0);
     layerList->setCurrentItem(item);
     item->setCheckState(Qt::Unchecked);
@@ -845,4 +869,268 @@ void MainWindowPortsTest::layoutPreview_withGoldenGds_populatesLayerPanel()
         QApplication::sendEvent(gv->viewport(), &wheel);
         break;
     }
+}
+
+/*!*******************************************************************************************************************
+ * \brief The settings grid groups settings by the topics of the keyword file (file order), unknown
+ *        keys go under "Other", loose variables follow the workflow parameter they are passed to,
+ *        and collapsed topics stay collapsed when the grid is rebuilt.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::settingsGrid_groupsByTopic()
+{
+    KeywordFileBackup palace(QStringLiteral("palace.csv"));
+    QVERIFY(palace.write("no_gui\tBatch\tScript control and output files\tFalse\n"
+                         "unit\tUnit\tInput files\t1e-6\tyes\n"
+                         "fstart\tStart\tFrequencies\t\tyes\n"
+                         "refined_cellsize\tEdge mesh\tMesh size and accuracy\t\tyes\n"
+                         "order\tFEM order\tMesh size and accuracy\t2\n"
+                         "cells_per_wavelength\tCells\tMesh size and accuracy\t10\n"));
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    w.testRefreshKeywordTipsForCurrentTool();
+
+    QVector<PythonParser::WorkflowParam> sig;
+    PythonParser::WorkflowParam p;
+    p.function = QStringLiteral("setupSimulation");
+    p.index = 8;
+    p.param = p.keyword = QStringLiteral("refined_cellsize");
+    sig << p;
+    PythonParser::setWorkflowSignatures(sig);
+
+    const QString script = QStringLiteral(
+        "settings = {}\n"
+        "settings['order'] = 2\n"
+        "settings['zeta'] = 1\n"
+        "settings['fstart'] = 1e9\n"
+        "settings['unit'] = 1e-6\n"
+        "settings['alpha'] = 2\n"
+        "settings['cells_per_wavelength'] = 10\n"
+        "settings['no_gui'] = True\n"
+        "cs_fine = 1\n"
+        "FDTD = simulation_setup.setupSimulation(e, s, F, m, d, me, a, mx, cs_fine, mg, u)\n");
+    w.testRebuildSettingsGrid(script);
+    QCOMPARE(w.testSettingTopicLayout(),
+             QStringList({QStringLiteral("Script control and output files: no_gui"),
+                          QStringLiteral("Input files: unit"),
+                          QStringLiteral("Frequencies: fstart"),
+                          QStringLiteral("Mesh size and accuracy: cs_fine, order, cells_per_wavelength"),
+                          QStringLiteral("Other: alpha, zeta")}));
+    // Required settings are drawn in bold, also a loose variable bound to a required parameter.
+    QVERIFY(w.testIsSettingShownRequired(QStringLiteral("unit")));
+    QVERIFY(w.testIsSettingShownRequired(QStringLiteral("cs_fine")));
+    QVERIFY(!w.testIsSettingShownRequired(QStringLiteral("order")));
+    QVERIFY(!w.testIsSettingShownRequired(QStringLiteral("alpha")));
+
+    // Collapse a topic: still collapsed after the next rebuild (Save rebuilds the grid).
+    QVERIFY(w.testIsSettingTopicExpanded(QStringLiteral("Input files")));
+    w.testSetSettingTopicExpanded(QStringLiteral("Input files"), false);
+    w.testRebuildSettingsGrid(script);
+    QVERIFY(!w.testIsSettingTopicExpanded(QStringLiteral("Input files")));
+    QVERIFY(w.testIsSettingTopicExpanded(QStringLiteral("Other")));
+
+    PythonParser::setWorkflowSignatures({});
+}
+
+/*!*******************************************************************************************************************
+ * \brief An edit of a setting inside a topic group reaches the script on Save, and the grid keeps
+ *        its groups after the re-parse.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::settingsGrid_nestedEditSurvivesSave()
+{
+    KeywordFileBackup palace(QStringLiteral("palace.csv"));
+    QVERIFY(palace.write("unit\tUnit\tRequired\t1e-6\n"
+                         "cells_per_wavelength\tCells\tMesh size and accuracy\t10\n"));
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    w.testRefreshKeywordTipsForCurrentTool();
+    QVERIFY(w.testInitDefaultPalaceModel());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString savePath = dir.filePath(QStringLiteral("grouped_model.py"));
+    w.testSetRunPythonScriptLinePath(savePath);
+    w.testTriggerSave();
+
+    QVERIFY(w.testSetGridSettingValue(QStringLiteral("cells_per_wavelength"), 12.0));
+    w.testTriggerSave();
+
+    QFile f(savePath);
+    QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString saved = QString::fromUtf8(f.readAll());
+    QVERIFY2(saved.contains(QRegularExpression(QStringLiteral(R"(settings\['cells_per_wavelength'\]\s*=\s*12\b)"))),
+             qPrintable(saved));
+    QVERIFY(w.testSettingTopicLayout().contains(QStringLiteral("Mesh size and accuracy: cells_per_wavelength")));
+}
+
+/*!*******************************************************************************************************************
+ * \brief File → New → <tool> selects the tool, puts its default template into the editor, opens the
+ *        Main page and forgets the previous model file, so Save can't overwrite it.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::fileNew_createsTemplateForEachTool()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    auto *tabs = w.findChild<QTabWidget *>(QStringLiteral("tabSettings"));
+    auto *scriptPath = w.findChild<QLineEdit *>(QStringLiteral("txtRunPythonScript"));
+    QVERIFY(tabs && scriptPath);
+
+    const QList<QPair<QString, QString>> cases = {
+        {QStringLiteral("elmer_thermal"), QStringLiteral("create_elmer_thermal")},
+        {QStringLiteral("elmer_em"), QStringLiteral("create_elmer")}};
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY(!gdsPath.isEmpty() && !xmlPath.isEmpty());
+    auto *gdsEdit = w.findChild<QLineEdit *>(QStringLiteral("txtGdsFile"));
+    auto *xmlEdit = w.findChild<QLineEdit *>(QStringLiteral("txtSubstrate"));
+    auto *topCell = w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"));
+    auto *ports = w.findChild<QTableWidget *>(QStringLiteral("tblPorts"));
+    QVERIFY(gdsEdit && xmlEdit && topCell && ports);
+
+    for (const auto &c : cases) {
+        // The previous model: file, GDS, stackup, a port and a thermal object.
+        w.testSetRunPythonScriptLinePath(QStringLiteral("/tmp/previous_model.py"));
+        w.setGdsFile(gdsPath);
+        w.setSubstrateFile(xmlPath);
+        ports->setRowCount(1);
+        w.testClickAddThermalObject();
+        QVERIFY(topCell->count() > 0);
+
+        auto *action = w.findChild<QAction *>(QStringLiteral("actionNew_%1").arg(c.first));
+        QVERIFY2(action, qPrintable(c.first));
+        QVERIFY(action->isEnabled());  // Elmer tools are always offered
+        action->trigger();
+
+        QCOMPARE(w.testCurrentSimToolKey(), c.first);
+        QVERIFY2(w.testEditorText().contains(c.second), qPrintable(w.testEditorText().left(400)));
+        QCOMPARE(tabs->tabText(0), QStringLiteral("Main"));
+        QVERIFY(scriptPath->text().isEmpty());
+        QVERIFY(!w.testSettingTopicLayout().isEmpty());  // the grid shows the template's settings
+
+        // Nothing of the previous model's inputs is left, in the GUI or in the new script.
+        QVERIFY(gdsEdit->text().isEmpty());
+        QVERIFY(xmlEdit->text().isEmpty());
+        QCOMPARE(topCell->count(), 0);
+        QCOMPARE(ports->rowCount(), 0);
+        QVERIFY(!w.testEditorText().contains(QStringLiteral("line_simple_viaport")));
+        QVERIFY(!w.testEditorText().contains(QStringLiteral("SG13G2_200um")));
+    }
+
+    // Tools missing from the tool list (not configured) are greyed out.
+    auto *menu = w.findChild<QMenu *>(QStringLiteral("menuNew"));
+    QVERIFY(menu);
+    QCOMPARE(menu->actions().size(), 4);
+    auto *combo = w.findChild<QComboBox *>(QStringLiteral("cbxSimTool"));
+    QVERIFY(combo);
+    for (QAction *a : menu->actions())
+        QCOMPARE(a->isEnabled(), combo->findData(a->data()) >= 0);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Saving an OpenEMS model asks for a local 'modules' folder only when the script can need it:
+ *        it imports 'modules' and the OpenEMS Python has no gds2openEMS (template: package first).
+ **********************************************************************************************************************/
+void MainWindowPortsTest::openemsSave_needsModulesOnlyWithoutPackage()
+{
+#ifdef Q_OS_WIN
+    QSKIP("uses shell wrappers for the OpenEMS Python");
+#endif
+    const QString python = QStandardPaths::findExecutable(QStringLiteral("python3"));
+    if (python.isEmpty())
+        QSKIP("python3 not found");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QDir(dir.path()).mkpath(QStringLiteral("site/gds2openEMS")));
+    QFile init(dir.filePath(QStringLiteral("site/gds2openEMS/__init__.py")));
+    QVERIFY(init.open(QIODevice::WriteOnly));
+    init.close();
+    auto wrapper = [&](const QString &name, const QString &pythonPath) {
+        const QString path = dir.filePath(name);
+        QFile f(path);
+        f.open(QIODevice::WriteOnly | QIODevice::Text);
+        // -S: no site-packages, so only PYTHONPATH decides whether gds2openEMS is found.
+        f.write(QStringLiteral("#!/bin/sh\nPYTHONPATH='%1' exec '%2' -S \"$@\"\n").arg(pythonPath, python).toUtf8());
+        f.close();
+        f.setPermissions(f.permissions() | QFileDevice::ExeOwner);
+        return path;
+    };
+    const QString withPkg = wrapper(QStringLiteral("py_with.sh"), dir.filePath(QStringLiteral("site")));
+    const QString withoutPkg = wrapper(QStringLiteral("py_without.sh"), dir.filePath(QStringLiteral("empty")));
+    const QString saveDir = dir.filePath(QStringLiteral("models"));
+    QVERIFY(QDir().mkpath(saveDir));
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    const QString fallback = QStringLiteral(
+        "try:\n    from gds2openEMS import *\nexcept ImportError:\n"
+        "    sys.path.insert(0, 'modules')\n    from modules import *\n");
+
+    w.testSetEditorText(fallback);
+    w.testSetPreference(QStringLiteral("Python Path"), withPkg);
+    QVERIFY(w.testValidateRequiredFolder(saveDir, QStringLiteral("openems")));   // package installed
+    w.testSetPreference(QStringLiteral("Python Path"), withoutPkg);
+    QVERIFY(!w.testValidateRequiredFolder(saveDir, QStringLiteral("openems")));  // falls back to modules
+
+    // Old scripts that only import the local copy always need the folder.
+    w.testSetEditorText(QStringLiteral("from modules import *\n"));
+    w.testSetPreference(QStringLiteral("Python Path"), withPkg);
+    QVERIFY(!w.testValidateRequiredFolder(saveDir, QStringLiteral("openems")));
+    QVERIFY(QDir(saveDir).mkpath(QStringLiteral("modules")));
+    QVERIFY(w.testValidateRequiredFolder(saveDir, QStringLiteral("openems")));
+
+    // Package-only scripts never need the folder; Palace never does.
+    QVERIFY(QDir(saveDir + QStringLiteral("/modules")).removeRecursively());
+    w.testSetEditorText(QStringLiteral("from gds2openEMS import *\n"));
+    w.testSetPreference(QStringLiteral("Python Path"), withoutPkg);
+    QVERIFY(w.testValidateRequiredFolder(saveDir, QStringLiteral("openems")));
+    QVERIFY(w.testValidateRequiredFolder(saveDir, QStringLiteral("palace")));
+}
+
+/*!*******************************************************************************************************************
+ * \brief The stackup file dialog starts in STACKUP_DIR_OPENEMS (OpenEMS) or STACKUP_DIR_FEM (Palace,
+ *        Elmer) when that is an existing folder,
+ *        else in the last stackup file's folder, else in the home folder.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::stackupDialog_startsInConfiguredFolder()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QTemporaryDir fdtd;
+    QTemporaryDir fem;
+    QVERIFY(fdtd.isValid() && fem.isValid());
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY(!xmlPath.isEmpty());
+    const QDir lastDir(QFileInfo(xmlPath).absolutePath());
+    QString err;
+
+    w.testSetPreference(QStringLiteral("STACKUP_DIR_OPENEMS"), QString());
+    w.testSetPreference(QStringLiteral("STACKUP_DIR_FEM"), QString());
+    w.setSubstrateFile(xmlPath);   // remembers the last stackup folder
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("elmer_em"), &err), qPrintable(err));
+    QCOMPARE(QDir(w.testStackupDialogStartDir()), lastDir);
+
+    // FDTD folder for OpenEMS, FEM folder for Palace / Elmer.
+    w.testSetPreference(QStringLiteral("STACKUP_DIR_OPENEMS"), fdtd.path());
+    w.testSetPreference(QStringLiteral("STACKUP_DIR_FEM"), fem.path());
+    for (const char *key : {"elmer_em", "elmer_thermal"}) {
+        QVERIFY2(w.testSetSimToolKey(QString::fromLatin1(key), &err), qPrintable(err));
+        QCOMPARE(QDir(w.testStackupDialogStartDir()), QDir(fem.path()));
+    }
+    if (w.testSetSimToolKey(QStringLiteral("openems"), &err))  // only when OpenEMS is configured
+        QCOMPARE(QDir(w.testStackupDialogStartDir()), QDir(fdtd.path()));
+    if (w.testSetSimToolKey(QStringLiteral("palace"), &err))
+        QCOMPARE(QDir(w.testStackupDialogStartDir()), QDir(fem.path()));
+
+    // Not an existing folder: present behaviour.
+    QVERIFY(w.testSetSimToolKey(QStringLiteral("elmer_em"), &err));
+    w.testSetPreference(QStringLiteral("STACKUP_DIR_FEM"), fem.path() + QStringLiteral("/missing"));
+    QCOMPARE(QDir(w.testStackupDialogStartDir()), lastDir);
+    w.testSetPreference(QStringLiteral("STACKUP_DIR_FEM"), xmlPath);  // a file, not a folder
+    QCOMPARE(QDir(w.testStackupDialogStartDir()), lastDir);
 }

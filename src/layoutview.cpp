@@ -34,6 +34,8 @@
 #include <QMouseEvent>
 #include <QEvent>
 #include <QScrollBar>
+#include <QButtonGroup>
+#include <QIcon>
 #include <QPainter>
 #include <QAbstractGraphicsShapeItem>
 #include <QGraphicsItem>
@@ -61,6 +63,8 @@
 #include <QGraphicsPixmapItem>
 #include <QPixmap>
 #include <QClipboard>
+#include <QPainterPath>
+#include <QRegion>
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QImage>
@@ -176,6 +180,122 @@ QVector<QPolygonF> growEnvelopeMerge(const QVector<QPolygonF> &polys, qreal grow
     return out;
 }
 
+/*! Via array merge as gds2palace / gds2openEMS do it (util_gds_reader.merge_via_array):
+ *  grow each via by spacing/2 + 0.01 µm, unite, shrink back by the same amount. Done exactly for
+ *  axis-aligned boxes with QRegion on a 1 nm grid, one cluster of touching vias at a time. A lone
+ *  via keeps its own outline. */
+QVector<QPolygonF> mergeViaArray(const QVector<QPolygonF> &vias, qreal spacingUm)
+{
+    QVector<QPolygonF> out;
+    constexpr qreal kNmPerUm = 1000.0;
+    const int off = qMax(1, qRound((spacingUm / 2.0 + 0.01) * kNmPerUm));
+
+    QVector<QRect> boxes;
+    QVector<int> source;
+    for (int i = 0; i < vias.size(); ++i) {
+        const QRectF br = vias.at(i).boundingRect();
+        if (vias.at(i).size() < 3 || br.width() <= 0 || br.height() <= 0) {
+            out.push_back(vias.at(i));
+            continue;
+        }
+        const int x0 = qFloor(br.left() * kNmPerUm);
+        const int y0 = qFloor(br.top() * kNmPerUm);
+        const int x1 = qCeil(br.right() * kNmPerUm);
+        const int y1 = qCeil(br.bottom() * kNmPerUm);
+        boxes.push_back(QRect(QPoint(x0, y0), QPoint(x1 - 1, y1 - 1)));
+        source.push_back(i);
+    }
+
+    // Clusters of vias whose grown boxes overlap (spatial hash + union-find).
+    const int m = boxes.size();
+    QVector<int> parent(m);
+    for (int i = 0; i < m; ++i)
+        parent[i] = i;
+    auto find = [&](int x) {
+        while (parent[x] != x) {
+            parent[x] = parent[parent[x]];
+            x = parent[x];
+        }
+        return x;
+    };
+    const int cell = qMax(4 * off, 1000);
+    QHash<QPair<int, int>, QVector<int>> grid;
+    for (int i = 0; i < m; ++i) {
+        const QRect g = boxes.at(i).adjusted(-off, -off, off, off);
+        const int gx = g.center().x() / cell;
+        const int gy = g.center().y() / cell;
+        for (int dx = -1; dx <= 1; ++dx)
+            for (int dy = -1; dy <= 1; ++dy) {
+                const auto it = grid.constFind(qMakePair(gx + dx, gy + dy));
+                if (it == grid.cend())
+                    continue;
+                for (int j : *it)
+                    if (g.intersects(boxes.at(j).adjusted(-off, -off, off, off)))
+                        parent[find(j)] = find(i);
+            }
+        grid[qMakePair(gx, gy)].push_back(i);
+    }
+    QHash<int, QVector<int>> clusters;
+    for (int i = 0; i < m; ++i)
+        clusters[find(i)].push_back(i);
+
+    for (auto it = clusters.cbegin(); it != clusters.cend(); ++it) {
+        const QVector<int> &members = it.value();
+        if (members.size() == 1) {
+            out.push_back(vias.at(source.at(members.first())));
+            continue;
+        }
+        // Closing: dilate by off, then erode by off (erosion = complement of the dilated complement).
+        QRegion grown;
+        for (int k : members)
+            grown += boxes.at(k).adjusted(-off, -off, off, off);
+        const QRect frame = grown.boundingRect().adjusted(-off - 1, -off - 1, off + 1, off + 1);
+        const QRegion outside = QRegion(frame) - grown;
+        QRegion outsideGrown;
+        for (const QRect &r : outside)
+            outsideGrown += r.adjusted(-off, -off, off, off);
+        const QRegion merged = grown - outsideGrown;
+        if (merged.isEmpty()) {
+            for (int k : members)
+                out.push_back(vias.at(source.at(k)));
+            continue;
+        }
+        QPainterPath path;
+        path.addRegion(merged);
+        path = path.simplified();
+        for (const QPolygonF &poly : path.toFillPolygons()) {
+            QPolygonF um;
+            um.reserve(poly.size());
+            for (const QPointF &p : poly)
+                um << QPointF(p.x() / kNmPerUm, p.y() / kNmPerUm);
+            out.push_back(um);
+        }
+    }
+    return out;
+}
+
+/*! Small isometric cube outline, the icon of the "3D viewer" button. */
+QIcon cubeIcon(const QColor &color)
+{
+    QPixmap pm(32, 32);
+    pm.fill(Qt::transparent);
+    QPainter p(&pm);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    QPen pen(color, 2.4);
+    pen.setJoinStyle(Qt::RoundJoin);
+    p.setPen(pen);
+    const QPointF top(16, 4), left(5, 10), right(27, 10), mid(16, 16);
+    const QPointF bl(5, 22), br(27, 22), bottom(16, 28);
+    p.setBrush(QColor(color.red(), color.green(), color.blue(), 60));
+    p.drawPolygon(QPolygonF({top, right, mid, left}));        // top face
+    p.setBrush(Qt::NoBrush);
+    p.drawPolyline(QPolygonF({left, bl, bottom, br, right}));
+    p.drawLine(mid, bottom);
+    p.end();
+    pm.setDevicePixelRatio(2.0);
+    return QIcon(pm);
+}
+
 qreal estimateViaGrowUm(const QVector<QPolygonF> &polys)
 {
     if (polys.isEmpty())
@@ -225,31 +345,64 @@ LayoutView::LayoutView(QWidget *parent)
     grabGesture(Qt::PinchGesture);
     viewport()->grabGesture(Qt::PinchGesture);
 
-    m_modeBtn = new QToolButton(this);
-    m_modeBtn->setObjectName(QStringLiteral("layoutViewModeBtn"));
-    m_modeBtn->setCheckable(true);
-    m_modeBtn->setAutoRaise(false);
-    m_modeBtn->setCursor(Qt::PointingHandCursor);
-    m_modeBtn->setFixedSize(40, 26);
-    m_modeBtn->setStyleSheet(
-        QStringLiteral(
+    // Substrate: [2D | 3D] segmented switch, the active side filled. Fields: a separate
+    // "3D viewer ↗" button that opens the 3D field viewer window (the pane itself stays 2D).
+    m_modeSwitch = new QWidget(this);
+    m_modeSwitch->setObjectName(QStringLiteral("layoutViewModeSwitch"));
+    auto *switchLayout = new QHBoxLayout(m_modeSwitch);
+    switchLayout->setContentsMargins(0, 0, 0, 0);
+    switchLayout->setSpacing(0);
+    auto *modeGroup = new QButtonGroup(m_modeSwitch);
+    modeGroup->setExclusive(true);
+    auto makeSide = [&](const QString &name, const QString &text, bool left) {
+        auto *b = new QToolButton(m_modeSwitch);
+        b->setObjectName(name);
+        b->setText(text);
+        b->setCheckable(true);
+        b->setAutoRaise(false);
+        b->setCursor(Qt::PointingHandCursor);
+        b->setFixedSize(34, 26);
+        b->setStyleSheet(QStringLiteral(
             "QToolButton {"
-            "  background: rgba(255,255,255,220);"
-            "  border: 1px solid #7a7a7a;"
-            "  border-radius: 4px;"
-            "  font-weight: bold;"
-            "  font-size: 11px;"
+            "  background: rgba(255,255,255,225); color: #404040;"
+            "  border: 1px solid #7a7a7a; %1"
+            "  font-weight: bold; font-size: 11px;"
             "}"
+            "QToolButton:hover:!checked { background: rgba(225,235,248,235); }"
             "QToolButton:checked {"
-            "  background: rgba(40,100,180,210);"
-            "  color: white;"
-            "  border-color: #245a9e;"
-            "}"
-            "QToolButton:disabled {"
-            "  background: rgba(220,220,220,200);"
-            "  color: #888;"
-            "}"));
-    connect(m_modeBtn, &QToolButton::toggled, this, &LayoutView::onModeButtonToggled);
+            "  background: rgba(40,100,180,225); color: white; border-color: #245a9e;"
+            "}")
+            .arg(left ? QStringLiteral("border-right: none; border-top-left-radius: 4px;"
+                                       " border-bottom-left-radius: 4px;")
+                      : QStringLiteral("border-top-right-radius: 4px; border-bottom-right-radius: 4px;")));
+        modeGroup->addButton(b);
+        switchLayout->addWidget(b);
+        return b;
+    };
+    m_mode2dBtn = makeSide(QStringLiteral("layoutViewMode2dBtn"), QStringLiteral("2D"), true);
+    m_mode3dBtn = makeSide(QStringLiteral("layoutViewMode3dBtn"), QStringLiteral("3D"), false);
+    m_modeSwitch->setFixedSize(68, 26);
+    connect(m_mode2dBtn, &QToolButton::clicked, this, [this]() { setViewMode(ViewMode::Top2D); });
+    connect(m_mode3dBtn, &QToolButton::clicked, this, [this]() { setViewMode(ViewMode::Iso3D); });
+
+    m_field3dBtn = new QToolButton(this);
+    m_field3dBtn->setObjectName(QStringLiteral("layoutViewField3dBtn"));
+    m_field3dBtn->setCursor(Qt::PointingHandCursor);
+    m_field3dBtn->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    m_field3dBtn->setIcon(cubeIcon(QColor(36, 90, 158)));
+    m_field3dBtn->setIconSize(QSize(16, 16));
+    m_field3dBtn->setText(tr("3D viewer ↗"));
+    m_field3dBtn->setFixedHeight(26);
+    m_field3dBtn->setStyleSheet(QStringLiteral(
+        "QToolButton {"
+        "  background: rgba(255,255,255,235); color: #245a9e;"
+        "  border: 2px solid #245a9e; border-radius: 5px;"
+        "  font-weight: bold; font-size: 11px; padding: 0 8px 0 5px;"
+        "}"
+        "QToolButton:hover { background: rgba(225,235,248,245); }"
+        "QToolButton:pressed { background: rgba(40,100,180,225); color: white; }"));
+    m_field3dBtn->hide();
+    connect(m_field3dBtn, &QToolButton::clicked, this, &LayoutView::fieldExternalVolumeRequested);
 
     m_fieldBtn = new QToolButton(this);
     m_fieldBtn->setObjectName(QStringLiteral("layoutViewFieldBtn"));
@@ -258,7 +411,11 @@ LayoutView::LayoutView(QWidget *parent)
     m_fieldBtn->setCursor(Qt::PointingHandCursor);
     m_fieldBtn->setFixedSize(48, 26);
     m_fieldBtn->setText(QStringLiteral("Field"));
-    m_fieldBtn->setStyleSheet(m_modeBtn->styleSheet());
+    m_fieldBtn->setStyleSheet(QStringLiteral(
+        "QToolButton { background: rgba(255,255,255,220); border: 1px solid #7a7a7a;"
+        "  border-radius: 4px; font-weight: bold; font-size: 11px; }"
+        "QToolButton:checked { background: rgba(40,100,180,210); color: white; border-color: #245a9e; }"
+        "QToolButton:disabled { background: rgba(220,220,220,200); color: #888; }"));
     m_fieldBtn->setToolTip(tr("Field view: Z-clip heatmap.\n"
                               "While Field is on, 3D opens the Field 3D viewer window.\n"
                               "Click the heatmap to probe the value (Esc clears).\n"
@@ -342,18 +499,12 @@ LayoutView::LayoutView(QWidget *parent)
 
     loadViewModeFromSettings();
     {
-        const QSignalBlocker block(m_modeBtn);
-        m_modeBtn->setChecked(m_viewMode == ViewMode::Iso3D);
-        m_modeBtn->setText(m_viewMode == ViewMode::Iso3D ? QStringLiteral("3D")
-                                                         : QStringLiteral("2D"));
-        m_modeBtn->setToolTip(modeButtonToolTip());
-    }
-    {
         const QSignalBlocker block(m_fieldBtn);
         m_fieldBtn->setChecked(m_fieldOn);
     }
     syncFloatingControls();
-    m_modeBtn->raise();
+    m_modeSwitch->raise();
+    m_field3dBtn->raise();
     m_fieldBtn->raise();
     m_fieldPanel->raise();
     repositionFloatingControls();
@@ -367,6 +518,7 @@ void LayoutView::clear()
 {
     m_iso3dSceneHalf = 0.0;
     m_polys.clear();
+    m_rawPolys.clear();
     m_styles.clear();
     m_ports.clear();
     m_highlightedName.clear();
@@ -409,11 +561,65 @@ void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
                              const QHash<int, PortInfo> &ports)
 {
     m_iso3dSceneHalf = 0.0;
-    m_polys = polys;
+    m_rawPolys = polys;
     m_styles = styles;
     m_ports = ports;
     m_zoomLocked = false;
+    applyViaMerge();
     rebuildScene();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the via array merge distance of the model (\c merge_polygon_size).
+ *
+ * > 0: 2D and 3D show via layers merged like gds2palace / gds2openEMS do (the simulated geometry).
+ * 0: every via is shown. < 0 (model without the setting): 2D shows every via, Iso3D merges dense
+ * via layers with its own display-only estimate.
+ *
+ * \param um Merge distance in µm.
+ **********************************************************************************************************************/
+void LayoutView::setViaMergeSize(qreal um)
+{
+    if (qFuzzyCompare(um + 10.0, m_viaMergeUm + 10.0))
+        return;
+    m_viaMergeUm = um;
+    if (m_rawPolys.isEmpty())
+        return;
+    applyViaMerge();
+    if (m_viewMode == ViewMode::Iso3D)
+        m_iso3dSceneHalf = 0.0;
+    rebuildScene(false);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Builds \c m_polys from \c m_rawPolys: via layers merged when \c m_viaMergeUm > 0.
+ **********************************************************************************************************************/
+void LayoutView::applyViaMerge()
+{
+    if (m_viaMergeUm <= 0.0) {
+        m_polys = m_rawPolys;
+        return;
+    }
+    QVector<GdsFlatPolygon> out;
+    out.reserve(m_rawPolys.size());
+    QHash<int, QVector<QPolygonF>> viasByLayer;
+    for (const GdsFlatPolygon &p : m_rawPolys) {
+        const bool isVia = m_styles.contains(p.layer)
+                && m_styles.value(p.layer).kind.compare(QLatin1String("via"), Qt::CaseInsensitive) == 0;
+        if (isVia)
+            viasByLayer[p.layer].push_back(p.pointsUm);
+        else
+            out.push_back(p);
+    }
+    for (auto it = viasByLayer.cbegin(); it != viasByLayer.cend(); ++it) {
+        for (const QPolygonF &poly : mergeViaArray(it.value(), m_viaMergeUm)) {
+            GdsFlatPolygon gp;
+            gp.layer = it.key();
+            gp.pointsUm = poly;
+            out.push_back(gp);
+        }
+    }
+    m_polys = out;
 }
 
 void LayoutView::rebuildScene(bool refit)
@@ -439,6 +645,37 @@ void LayoutView::rebuildScene(bool refit)
         return;
     }
 
+    // Too many via polygons: a message instead of the layout (2D and 3D); a Field heatmap stays.
+    const QStringList dense = denseViaLayers();
+    if (!dense.isEmpty()) {
+        if (!m_denseViaLabel) {
+            m_denseViaLabel = new QLabel(this);
+            m_denseViaLabel->setObjectName(QStringLiteral("layoutViewDenseViaLabel"));
+            m_denseViaLabel->setWordWrap(true);
+            m_denseViaLabel->setAlignment(Qt::AlignCenter);
+            m_denseViaLabel->setStyleSheet(QStringLiteral(
+                "QLabel { background: rgba(255,255,255,230); color: #202020; border: 1px solid #b0b0b0;"
+                " border-radius: 4px; padding: 10px; }"));
+        }
+        m_denseViaLabel->setText(
+            tr("Layout not shown: too many via polygons (limit %1 per layer).\n%2\n\n"
+               "Set merge_polygon_size in the model to merge via arrays (as the simulation does), "
+               "or raise the limit in Setup → Preferences → Layout Preview.")
+                .arg(m_maxViaPolygons).arg(dense.join(QStringLiteral(", "))));
+        m_denseViaLabel->show();
+        if (m_fieldOn) {
+            m_scene->setItemIndexMethod(QGraphicsScene::BspTreeIndex);
+            addFieldOverlayItems();
+            if (refit && !m_zoomLocked)
+                fitPreferredContent();
+        }
+        m_highlightedName = keepHighlight;
+        repositionFloatingControls();
+        return;
+    }
+    if (m_denseViaLabel)
+        m_denseViaLabel->hide();
+
     if (m_viewMode == ViewMode::Iso3D) {
         // Dense Iso3D (thousands of vias) — BSP build dominates load/orbit time.
         m_scene->setItemIndexMethod(QGraphicsScene::NoIndex);
@@ -455,6 +692,47 @@ void LayoutView::rebuildScene(bool refit)
     m_highlightedName = keepHighlight;
     applyHighlight();
     repositionFloatingControls();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the most polygons a via layer may have before the layout is replaced by a message.
+ *
+ * Drawing thousands of single vias (no or a small merge_polygon_size) makes 2D and 3D slow.
+ *
+ * \param maxPolygons Limit per via layer, counted after via merging (at least 1).
+ **********************************************************************************************************************/
+void LayoutView::setMaxViaPolygonsPerLayer(int maxPolygons)
+{
+    maxPolygons = qMax(1, maxPolygons);
+    if (maxPolygons == m_maxViaPolygons)
+        return;
+    m_maxViaPolygons = maxPolygons;
+    if (!m_polys.isEmpty())
+        rebuildScene();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Via layers with more drawn polygons than the limit.
+ * \return "<layer name>: <count>" per layer over the limit, sorted by name.
+ **********************************************************************************************************************/
+QStringList LayoutView::denseViaLayers() const
+{
+    QHash<int, int> counts;
+    for (const GdsFlatPolygon &p : m_polys) {
+        const auto st = m_styles.constFind(p.layer);
+        if (st != m_styles.cend() && st->kind.compare(QLatin1String("via"), Qt::CaseInsensitive) == 0)
+            ++counts[p.layer];
+    }
+    QStringList out;
+    for (auto it = counts.cbegin(); it != counts.cend(); ++it) {
+        if (it.value() > m_maxViaPolygons) {
+            const QString name = m_styles.value(it.key()).name;
+            out << QStringLiteral("%1: %2").arg(name.isEmpty() ? QStringLiteral("L%1").arg(it.key()) : name)
+                                            .arg(it.value());
+        }
+    }
+    out.sort();
+    return out;
 }
 
 void LayoutView::scheduleOrbitRebuild()
@@ -926,7 +1204,9 @@ void LayoutView::rebuildScene3D(bool refit)
     int viaEnvelopeCount = 0;
     for (auto it = viasByLayer.cbegin(); it != viasByLayer.cend(); ++it) {
         const LayerStyle st = viaStyleByLayer.value(it.key());
-        const bool mergeLayer = it.value().size() >= kViaMergePerLayer;
+        // Own display-only estimate only when the model gives no merge distance (m_viaMergeUm < 0);
+        // with one, m_polys already holds the merged vias (applyViaMerge).
+        const bool mergeLayer = m_viaMergeUm < 0.0 && it.value().size() >= kViaMergePerLayer;
         if (mergeLayer) {
             const qreal grow = estimateViaGrowUm(it.value());
             const QVector<QPolygonF> envelopes = growEnvelopeMerge(it.value(), grow);
@@ -1396,20 +1676,6 @@ void LayoutView::setViewMode(ViewMode mode)
         rebuildScene(true);
 }
 
-void LayoutView::onModeButtonToggled(bool on)
-{
-    if (on && m_fieldOn) {
-        // Keep the layout pane on the 2D Field slice; open external volume viewer.
-        const QSignalBlocker block(m_modeBtn);
-        m_modeBtn->setChecked(false);
-        m_modeBtn->setText(QStringLiteral("3D"));
-        m_modeBtn->setToolTip(modeButtonToolTip());
-        emit fieldExternalVolumeRequested();
-        return;
-    }
-    setViewMode(on ? ViewMode::Iso3D : ViewMode::Top2D);
-}
-
 /*!*******************************************************************************************************************
  * \brief Slot: Field toolbutton toggled — forwards to \c setFieldMode.
  **********************************************************************************************************************/
@@ -1699,19 +1965,15 @@ void LayoutView::updateFieldControlsFromOverlay()
  **********************************************************************************************************************/
 void LayoutView::syncFloatingControls()
 {
-    if (m_modeBtn) {
-        m_modeBtn->setEnabled(true);
-        const QSignalBlocker block(m_modeBtn);
-        if (m_fieldOn) {
-            // Field pane is always Top2D; the button launches the external viewer.
-            m_modeBtn->setChecked(false);
-            m_modeBtn->setText(QStringLiteral("3D"));
-        } else {
-            m_modeBtn->setChecked(m_viewMode == ViewMode::Iso3D);
-            m_modeBtn->setText(m_viewMode == ViewMode::Iso3D ? QStringLiteral("3D")
-                                                            : QStringLiteral("2D"));
-        }
-        m_modeBtn->setToolTip(modeButtonToolTip());
+    if (m_modeSwitch) {
+        // Fields page: the pane stays 2D, a separate button opens the 3D field viewer.
+        m_modeSwitch->setVisible(!m_fieldOn);
+        m_field3dBtn->setVisible(m_fieldOn);
+        const QSignalBlocker b2(m_mode2dBtn);
+        const QSignalBlocker b3(m_mode3dBtn);
+        m_mode2dBtn->setChecked(m_viewMode != ViewMode::Iso3D);
+        m_mode3dBtn->setChecked(m_viewMode == ViewMode::Iso3D);
+        updateModeToolTips();
     }
     if (m_fieldHotZBtn) {
         m_fieldHotZBtn->setToolTip(isFieldVolume()
@@ -1889,16 +2151,27 @@ void LayoutView::repositionFloatingControls()
     if (verticalScrollBar() && verticalScrollBar()->isVisible())
         sb = verticalScrollBar()->width();
     int x = width() - m - sb;
-    if (m_modeBtn) {
-        x -= m_modeBtn->width();
-        m_modeBtn->move(x, m);
-        m_modeBtn->raise();
+    QWidget *modeControl = (m_field3dBtn && m_field3dBtn->isVisible()) ? static_cast<QWidget *>(m_field3dBtn)
+                                                                        : m_modeSwitch;
+    if (modeControl) {
+        modeControl->adjustSize();
+        x -= modeControl->width();
+        modeControl->move(x, m);
+        modeControl->raise();
         x -= m;
     }
     if (m_fieldBtn && !m_fieldBtn->isHidden()) {
         x -= m_fieldBtn->width();
         m_fieldBtn->move(x, m);
         m_fieldBtn->raise();
+    }
+    if (m_denseViaLabel && m_denseViaLabel->isVisible()) {
+        const int w = qMin(560, qMax(200, viewport()->width() - 40));
+        m_denseViaLabel->setFixedWidth(w);
+        m_denseViaLabel->adjustSize();
+        m_denseViaLabel->move((width() - m_denseViaLabel->width()) / 2,
+                              (height() - m_denseViaLabel->height()) / 2);
+        m_denseViaLabel->raise();
     }
     if (m_fieldPanel && m_fieldPanel->isVisible()) {
         m_fieldPanel->adjustSize();
@@ -2678,28 +2951,34 @@ void LayoutView::addMeasurePoint(const QPointF &scenePt)
 }
 
 /*!*******************************************************************************************************************
- * \brief Tooltip for the 2D/3D button: what a click does plus the mouse bindings of the current style.
+ * \brief Tooltip of the 2D or 3D side of the switch: what it shows plus the mouse bindings of the style.
  *
+ * \param iso3d True for the 3D side.
  * \return Tooltip text.
  **********************************************************************************************************************/
-QString LayoutView::modeButtonToolTip() const
+QString LayoutView::modeButtonToolTip(bool iso3d) const
 {
     // Viewer names are the binding table's (NavigationStyle context).
-    const QString layout2d = QCoreApplication::translate("NavigationStyle", "Layout 2D");
-    const QString layout3d = QCoreApplication::translate("NavigationStyle", "Layout 3D");
-    QString head;
-    QString viewer = layout2d;
-    if (m_fieldOn) {
-        head = tr("Open the 3D field viewer window (the layout stays 2D).");
-    } else if (m_viewMode == ViewMode::Iso3D) {
-        head = tr("3D view (click for top view).");
-        viewer = layout3d;
-    } else {
-        head = tr("Top view (click for 3D).");
-    }
+    const QString viewer = QCoreApplication::translate("NavigationStyle", iso3d ? "Layout 3D" : "Layout 2D");
+    const QString head = iso3d ? tr("3D view of the layout (key 3).") : tr("Top view of the layout (key 2).");
     return tr("%1\nNavigation: %2\n%3\nAll keys: Setup → Key Bindings")
             .arg(head, NavigationStyle::displayName(m_navStyle),
                  NavigationStyle::tooltipFor(m_navStyle, viewer));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Tooltips of the 2D / 3D switch and the "3D viewer" button (they follow the navigation style).
+ **********************************************************************************************************************/
+void LayoutView::updateModeToolTips()
+{
+    if (!m_modeSwitch)
+        return;
+    m_mode2dBtn->setToolTip(modeButtonToolTip(false));
+    m_mode3dBtn->setToolTip(modeButtonToolTip(true));
+    m_field3dBtn->setToolTip(
+        tr("Open the interactive 3D field viewer in a separate window (key 3).\n"
+           "The field view here stays 2D.\nNavigation in the 3D viewer: %1\nAll keys: Setup → Key Bindings")
+            .arg(NavigationStyle::displayName(m_navStyle)));
 }
 
 /*!*******************************************************************************************************************
@@ -2710,8 +2989,7 @@ QString LayoutView::modeButtonToolTip() const
 void LayoutView::setNavigationStyle(NavStyle style)
 {
     m_navStyle = style;
-    if (m_modeBtn)
-        m_modeBtn->setToolTip(modeButtonToolTip());
+    updateModeToolTips();
 }
 
 /*!*******************************************************************************************************************

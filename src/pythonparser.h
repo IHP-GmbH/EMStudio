@@ -24,6 +24,8 @@
 #include <QMap>
 #include <QSet>
 #include <QVariant>
+#include <QHash>
+#include <QVector>
 #include <QString>
 
 class PythonParser
@@ -59,6 +61,9 @@ public:
         //! Keys whose value is a quoted string literal in the script (written back quoted);
         //! other text values are raw expressions (lists, references) written verbatim.
         QSet<QString>               quotedStrings;
+        //! Loose variable -> keyword of the workflow parameter it is passed to (only where the name
+        //! differs and the binding is unambiguous, see bindWorkflowCalls). Display only.
+        QHash<QString, QString>     keywordAlias;
 
         QString getCellName()    const { return cellName; }
         QString getGdsFilename() const { return gdsFilename; }
@@ -68,24 +73,63 @@ public:
         bool hasSettingTip(const QString &key) const { return settingTips.contains(key); }
     };
 
-    /*!
-     * \brief The \c cellname argument of the script's first \c read_gds(...) call.
-     *
-     * This is the cell the script actually simulates; other cell variables in the script
-     * may be stale. Without the argument gds2palace / gds2openEMS load the GDS top cell.
-     */
-    struct ReadGdsCellRef
+    /*! A call \c name(...) in the script; offsets are absolute. */
+    struct CallSite
     {
-        bool                        found = false;    //!< A read_gds( call exists
-        QString                     variable;         //!< cellname=<variable>
-        QString                     settingsKey;      //!< cellname=<dict>['<key>']
-        bool                        hasLiteral = false;
-        QString                     literal;          //!< cellname="<literal>"
-        int                         literalStart = -1; //!< Offset of the quoted literal in the script
-        int                         literalLength = 0; //!< Length incl. quotes
+        int                         start = -1;       //!< Offset of the (possibly dotted) name
+        int                         argsStart = -1;   //!< Offset after '('
+        int                         argsEnd = -1;     //!< Offset of the closing ')'
+        QString                     args;             //!< Text between the parentheses
     };
 
-    static ReadGdsCellRef readGdsCellRef(const QString &script);
+    /*! One argument of a call. */
+    struct CallArg
+    {
+        QString                     keyword;          //!< Keyword name; empty for a positional argument
+        QString                     text;             //!< Value text, trimmed
+        int                         start = -1;       //!< Offset of the value in the script
+        int                         length = 0;
+    };
+
+    /*!
+     * \brief What a call passes as one keyword argument.
+     *
+     * For \c read_gds(..., cellname=...) this is the cell the script actually simulates; without
+     * the argument gds2palace / gds2openEMS load the GDS top cell.
+     */
+    struct CallArgRef
+    {
+        bool                        found = false;    //!< The call exists
+        bool                        hasArgument = false; //!< It passes the keyword
+        QString                     variable;         //!< keyword=<variable>
+        QString                     settingsKey;      //!< keyword=<dict>['<key>']
+        bool                        hasLiteral = false;
+        bool                        isDictLiteral = false; //!< The literal is a {...} dict
+        QString                     literal;          //!< Quoted literal without quotes, or the dict text
+        int                         literalStart = -1; //!< Offset of the literal in the script
+        int                         literalLength = 0; //!< Length incl. quotes / braces
+    };
+    using ReadGdsCellRef = CallArgRef;
+
+    /*! One parameter of a workflow function (keywords/workflow_signatures.csv). */
+    struct WorkflowParam
+    {
+        QString                     function;   //!< e.g. "setupSimulation"
+        int                         index = -1; //!< Positional index
+        QString                     param;      //!< Parameter name (keyword argument)
+        QString                     keyword;    //!< Keyword-file name
+    };
+    /*! Signatures used by every parse (set once by MainWindow, or by tests). */
+    static void                     setWorkflowSignatures(const QVector<WorkflowParam> &signatures);
+    static QVector<WorkflowParam>   workflowSignatures();
+    static QHash<QString, QString>  bindWorkflowCalls(const QString &script,
+                                                      const QVector<WorkflowParam> &signatures);
+
+    static QVector<CallSite>        findCalls(const QString &script, const QString &funcName);
+    static QVector<CallArg>         splitCallArgs(const QString &script, const CallSite &call);
+    static CallArgRef               callArgumentRef(const QString &script, const QString &funcName,
+                                                    const QString &keyword);
+    static ReadGdsCellRef           readGdsCellRef(const QString &script);
 
     static Result parseSettings(const QString &filePath);
     static Result parseSettingsFromText(const QString &content,

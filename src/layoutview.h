@@ -145,6 +145,16 @@ public:
     void                        setPolygons(const QVector<GdsFlatPolygon> &polys,
                                             const QHash<int, LayerStyle> &styles,
                                             const QHash<int, PortInfo> &ports = {});
+    /*! Via merge distance of the model (merge_polygon_size); < 0 = not set. See setViaMergeSize. */
+    void                        setViaMergeSize(qreal um);
+    qreal                       viaMergeSize() const { return m_viaMergeUm; }
+    /*! Most polygons a via layer may have (after merging) before the layout is replaced by a
+     *  message; preference LAYOUT_MAX_VIA_POLYGONS. */
+    void                        setMaxViaPolygonsPerLayer(int maxPolygons);
+    /*! Via layers over the limit, "<name>: <count>" each; empty when the layout is drawn. */
+    QStringList                 denseViaLayers() const;
+    /*! Polygons as drawn (via layers merged per setViaMergeSize). */
+    const QVector<GdsFlatPolygon> &drawnPolygons() const { return m_polys; }
     void                        setHighlightedLayer(const QString &name);
     void                        clearHighlight();
 
@@ -298,7 +308,6 @@ protected:
     void                        leaveEvent(QEvent *event) override;
 
 private slots:
-    void                        onModeButtonToggled(bool on);
     /*! Field toolbutton toggled → \c setFieldMode. */
     void                        onFieldButtonToggled(bool on);
     /*! Log changed; re-exports the slice. */
@@ -374,8 +383,9 @@ private:
     void                        setSideView(qreal yawDeg, qreal pitchDeg = 0.0);
     /*! Places a measure point (start, then end; a third point starts a new ruler). */
     void                        addMeasurePoint(const QPointF &scenePt);
-    /*! Mode button tooltip built from \c NavigationStyle::bindingTable. */
-    QString                     modeButtonToolTip() const;
+    /*! Tooltip of one side of the 2D / 3D switch, built from \c NavigationStyle::bindingTable. */
+    QString                     modeButtonToolTip(bool iso3d) const;
+    void                        updateModeToolTips();
     /*! Handles the 2/3, Field, measure, Field-panel and copy keys; true if consumed. */
     bool                        handleViewKey(QKeyEvent *event);
     static QPointF              sceneToGdsUm(const QPointF &scenePt);
@@ -387,6 +397,7 @@ private:
     static void                 setPixelOffset(QGraphicsItem *item, qreal dxPx, qreal dyPx);
 
     void                        rebuildScene(bool refit = true);
+    void                        applyViaMerge();
     void                        rebuildScene2D(bool refit);
     void                        rebuildScene3D(bool refit);
     /*! Coalesce Iso3D rebuilds while orbiting (mouse / wheel). */
@@ -410,7 +421,10 @@ private:
     qreal                       depth3D(qreal xUm, qreal yUm, qreal zUm) const;
 
     QGraphicsScene             *m_scene = nullptr;
-    class QToolButton          *m_modeBtn = nullptr;
+    QWidget                    *m_modeSwitch = nullptr;  //!< [2D | 3D] segmented switch (Substrate page)
+    class QToolButton          *m_mode2dBtn = nullptr;
+    class QToolButton          *m_mode3dBtn = nullptr;
+    class QToolButton          *m_field3dBtn = nullptr;  //!< "3D viewer ↗" (Fields page)
     class QToolButton          *m_fieldBtn = nullptr;
     class QWidget              *m_fieldPanel = nullptr;
     class QSlider              *m_fieldZSlider = nullptr;
@@ -427,7 +441,11 @@ private:
     FieldOverlay                m_field;
     bool                        m_blockFieldControls = false;
 
-    QVector<GdsFlatPolygon>     m_polys;
+    QVector<GdsFlatPolygon>     m_polys;        //!< Drawn polygons: m_rawPolys with vias merged (applyViaMerge)
+    QVector<GdsFlatPolygon>     m_rawPolys;     //!< Polygons as flattened from the GDS
+    qreal                       m_viaMergeUm = -1.0; //!< merge_polygon_size of the model, < 0 = not set
+    int                         m_maxViaPolygons = 100; //!< Per via layer, see setMaxViaPolygonsPerLayer
+    class QLabel               *m_denseViaLabel = nullptr; //!< Shown instead of the layout over the limit
     QHash<int, LayerStyle>      m_styles;
     QHash<int, PortInfo>        m_ports;
 

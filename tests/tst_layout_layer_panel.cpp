@@ -194,3 +194,44 @@ void LayoutLayerPanelTest::opacity_deferredUntilSliderReleased()
     QCOMPARE(oneSpy.at(0).at(1).toReal(), 0.5);
     slider->setSliderDown(false);
 }
+
+/*! Port markers without stackup layers are listed as "(not mapped)": italic, with an explanation,
+ *  while lookups by layer name keep working. */
+void LayoutLayerPanelTest::unmappedPort_isMarkedInList()
+{
+    LayoutLayerPanel panel;
+    LayoutLayerPanel::Entry metal;
+    metal.gdsLayer = 8;
+    metal.name = QStringLiteral("Metal1");
+    metal.kind = QStringLiteral("conductor");
+    metal.color = Qt::blue;
+    LayoutLayerPanel::Entry mapped;
+    mapped.gdsLayer = 201;
+    mapped.name = QStringLiteral("P1");
+    mapped.kind = QStringLiteral("port");
+    mapped.color = Qt::magenta;
+    LayoutLayerPanel::Entry unmapped = mapped;
+    unmapped.gdsLayer = 202;
+    unmapped.name = QStringLiteral("P2");
+    unmapped.unmapped = true;
+    panel.setLayers({metal, mapped, unmapped});
+
+    auto *list = panel.findChild<QListWidget *>();
+    QVERIFY(list);
+    QListWidgetItem *p1 = nullptr;
+    QListWidgetItem *p2 = nullptr;
+    for (int i = 0; i < list->count(); ++i) {
+        if (list->item(i)->text().startsWith(QStringLiteral("P1")))
+            p1 = list->item(i);
+        if (list->item(i)->text().startsWith(QStringLiteral("P2")))
+            p2 = list->item(i);
+    }
+    QVERIFY(p1 && p2);
+    QCOMPARE(p1->text(), QStringLiteral("P1"));
+    QCOMPARE(p2->text(), QStringLiteral("P2 (not mapped)"));
+    QVERIFY(p2->font().italic());
+    QVERIFY(p2->toolTip().contains(QStringLiteral("guessed position")));
+
+    panel.setHighlightedName(QStringLiteral("P2"));  // name lookup ignores the note
+    QCOMPARE(list->currentItem(), p2);
+}

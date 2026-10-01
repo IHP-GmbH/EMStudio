@@ -21,6 +21,7 @@ class KeywordsEditorDialogTest : public QObject
 
 private slots:
     void load_add_filter_sort_save_roundtrip();
+    void topicAndDefaultColumns_roundtrip();
 };
 
 #endif // TST_KEYWORDS_EDITOR_DIALOG_H

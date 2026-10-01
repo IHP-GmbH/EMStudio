@@ -9,6 +9,7 @@
 
 #include <QtTest/QtTest>
 #include <QTabWidget>
+#include <QTableWidget>
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
@@ -913,6 +914,46 @@ void ElmerTest::loadModel_withoutCellSelectsGdsTopCell()
     QCOMPARE(cbx->currentText(), QStringLiteral("0_INT_T595_HeatSpreader"));
     // The cell list is unchanged (all cells, file order).
     QCOMPARE(cbx->count(), 11);
+
+    // Next model, other GDS, no cell name: the previous model's cell is not looked up there,
+    // so no "not found in GDS" message.
+    w.loadPythonModel(withCell);
+    const QString otherGds = QDir(repoScriptsDir())
+            .absoluteFilePath(QStringLiteral("../examples/palace/resistors_rsil/resistors_with_ports.gds"));
+    QVERIFY2(QFileInfo::exists(otherGds), qPrintable(otherGds));
+    const QString other = dir.filePath(QStringLiteral("other.py"));
+    {
+        QFile f(other);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write(QStringLiteral("settings = {}\n"
+                               "settings['GdsFile'] = \"%1\"\n"
+                               "settings['cellname'] = ''\n"
+                               "allpolygons = gds_reader.read_gds(settings['GdsFile'], l, cellname=settings['cellname'])\n")
+                    .arg(otherGds).toUtf8());
+    }
+    const int logBefore = w.testMainLogText().size();
+    w.loadPythonModel(other);
+    const QString newLog = w.testMainLogText().mid(logBefore);
+    QVERIFY2(!newLog.contains(QStringLiteral("not found in GDS"))
+             && !newLog.contains(QStringLiteral("not in the GDS")), qPrintable(newLog));
+
+    // A model naming a cell its GDS doesn't have: the dropdown shows the top cell (what the
+    // script loads), without a log note.
+    const QString missing = dir.filePath(QStringLiteral("missing.py"));
+    {
+        QFile f(missing);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write(QStringLiteral("settings = {}\n"
+                               "settings['GdsFile'] = \"%1\"\n"
+                               "settings['cellname'] = '50_ghz_mpa_core'\n"
+                               "allpolygons = gds_reader.read_gds(settings['GdsFile'], l, cellname=settings['cellname'])\n")
+                    .arg(otherGds).toUtf8());
+    }
+    const int logBefore2 = w.testMainLogText().size();
+    w.loadPythonModel(missing);
+    QCOMPARE(cbx->currentText(), QStringLiteral("resistors"));
+    const QString log2 = w.testMainLogText().mid(logBefore2);
+    QVERIFY2(!log2.contains(QStringLiteral("50_ghz_mpa_core")), qPrintable(log2));
 }
 
 void ElmerTest::loadModel_findsMissingInputFilesNextToModel()
@@ -964,4 +1005,78 @@ void ElmerTest::loadModel_findsMissingInputFilesNextToModel()
                                 .arg(QDir::fromNativeSeparators(dir.filePath(QStringLiteral("stack.xml"))))),
              qPrintable(saved));
     QVERIFY(!saved.contains(QStringLiteral("anton")));
+}
+
+/*! Stackup Variable overrides are read from and written to whatever read_substrate() passes:
+ *  a settings['variable_overrides'] entry (gds2palace examples) or a top-level variable (templates). */
+void ElmerTest::stackupOverrides_followReadSubstrateArgument()
+{
+    const QString examples = QDir(repoScriptsDir()).absoluteFilePath(QStringLiteral("../examples/palace/resistors_rsil"));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QFile::copy(examples + QStringLiteral("/resistors_with_ports.gds"), dir.filePath(QStringLiteral("r.gds"))));
+    QVERIFY(QFile::copy(examples + QStringLiteral("/SG13G2_resistors_200um.xml"), dir.filePath(QStringLiteral("stack.xml"))));
+
+    auto runCase = [&](const QString &name, const QString &head, const QString &readCall,
+                       const QString &savedDictPrefix) {
+        const QString model = dir.filePath(name);
+        {
+            QFile f(model);
+            QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+            f.write((QStringLiteral("from gds2palace import *\n"
+                                    "settings = {}\n"
+                                    "settings['unit'] = 1e-06\n"
+                                    "settings['GdsFile'] = \"%1\"\n"
+                                    "settings['SubstrateFile'] = \"%2\"\n")
+                         .arg(QDir::fromNativeSeparators(dir.filePath(QStringLiteral("r.gds"))),
+                              QDir::fromNativeSeparators(dir.filePath(QStringLiteral("stack.xml"))))
+                     + head
+                     + QStringLiteral("simulation_ports = simulation_setup.all_simulation_ports()\n")
+                     + readCall
+                     + QStringLiteral("allpolygons = gds_reader.read_gds(settings['GdsFile'], l, purposelist=[0])\n"
+                                      "config_name, data_dir = simulation_setup.create_palace (excite_ports, settings)\n"))
+                        .toUtf8());
+        }
+
+        MainWindow w;
+        w.setAttribute(Qt::WA_DontShowOnScreen, true);
+        w.loadPythonModel(model);
+
+        // Loaded into the Substrate tab's override table.
+        auto *tbl = w.findChild<QTableWidget *>(QStringLiteral("tblStackupOverrides"));
+        QVERIFY(tbl);
+        QHash<QString, QString> shown;
+        for (int r = 0; r < tbl->rowCount(); ++r)
+            if (tbl->item(r, 0) && tbl->item(r, 2))
+                shown.insert(tbl->item(r, 0)->text(), tbl->item(r, 2)->text());
+        QCOMPARE(shown.value(QStringLiteral("air_thickness")), QStringLiteral("80.0"));
+        QCOMPARE(shown.value(QStringLiteral("total_thickness")), QStringLiteral("100.0"));
+
+        // Edit one override, then Save.
+        for (int r = 0; r < tbl->rowCount(); ++r)
+            if (tbl->item(r, 0) && tbl->item(r, 0)->text() == QLatin1String("total_thickness"))
+                tbl->item(r, 2)->setText(QStringLiteral("120"));
+        w.testTriggerSave();
+
+        QFile f(model);
+        QVERIFY(f.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QString saved = QString::fromUtf8(f.readAll());
+        QVERIFY2(saved.contains(savedDictPrefix + QStringLiteral("{'air_thickness': 80.0, 'total_thickness': 120}")),
+                 qPrintable(saved));
+        QVERIFY2(saved.contains(readCall.trimmed()), qPrintable(saved));
+        QCOMPARE(saved.count(QStringLiteral("variable_overrides =")) + saved.count(QStringLiteral("'variable_overrides'] =")), 1);
+    };
+
+    // gds2palace example style (more_examples/core_transistor_3port_bce).
+    runCase(QStringLiteral("dict.py"),
+            QStringLiteral("settings['variable_overrides'] = {'air_thickness': 80.0, 'total_thickness': 100.0}\n"),
+            QStringLiteral("materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate "
+                           "(settings['SubstrateFile'], variable_overrides=settings['variable_overrides'])\n"),
+            QStringLiteral("settings['variable_overrides'] = "));
+    // EMStudio template style.
+    runCase(QStringLiteral("toplevel.py"),
+            QStringLiteral("variable_overrides = {'air_thickness': 80.0, 'total_thickness': 100.0}\n"),
+            QStringLiteral("materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate"
+                           "(settings['SubstrateFile'], variable_overrides=variable_overrides)\n"),
+            QStringLiteral("variable_overrides = "));
 }

@@ -102,6 +102,8 @@ bool MainWindow::applyPythonScriptFromEditor()
     }
 
     m_curPythonData = res;
+    if (m_ui->layoutView)
+        m_ui->layoutView->setViaMergeSize(currentViaMergeSize());
 
     const QString parsedTop = res.getCellName().trimmed();
     if (!parsedTop.isEmpty()) {
@@ -179,6 +181,8 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
     if (!m_simSettingsGroup || !m_variantManager)
         return;
 
+    // New groups are inserted expanded; that must not reset the user's collapsed topics.
+    m_rebuildingSettingsGrid = true;
     clearSimSettingsGroup();
 
     const QString simTool = m_ui->cbxSimTool->currentText().trimmed();
@@ -198,8 +202,35 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         merged[it.key()] = it.value();             // overwrite => high priority
 
     // -------------------------------------------------------------------------------------------------
-    // Generic settings
+    // Generic settings, grouped by the topics of keywords/<tool>.csv (file order), unknown keys
+    // alphabetically under "Other".
     // -------------------------------------------------------------------------------------------------
+    const QString otherTopic = tr("Other");
+    QStringList topics;
+    QHash<QString, QString> keyTopic;
+    QHash<QString, int> keyOrder;
+    QSet<QString> requiredKeys;
+    for (int i = 0; i < m_keywordTable.size(); ++i) {
+        const KeywordEntry &e = m_keywordTable.at(i);
+        if (e.required)
+            requiredKeys.insert(e.keyword);
+        const QString topic = e.topic.isEmpty() ? otherTopic : e.topic;
+        if (topic != otherTopic && !topics.contains(topic))
+            topics << topic;
+        keyTopic.insert(e.keyword, topic);
+        keyOrder.insert(e.keyword, i);
+    }
+    topics << otherTopic;
+
+    struct Row
+    {
+        int topicIndex;
+        int order;
+        QString key;
+        QtVariantProperty *prop;
+    };
+    QVector<Row> rows;
+
     for (auto it = merged.constBegin(); it != merged.constEnd(); ++it) {
         const QString& key = it.key();
         const QVariant& val = it.value();
@@ -216,7 +247,17 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         if (!prop)
             continue;
 
-        applyTipIfAny(prop, key, tips);
+        // Model tip (# @brief) first, then the keyword file; loose variables passed to a workflow
+        // parameter of another name say so.
+        const QString keyword = settingKeyword(key);
+        QString tip = tips.value(key);
+        if (tip.isEmpty())
+            tip = m_keywordTips.value(keyword);
+        if (keyword != key)
+            tip += (tip.isEmpty() ? QString() : QStringLiteral("\n"))
+                   + tr("Passed to the workflow as: %1").arg(keyword);
+        if (!tip.isEmpty())
+            prop->setToolTip(tip);
         if (key.compare(QLatin1String("fdump"), Qt::CaseInsensitive) == 0
             && isElmerEmKey(currentSimToolKey())) {
             prop->setToolTip(tr("Enable field dump at all frequencies.\n"
@@ -228,10 +269,103 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
             setupDoubleAttributes(prop, info);
 
         prop->setValue(info.value);
-        m_simSettingsGroup->addSubProperty(prop);
+        // QtTreePropertyBrowser draws "modified" property names in bold: used for required keys.
+        prop->setModified(requiredKeys.contains(keyword));
+
+        const QString topic = keyTopic.value(keyword, otherTopic);
+        rows.push_back({int(topics.indexOf(topic)), keyOrder.value(keyword, INT_MAX), key, prop});
     }
 
+    std::stable_sort(rows.begin(), rows.end(), [](const Row &a, const Row &b) {
+        if (a.topicIndex != b.topicIndex)
+            return a.topicIndex < b.topicIndex;
+        if (a.order != b.order)
+            return a.order < b.order;
+        return a.key.compare(b.key, Qt::CaseInsensitive) < 0;
+    });
+
+    QtVariantProperty *group = nullptr;
+    int groupTopic = -1;
+    for (const Row &row : rows) {
+        if (row.topicIndex != groupTopic) {
+            groupTopic = row.topicIndex;
+            group = m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(),
+                                                  topics.at(groupTopic));
+            m_settingTopicGroups.insert(group);
+            m_simSettingsGroup->addSubProperty(group);
+        }
+        group->addSubProperty(row.prop);
+    }
+
+    // Collapsed topics stay collapsed across rebuilds (every Save rebuilds the grid).
+    if (m_propertyBrowser) {
+        for (QtProperty *g : m_simSettingsGroup->subProperties()) {
+            const bool collapsed = m_collapsedSettingTopics.contains(g->propertyName());
+            for (QtBrowserItem *item : m_propertyBrowser->items(g))
+                m_propertyBrowser->setExpanded(item, !collapsed);
+        }
+    }
+    m_rebuildingSettingsGrid = false;
+
     updateBoundaryTooltipsForCurrentTool();
+}
+
+/*!*******************************************************************************************************************
+ * \brief The model's via array merge distance (merge_polygon_size), for the layout preview.
+ *
+ * Looks for the setting under its own name or as a loose variable passed to read_gds()'s
+ * merge_polygon_size (PythonParser::Result::keywordAlias); the grid's current value wins.
+ *
+ * \return Distance in µm, or -1 when the model doesn't set it (or not as a plain number).
+ **********************************************************************************************************************/
+qreal MainWindow::currentViaMergeSize() const
+{
+    QStringList keys = m_curPythonData.settings.keys();
+    keys += m_curPythonData.topLevel.keys();
+    for (const QString &key : keys) {
+        if (settingKeyword(key) != QLatin1String("merge_polygon_size"))
+            continue;
+        const QVariant v = m_simSettings.contains(key) ? m_simSettings.value(key)
+                         : m_curPythonData.settings.contains(key) ? m_curPythonData.settings.value(key)
+                                                                   : m_curPythonData.topLevel.value(key);
+        bool ok = false;
+        const double um = v.toString().trimmed().toDouble(&ok);
+        if (ok && um >= 0.0)
+            return um;
+    }
+    return -1.0;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Keyword-file name of a setting: the key itself, or the workflow parameter a loose variable is
+ *        passed to (PythonParser::Result::keywordAlias).
+ * \param key Setting key as written in the script.
+ * \return Keyword used for topic, order and tooltip.
+ **********************************************************************************************************************/
+QString MainWindow::settingKeyword(const QString &key) const
+{
+    return m_curPythonData.keywordAlias.value(key, key);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Calls \a fn for every setting property in "Simulation Settings", inside the topic groups.
+ * \param fn Callback; topic group properties themselves are skipped.
+ **********************************************************************************************************************/
+void MainWindow::forEachSimSettingProperty(const std::function<void(QtProperty *)> &fn) const
+{
+    if (!m_simSettingsGroup)
+        return;
+    std::function<void(QtProperty *)> walk = [&](QtProperty *parent) {
+        for (QtProperty *child : parent->subProperties()) {
+            if (!child)
+                continue;
+            if (m_settingTopicGroups.contains(child))
+                walk(child);
+            else
+                fn(child);
+        }
+    };
+    walk(m_simSettingsGroup);
 }
 
 /*!*******************************************************************************************************************
@@ -239,9 +373,17 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
  **********************************************************************************************************************/
 void MainWindow::clearSimSettingsGroup()
 {
+    // Topic groups hold the settings; QtProperty doesn't delete its children.
+    std::function<void(QtProperty *)> deleteTree = [&](QtProperty *p) {
+        const auto children = p->subProperties();
+        for (QtProperty *child : children)
+            deleteTree(child);
+        m_settingTopicGroups.remove(p);
+        delete p;
+    };
     const auto children = m_simSettingsGroup->subProperties();
     for (QtProperty* child : children)
-        delete child;
+        deleteTree(child);
 }
 
 /*!*******************************************************************************************************************
@@ -454,7 +596,9 @@ bool MainWindow::shouldSkipPalaceSettingKey(const QString &key) const
         key.compare(QLatin1String("GdsFile"),        Qt::CaseInsensitive) == 0 ||
         key.compare(QLatin1String("SubstrateFile"),  Qt::CaseInsensitive) == 0 ||
         key.compare(QLatin1String("RunDir"),         Qt::CaseInsensitive) == 0 ||
-        key.compare(QLatin1String("RunPythonScript"),Qt::CaseInsensitive) == 0)
+        key.compare(QLatin1String("RunPythonScript"),Qt::CaseInsensitive) == 0 ||
+        // Edited in the Substrate tab's override table (applyVariableOverridesToScript).
+        key.compare(QLatin1String("variable_overrides"), Qt::CaseInsensitive) == 0)
         return true;
 
     return false;

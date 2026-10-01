@@ -39,7 +39,6 @@ start_simulation = False
 run_command = ['./run_sim']     
 
 # ===================== input files and path settings =======================
-gds_cellname = "rppd_CDNS_786372201260"
 gds_filename = "/mnt/c/Users/anton/Documents/EMStudio/examples/palace/resistors_rsil/resistors_with_ports.gds"
 XML_filename = "/mnt/c/Users/anton/Documents/EMStudio/examples/palace/resistors_rsil/SG13G2_resistors_200um.xml"
 

@@ -68,6 +68,25 @@ public:
         bool hasSettingTip(const QString &key) const { return settingTips.contains(key); }
     };
 
+    /*!
+     * \brief The \c cellname argument of the script's first \c read_gds(...) call.
+     *
+     * This is the cell the script actually simulates; other cell variables in the script
+     * may be stale. Without the argument gds2palace / gds2openEMS load the GDS top cell.
+     */
+    struct ReadGdsCellRef
+    {
+        bool                        found = false;    //!< A read_gds( call exists
+        QString                     variable;         //!< cellname=<variable>
+        QString                     settingsKey;      //!< cellname=<dict>['<key>']
+        bool                        hasLiteral = false;
+        QString                     literal;          //!< cellname="<literal>"
+        int                         literalStart = -1; //!< Offset of the quoted literal in the script
+        int                         literalLength = 0; //!< Length incl. quotes
+    };
+
+    static ReadGdsCellRef readGdsCellRef(const QString &script);
+
     static Result parseSettings(const QString &filePath);
     static Result parseSettingsFromText(const QString &content,
                                         const QString &scriptDir = QString(),

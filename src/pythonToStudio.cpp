@@ -117,9 +117,7 @@ bool MainWindow::applyPythonScriptFromEditor()
 
     if (!res.gdsFilename.isEmpty())
     {
-        QString gdsPath = fromWslPath(res.gdsFilename);
-        if (QFileInfo(gdsPath).isRelative())
-            gdsPath = modelDir.filePath(gdsPath);
+        const QString gdsPath = resolveModelInputFile(res.gdsFilename, modelDir);
 
         {
             QSignalBlocker b(m_ui->txtGdsFile);
@@ -144,9 +142,7 @@ bool MainWindow::applyPythonScriptFromEditor()
     }
 
     if (!res.xmlFilename.isEmpty()) {
-        QString subPath = fromWslPath(res.xmlFilename);
-        if (QFileInfo(subPath).isRelative())
-            subPath = modelDir.filePath(subPath);
+        const QString subPath = resolveModelInputFile(res.xmlFilename, modelDir);
 
         m_ui->txtSubstrate->setText(subPath);
         m_simSettings["SubstrateFile"] = subPath;
@@ -651,4 +647,40 @@ void MainWindow::setupDoubleAttributes(QtVariantProperty *prop, const PalaceProp
     prop->setAttribute(QLatin1String("minimum"), -std::numeric_limits<double>::max());
     prop->setAttribute(QLatin1String("maximum"),  std::numeric_limits<double>::max());
     prop->setAttribute(QLatin1String("singleStep"), info.step);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Resolves a GDS / XML path written in a model script.
+ *
+ * Relative paths are taken relative to the model's folder. If the resulting file does not
+ * exist (e.g. a model copied from another machine with an absolute C:/... or /mnt/... path),
+ * the same file name in the model's folder is used when it exists there; the next Save then
+ * writes that path into the script.
+ *
+ * \param scriptValue Path as written in the script (Linux, Windows or WSL form).
+ * \param modelDir    Folder of the model script.
+ * \return Path to use (the original one if no better match exists).
+ **********************************************************************************************************************/
+QString MainWindow::resolveModelInputFile(const QString &scriptValue, const QDir &modelDir)
+{
+    QString path = fromWslPath(scriptValue);
+    if (QFileInfo(path).isRelative())
+        path = modelDir.filePath(path);
+    if (path.isEmpty() || QFileInfo::exists(path))
+        return path;
+
+    // File name only; split on both separators so Windows paths work on Linux too.
+    const QString raw = scriptValue.trimmed();
+    const int cut = qMax(raw.lastIndexOf(QLatin1Char('/')), raw.lastIndexOf(QLatin1Char('\\')));
+    const QString name = raw.mid(cut + 1);
+    if (name.isEmpty())
+        return path;
+    const QString local = modelDir.filePath(name);
+    if (!QFileInfo::exists(local))
+        return path;
+
+    info(tr("'%1' not found; using '%2' from the model's folder (written to the script on Save).")
+             .arg(QDir::toNativeSeparators(path), QDir::toNativeSeparators(local)),
+         false);
+    return local;
 }

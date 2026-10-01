@@ -27,9 +27,9 @@ settings['preview_only'] = False  # @brief Enable this to preview model/mesh onl
 settings['postprocess_only'] = False # @brief Enable this to show existing results only, without starting simulation
 
 # ===================== input files and path settings =======================
-gds_cellname = "t1"
+
 gds_filename = "<GDS_PATH>"
-cellname = ""  # optional, set empty string "" to use top cell
+cellname = "t1"  # optional, set empty string "" to use top cell
 
 XML_filename = "<XML_PATH>"
 

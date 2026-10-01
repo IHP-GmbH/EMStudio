@@ -653,6 +653,34 @@ void PalaceGolden::onPalaceProcessFinished_pythonPhase_nonZeroExit_logsFailure()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Verifies that a successful Python stage with preview_only = True doesn't start a solver.
+ **********************************************************************************************************************/
+void PalaceGolden::onPalaceProcessFinished_previewOnly_skipsSolver()
+{
+    MainWindow w;
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString modelPath = dir.filePath("model.py");
+    {
+        QFile f(modelPath);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write("print('dummy')\n");
+    }
+
+    w.testSetSimSetting("RunPythonScript", modelPath);
+    w.testSetSimSetting("preview_only", true);
+    w.testAttachDummySimProcess();
+    w.testSetPalacePhasePythonModel();
+    w.testCallOnPalaceProcessFinished(0);
+
+    const QString log = w.testSimulationLogText();
+    QVERIFY2(log.contains("solver is not started"), qPrintable(log));
+    QVERIFY(!log.contains("searching for solver"));
+    QVERIFY2(!w.testHasSimProcess(), "Simulation process shall be cleared after a preview");
+}
+
+/*!*******************************************************************************************************************
  * \brief Verifies that PalaceSolver phase logs finish banner and resets process state.
  **********************************************************************************************************************/
 void PalaceGolden::onPalaceProcessFinished_solverPhase_logsFinish()

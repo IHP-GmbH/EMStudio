@@ -466,11 +466,22 @@ void MainWindow::replaceOrInsertThermalSection(QString &script, const QString &t
 
 void MainWindow::applyElmerThermalWorkflowToScript(QString &script)
 {
-    QRegularExpression reKey(R"(\w+\s*\[\s*['"]elmer_thermal['"]\s*\]\s*=\s*.*$)");
+    // Per line (MultilineOption): without it '$' is the end of the script, so a key that was
+    // not on the last line went unnoticed and every Save inserted another copy.
+    const QRegularExpression reKey(
+        R"(^([ \t]*\w+\s*\[\s*['"]elmer_thermal['"]\s*\]\s*=[ \t]*)([^#\n]*?)([ \t]*#[^\n]*)?$)",
+        QRegularExpression::MultilineOption);
     if (reKey.match(script).hasMatch()) {
-        script.replace(QRegularExpression(R"((\w+\s*\[\s*['"]elmer_thermal['"]\s*\]\s*=\s*).*$)",
-                                          QRegularExpression::MultilineOption),
-                       QStringLiteral("\\1True"));
+        // Value only; a trailing comment stays.
+        script.replace(reKey, QStringLiteral("\\1True\\3"));
+        // Drop the bare duplicates older versions inserted before create_elmer_thermal(...).
+        const QRegularExpression reBareDup(
+            R"(^[ \t]*settings\s*\[\s*['"]elmer_thermal['"]\s*\]\s*=\s*True[ \t]*\n)",
+            QRegularExpression::MultilineOption);
+        const int first = reKey.match(script).capturedEnd();
+        QRegularExpressionMatch dup;
+        while ((dup = reBareDup.match(script, first)).hasMatch())
+            script.remove(dup.capturedStart(), dup.capturedLength());
     } else {
         QRegularExpression reCreate(
             R"(config_name,\s*data_dir\s*=\s*simulation_setup\.create_(?:palace|elmer|elmer_thermal)\s*\()");

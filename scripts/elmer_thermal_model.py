@@ -26,7 +26,7 @@ run_command = ['./run_elmer']
 # ===================== input files and path settings =======================
 
 gds_filename = ""
-gds_cellname = ""
+cellname = ""       # optional name of cell, empty string to load always top cell
 XML_filename = ""
 
 preprocess_gds = True
@@ -71,7 +71,7 @@ allpolygons = gds_reader.read_gds(
     metals_list=metals_list,
     preprocess=preprocess_gds,
     merge_polygon_size=merge_polygon_size,
-    cellname=gds_cellname)
+    cellname=cellname)
 
 ########### create model ###########
 

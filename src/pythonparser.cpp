@@ -255,22 +255,23 @@ static void inferExplicitXmlFromSettings(PythonParser::Result& result)
 /*!*******************************************************************************************************************
  * \brief Infers the GDS top-cell name from explicit simulation settings.
  *
- * Searches for a setting named \c gds_cellname (case-insensitive) and assigns
- * its value as the top-level GDS cell name. No heuristic inference is applied;
- * only the explicit setting is considered.
+ * Takes \c settings['gds_cellname'], else \c settings['cellname'] (the gds2palace form,
+ * also written back by EMStudio), case-insensitive. No heuristic inference is applied.
  *
  * \param result Reference to the parsing result structure to be updated.
  **********************************************************************************************************************/
 static void inferExplicitCellNameFromSettings(PythonParser::Result& result)
 {
-    const QString k = findKeyCi(result.settings,
-                                QStringLiteral("gds_cellname"));
-    if (k.isEmpty())
-        return;
-
-    const QString s = variantToStringIfString(result.settings.value(k));
-    if (!s.isEmpty())
-        result.cellName = s;
+    for (const QString &name : {QStringLiteral("gds_cellname"), QStringLiteral("cellname")}) {
+        const QString k = findKeyCi(result.settings, name);
+        if (k.isEmpty())
+            continue;
+        const QString s = variantToStringIfString(result.settings.value(k));
+        if (!s.isEmpty()) {
+            result.cellName = s;
+            return;
+        }
+    }
 }
 
 /*!*******************************************************************************************************************
@@ -833,6 +834,34 @@ static void finalizeResult(const QString& scriptDir,
  *
  * \return Parsed settings and auxiliary information.
  **********************************************************************************************************************/
+/*!*******************************************************************************************************************
+ * \brief Takes the cell name from the read_gds(..., cellname=...) argument when there is one.
+ *
+ * Overrides the other inferences: the argument is what the script simulates. A read_gds call
+ * without the argument means the GDS top cell, so the cell name is cleared.
+ *
+ * \param content Script text.
+ * \param result  Parse result (cellName updated).
+ **********************************************************************************************************************/
+static void inferCellNameFromReadGds(const QString &content, PythonParser::Result &result)
+{
+    const PythonParser::ReadGdsCellRef ref = PythonParser::readGdsCellRef(content);
+    if (!ref.found)
+        return;
+    QString cell;
+    if (!ref.variable.isEmpty()) {
+        // From the text: some cell variables (e.g. cellname) are kept out of topLevel.
+        const QRegularExpression reVar(
+            QStringLiteral(R"((?m)^[ \t]*%1[ \t]*=[ \t]*(['"])(.*?)\1)")
+                .arg(QRegularExpression::escape(ref.variable)));
+        cell = reVar.match(content).captured(2);
+    } else if (!ref.settingsKey.isEmpty())
+        cell = variantToStringIfString(result.settings.value(ref.settingsKey));
+    else if (ref.hasLiteral)
+        cell = ref.literal;
+    result.cellName = cell.trimmed();
+}
+
 PythonParser::Result parseSettingsImpl(const QString &content,
                                        const QString &scriptDir,
                                        const QString &baseName,
@@ -846,6 +875,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     parseSettingTips(content, result);
     parseTopLevelAssignments(content, &result.topLevel);
     inferCellNameFromTopLevel(result);
+    inferCellNameFromReadGds(content, result);
     finalizeResult(scriptDir, baseName, contextForErrors, result);
 
     for (auto it = result.topLevel.begin(); it != result.topLevel.end(); ++it) {
@@ -874,6 +904,91 @@ PythonParser::Result parseSettingsImpl(const QString &content,
 }
 
 } // namespace
+
+/*!*******************************************************************************************************************
+ * \brief Finds the \c cellname argument of the first \c read_gds(...) call.
+ *
+ * Scans the call's argument list with balanced parentheses (strings and comments skipped),
+ * so multi-line calls work. Recognizes \c cellname=variable, \c cellname=settings['key'] and
+ * a quoted literal.
+ *
+ * \param script Python script text.
+ * \return What the call passes; \c found is false without a read_gds call.
+ **********************************************************************************************************************/
+PythonParser::ReadGdsCellRef PythonParser::readGdsCellRef(const QString &script)
+{
+    ReadGdsCellRef ref;
+    static const QRegularExpression reCall(QStringLiteral(R"(\bread_gds\s*\()"));
+    QRegularExpressionMatch call;
+    int from = 0;
+    // Skip matches in comments (e.g. "# read_gds(...)").
+    while ((call = reCall.match(script, from)).hasMatch()) {
+        const int lineStart = script.lastIndexOf(QLatin1Char('\n'), call.capturedStart()) + 1;
+        if (!script.mid(lineStart, call.capturedStart() - lineStart).contains(QLatin1Char('#')))
+            break;
+        from = call.capturedEnd();
+    }
+    if (!call.hasMatch())
+        return ref;
+    ref.found = true;
+
+    // Argument list up to the matching ')'.
+    const int argsStart = call.capturedEnd();
+    int depth = 1;
+    int i = argsStart;
+    QChar quote;
+    for (; i < script.size() && depth > 0; ++i) {
+        const QChar c = script.at(i);
+        if (!quote.isNull()) {
+            if (c == QLatin1Char('\\'))
+                ++i;
+            else if (c == quote)
+                quote = QChar();
+        } else if (c == QLatin1Char('\'') || c == QLatin1Char('"')) {
+            quote = c;
+        } else if (c == QLatin1Char('#')) {
+            const int nl = script.indexOf(QLatin1Char('\n'), i);
+            i = (nl < 0) ? script.size() : nl;
+        } else if (c == QLatin1Char('(')) {
+            ++depth;
+        } else if (c == QLatin1Char(')')) {
+            --depth;
+        }
+    }
+    const QString args = script.mid(argsStart, i - argsStart);
+
+    static const QRegularExpression reKw(QStringLiteral(R"((?:^|[,\s(])cellname\s*=\s*)"));
+    const QRegularExpressionMatch kw = reKw.match(args);
+    if (!kw.hasMatch())
+        return ref;
+    const int valueAt = kw.capturedEnd();
+
+    static const QRegularExpression reDict(
+        QStringLiteral(R"(\G\w+\s*\[\s*(['"])(.*?)\1\s*\])"));
+    static const QRegularExpression reLiteral(QStringLiteral(R"(\G(['"])(.*?)\1)"));
+    static const QRegularExpression reVar(QStringLiteral(R"(\G([A-Za-z_]\w*)\b(?!\s*[\[(.]))"));
+
+    QRegularExpressionMatch m = reDict.match(args, valueAt, QRegularExpression::NormalMatch,
+                                             QRegularExpression::AnchoredMatchOption);
+    if (m.hasMatch()) {
+        ref.settingsKey = m.captured(2);
+        return ref;
+    }
+    m = reLiteral.match(args, valueAt, QRegularExpression::NormalMatch,
+                        QRegularExpression::AnchoredMatchOption);
+    if (m.hasMatch()) {
+        ref.hasLiteral = true;
+        ref.literal = m.captured(2);
+        ref.literalStart = argsStart + m.capturedStart();
+        ref.literalLength = m.capturedLength();
+        return ref;
+    }
+    m = reVar.match(args, valueAt, QRegularExpression::NormalMatch,
+                    QRegularExpression::AnchoredMatchOption);
+    if (m.hasMatch() && m.captured(1) != QLatin1String("None"))
+        ref.variable = m.captured(1);
+    return ref;
+}
 
 /*!*******************************************************************************************************************
  * \brief Try to parse "settings-like" key/value pairs from Palace Python model file.

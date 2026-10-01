@@ -2688,7 +2688,9 @@ void MainWindow::refreshFieldOverlay(bool force)
             return false;
         const QJsonObject mo = QJsonDocument::fromJson(mf.readAll()).object();
         const QString src = mo.value(QStringLiteral("source")).toString();
-        return mo.value(QStringLiteral("cycle")).toInt(1) == cycle
+        // Version 1 thermal slices had X/Y swapped (field_slice_export.py SLICE_META_VERSION).
+        return mo.value(QStringLiteral("version")).toInt() >= 2
+            && mo.value(QStringLiteral("cycle")).toInt(1) == cycle
             && (src.isEmpty() || QFileInfo(src) == QFileInfo(dump));
     };
 
@@ -3711,8 +3713,11 @@ void MainWindow::updateGdsUserInfo()
     m_cells.clear();
     m_layers.clear();
 
-    m_cells  = extractGdsCellNames(filePath);
+    QStringList topCells;
+    m_cells  = extractGdsCellNames(filePath, &topCells);
     m_layers = extractGdsLayerNumbers(filePath);
+    // What gds2palace / gds2openEMS load without a (valid) cell name: top_level()[0].
+    m_gdsTopCell = topCells.value(0, m_cells.value(0));
 
     QString desired = m_simSettings.value("TopCell").toString().trimmed();
     if (desired.isEmpty())
@@ -3738,12 +3743,14 @@ void MainWindow::updateGdsUserInfo()
         top = desired;
         topWasResolved = true;
     } else if (!m_cells.isEmpty()) {
+        // No usable cell name: show the GDS top cell, which is what the script then loads.
+        m_ui->cbxTopCell->setCurrentIndex(qMax(0, m_ui->cbxTopCell->findText(m_gdsTopCell)));
         if (desired.isEmpty()) {
-            m_ui->cbxTopCell->setCurrentIndex(0);
             top = m_ui->cbxTopCell->currentText().trimmed();
             topWasResolved = true;
         } else {
-            info(QString("TopCell '%1' not found in GDS. Keeping parsed value.").arg(desired));
+            info(QString("TopCell '%1' not found in GDS; the script falls back to the top cell '%2'.")
+                     .arg(desired, m_gdsTopCell));
         }
     }
 
@@ -6524,9 +6531,7 @@ void MainWindow::loadPythonModel(const QString &fileName)
 
     if (!res.gdsFilename.isEmpty())
     {
-        QString gdsPath = fromWslPath(res.gdsFilename);
-        if (QFileInfo(gdsPath).isRelative())
-            gdsPath = modelDir.filePath(gdsPath);
+        const QString gdsPath = resolveModelInputFile(res.gdsFilename, modelDir);
 
         m_ui->txtGdsFile->setText(gdsPath);
 
@@ -6539,11 +6544,18 @@ void MainWindow::loadPythonModel(const QString &fileName)
         m_sysSettings["GdsDir"] = QFileInfo(gdsPath).absolutePath();
     }
 
-    if (!res.getCellName().isEmpty())
+    // Top cell: the one the model's read_gds() uses, else the GDS top cell (what gds2palace /
+    // gds2openEMS load then). Never keep the previous model's selection.
     {
-        const QString cellName = res.getCellName();
-
-        const int idx = m_ui->cbxTopCell->findText(cellName);
+        const QString wanted = res.getCellName().trimmed();
+        // m_cells / m_gdsTopCell describe this model's GDS only if the model names one.
+        const bool gdsFromModel = !res.gdsFilename.isEmpty();
+        const QString cellName = m_cells.contains(wanted) ? wanted
+                               : (gdsFromModel ? m_gdsTopCell : QString());
+        if (gdsFromModel && !wanted.isEmpty() && !m_cells.contains(wanted) && !m_cells.isEmpty())
+            info(tr("Top cell '%1' of the model is not in the GDS; the script falls back to the top cell '%2'.")
+                     .arg(wanted, m_gdsTopCell), false);
+        const int idx = cellName.isEmpty() ? -1 : m_ui->cbxTopCell->findText(cellName);
         if (idx >= 0) {
             m_ui->cbxTopCell->setCurrentIndex(idx);
             m_simSettings[QStringLiteral("gds_cellname")] = cellName;
@@ -6554,9 +6566,7 @@ void MainWindow::loadPythonModel(const QString &fileName)
 
     if (!res.xmlFilename.isEmpty())
     {
-        QString subPath = fromWslPath(res.xmlFilename);
-        if (QFileInfo(subPath).isRelative())
-            subPath = modelDir.filePath(subPath);
+        const QString subPath = resolveModelInputFile(res.xmlFilename, modelDir);
 
         m_ui->txtSubstrate->setText(subPath);
 

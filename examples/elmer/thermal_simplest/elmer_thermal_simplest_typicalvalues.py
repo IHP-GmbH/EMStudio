@@ -32,7 +32,6 @@ utilities.check_module_version("gds2palace", "0.1.0")
 
 
 # ===================== input files and path settings =======================
-gds_cellname = "TM1_M5_CDNS_759845918921"
 gds_filename = "C:/Users/anton/Documents/EMStudio/examples/elmer/thermal_simplest/simplest_with_source.gds"
 XML_filename = "C:/Users/anton/Documents/EMStudio/examples/elmer/thermal_simplest/SG13_interposer_thermal_typicalvalues.xml"
 variable_overrides = {}

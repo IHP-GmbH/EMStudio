@@ -264,6 +264,13 @@ public:
     QString                         testApplyGdsAndXmlPaths(const QString &script,
                                                            const QString &simKeyLower) const;
     void                            testOpenThermalResultsInFieldView(const QString &runDir);
+    QString                         testFieldSourceId() const { return fieldSourceId(); }
+    QStringList                     testParseFieldChoices(const QByteArray &json);
+    QStringList                     testFieldViewerArguments(const QString &script,
+                                                             const QString &runDir) const
+    {
+        return fieldViewerArguments(script, runDir, QString());
+    }
     QString                         testResolveKeywordsPath(const QString &simKeyLower) const;
     QMap<QString, QString>          testLoadKeywordTipsCsv(const QString &simKeyLower) const;
     void                            testRefreshKeywordTipsForCurrentTool();
@@ -404,6 +411,23 @@ private:
                                                            const QString &targetLayer);
     QString                         findThermalResultsVtu(const QString &runDir) const;
     QString                         findFieldDumpPath(const QString &runDir = QString()) const;
+    /*! One selectable result file + cycle for the Field views. */
+    struct FieldChoice
+    {
+        QString path;       //!< Absolute result file
+        int     cycle = 1;  //!< 1-based cycle within \c path
+        QString label;      //!< Shown in the Layout Field picker
+    };
+    QString                         fieldSourceId() const;
+    QString                         fieldRunDirectory() const;
+    void                            refreshFieldChoices();
+    bool                            parseFieldChoices(const QByteArray &json);
+    const FieldChoice              *currentFieldChoice() const;
+    QString                         currentFieldDumpPath(int *cycleOut = nullptr) const;
+    QStringList                     fieldViewerArguments(const QString &script,
+                                                         const QString &runDir,
+                                                         const QString &iconPath) const;
+    void                            onLayoutFieldChoiceChanged(int index);
     QString                         resolveFieldViewerPython(QString *detailOut = nullptr) const;
     QString                         resolveFieldSliceExportScript() const;
     void                            refreshFieldOverlay(bool force = false);
@@ -639,6 +663,10 @@ private:
     bool                            m_fieldLastVolumeLog = false;
     QString                         m_layoutPreviewKey;
     QString                         m_fieldDumpSearchDir;
+    QVector<FieldChoice>            m_fieldChoices;
+    int                             m_fieldChoiceIndex = 0;
+    QString                         m_fieldChoicesKey;     //!< runDir|source of m_fieldChoices
+    int                             m_fieldLastCycle = 1;
     QProcess                       *m_fieldExportProcess = nullptr;
     QProcess                       *m_fieldVolumeViewerProcess = nullptr;
     QPointer<QFrame>                m_fieldVolumeViewerSplash;

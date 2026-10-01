@@ -205,7 +205,7 @@ sanitycheck.cpp) → `runOpenEMS()` or `runPalace()`. Both save first.
 | Stackup cross-section | substrateview | 2.5D stack drawing; clicking a layer highlights it in the layout view |
 | Stackup editor | stackupeditor | Dialog that edits the XML; emits saved → reload |
 | Layout preview | gdslayout (flattening), layoutview, layoutlayerpanel | Substrate tab: top view, Iso3D extrusion, ports, layer panel, **Layout Field** overlay |
-| Layout Field | layoutview + mainwindow.cpp `*Field*` methods | Runs `scripts/field_slice_export.py` (QProcess, host Python `FIELD_VIEWER_PYTHON`) for a Z-slice PNG plus meta JSON. Field→3D starts `scripts/field_volume_viewer.py`. |
+| Layout Field | layoutview + mainwindow.cpp `*Field*` methods | All Python, run with host Python `FIELD_VIEWER_PYTHON`. `scripts/field_io.py` is the shared reader: discovery per source (`palace`, `elmer_em`, `elmer_thermal`, `openems` FD `_abs`/`_arg.vtr`), cycle-aware `.pvd` reading, frequency labels, units → µm, derived \|E\| magnitudes, grouped field list. EMStudio lists the run's files with `field_io.py --list` (`refreshFieldChoices` → the Field panel's file/cycle combo). The 2D slice is `field_slice_export.py --source --cycle` (Z-slice PNG plus meta JSON). Field→3D starts `field_viewer.py --run-path --source --select-file --cycle --stdin-control`, a PySide6/pyvistaqt window ported from setupEM. A second 3D click sends JSON on the viewer's stdin, so the open window reloads / comes to the front. Spec: FIELD_VIEWER_SPEC.md (setupEM). |
 | Results | resultsviewer, touchstone, smithchartwidget, resultscalculator, exprparser | Scans the run folder for `.sNp`; dB/phase/Smith; Compare; RF calculator (`cser($1)`, `ydiff_cser($1,$2)`, …); Model Fit via `snp2le` |
 | Python editor | pythoneditor, pythonsyntaxhighlighter, finddialog | `editRunPythonScript` on the Python tab |
 | Preferences | preferences (+ preferences.ui) | Property-browser dialog over `m_preferences` |
@@ -267,7 +267,8 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   `#ifdef EMSTUDIO_TESTING` in mainwindow.h and implemented in verification.cpp
   (some in runPalace.cpp). Add a hook there instead of making production methods
   public. Also under `EMSTUDIO_TESTING`, some interactive steps are skipped
-  (sanity-check dialog, Elmer warnings, auto-opening Field 3D); grep for
+  (sanity-check dialog, Elmer warnings, auto-opening Field 3D, the
+  `field_io.py --list` call in `refreshFieldChoices`); grep for
   `EMSTUDIO_TESTING` before relying on a dialog in a test.
 - **Golden tests**: `tests/golden/tst_palace_golden.py` and `tst_openems_golden.py`
   are the exact scripts expected from "default template + a few GUI edits".
@@ -280,6 +281,10 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   tests/main.cpp points it at a temporary folder, so local test runs never touch
   the user's preferences. Tests that read or write settings must use
   `emstudioSettings()` too.
+- Python tests for the field scripts: `python -m pytest tests/python` (needs
+  pyvista; the viewer tests also need PySide6 + pyvistaqt, run with
+  `QT_QPA_PLATFORM=offscreen`). They build small synthetic dumps; they are not
+  part of the Qt test binary or CI yet.
 - Solver stubs in `tests/tools/` stand in for openEMS, Palace and Elmer. Tests set
   them through preferences, e.g. `testSetPreference("PALACE_RUN_SCRIPT", stub)`.
 - Run locally (Linux):

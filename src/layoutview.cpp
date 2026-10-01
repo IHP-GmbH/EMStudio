@@ -51,6 +51,7 @@
 #include <QNativeGestureEvent>
 #include <QSlider>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QLabel>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -254,7 +255,7 @@ LayoutView::LayoutView(QWidget *parent)
     m_fieldBtn->setText(QStringLiteral("Field"));
     m_fieldBtn->setStyleSheet(m_modeBtn->styleSheet());
     m_fieldBtn->setToolTip(tr("Field view: Z-clip heatmap + optional arrows.\n"
-                              "While Field is on, 3D opens an interactive PyVista volume window.\n"
+                              "While Field is on, 3D opens the Field 3D viewer window.\n"
                               "Click the heatmap to probe the value (Esc clears).\n"
                               "Requires a field dump (fdump / VTK / VTU)."));
     connect(m_fieldBtn, &QToolButton::toggled, this, &LayoutView::onFieldButtonToggled);
@@ -269,10 +270,18 @@ LayoutView::LayoutView(QWidget *parent)
             "  border-radius: 4px;"
             "}"
             "QLabel { font-size: 10px; color: #333; }"
-            "QCheckBox { font-size: 10px; }"));
+            "QCheckBox { font-size: 10px; }"
+            "QComboBox { font-size: 10px; }"));
     auto *panelLay = new QVBoxLayout(m_fieldPanel);
     panelLay->setContentsMargins(6, 3, 6, 3);
     panelLay->setSpacing(2);
+    m_fieldChoiceCombo = new QComboBox(m_fieldPanel);
+    m_fieldChoiceCombo->setObjectName(QStringLiteral("layoutViewFieldChoice"));
+    m_fieldChoiceCombo->setFixedWidth(168);
+    m_fieldChoiceCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+    m_fieldChoiceCombo->setToolTip(tr("Result file / frequency shown in the slice (and opened in 3D)."));
+    m_fieldChoiceCombo->setVisible(false);
+    panelLay->addWidget(m_fieldChoiceCombo);
     m_fieldStatusLbl = new QLabel(m_fieldPanel);
     m_fieldStatusLbl->setObjectName(QStringLiteral("layoutViewFieldStatus"));
     m_fieldStatusLbl->setWordWrap(false);
@@ -321,6 +330,8 @@ LayoutView::LayoutView(QWidget *parent)
     connect(m_fieldLogChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
     connect(m_fieldArrowsChk, &QCheckBox::toggled, this, &LayoutView::onFieldControlsChanged);
     connect(m_fieldTempChk, &QCheckBox::toggled, this, &LayoutView::onFieldTempToggled);
+    connect(m_fieldChoiceCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, &LayoutView::fieldChoiceChanged);
 
     loadViewModeFromSettings();
     {
@@ -1470,6 +1481,38 @@ bool LayoutView::fieldShowArrows() const
 bool LayoutView::fieldShowTemp() const
 {
     return m_fieldTempChk && m_fieldTempChk->isChecked();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Fills the result file / cycle picker without emitting \c fieldChoiceChanged.
+ *
+ * \param labels  One entry per selectable file + cycle.
+ * \param current Index to select; the combo is hidden with fewer than two entries.
+ **********************************************************************************************************************/
+void LayoutView::setFieldChoices(const QStringList &labels, int current)
+{
+    if (!m_fieldChoiceCombo)
+        return;
+    {
+        const QSignalBlocker block(m_fieldChoiceCombo);
+        m_fieldChoiceCombo->clear();
+        for (const QString &label : labels) {
+            m_fieldChoiceCombo->addItem(label);
+            m_fieldChoiceCombo->setItemData(m_fieldChoiceCombo->count() - 1, label, Qt::ToolTipRole);
+        }
+        if (current >= 0 && current < labels.size())
+            m_fieldChoiceCombo->setCurrentIndex(current);
+    }
+    m_fieldChoiceCombo->setVisible(labels.size() > 1);
+    if (m_fieldPanel && m_fieldPanel->isVisible()) {
+        m_fieldPanel->adjustSize();
+        repositionFloatingControls();
+    }
+}
+
+int LayoutView::fieldChoiceIndex() const
+{
+    return m_fieldChoiceCombo ? m_fieldChoiceCombo->currentIndex() : -1;
 }
 
 /*!*******************************************************************************************************************

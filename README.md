@@ -277,8 +277,8 @@ The screenshot shows the configuration of EMStudio on a Windows machine, with op
   EMStudio provides templates for openEMS and Palace workflows, so that you can start from scratch with no existing Python model code. The path configured here points to the template directory where `openems_model.py` and `palace_model.py`are located.
 
 - **FIELD_VIEWER_PYTHON**  
-  Optional host Python for **Layout Field**: 2D slices (`scripts/field_slice_export.py`) and the Field→3D volume window (`scripts/field_volume_viewer.py`).  
-  Prefer a native Windows `python.exe` with `pyvista` and `pillow` installed (`pyvistaqt` + `PySide6` optional).  
+  Optional host Python for **Layout Field**: 2D slices (`scripts/field_slice_export.py`) and the Field→3D viewer (`scripts/field_viewer.py`), both reading results through `scripts/field_io.py`.  
+  Prefer a native Windows `python.exe` with `pyvista`, `pillow`, `pyvistaqt` and `PySide6` installed (the 3D viewer needs the last two).  
   If empty, EMStudio falls back to the active tool Python / PATH.
 
 - **OpenEMS Python Path**  
@@ -345,29 +345,33 @@ Floating controls on the layout preview (top-right):
 
 | Control | Role |
 | --- | --- |
-| **2D / 3D** | Without Field: top view vs isometric layout extrusion. With **Field** on: the pane stays 2D; **3D** opens a separate interactive PyVista volume window. |
+| **2D / 3D** | Without Field: top view vs isometric layout extrusion. With **Field** on: the pane stays 2D; **3D** opens the separate Field 3D viewer window. |
 | **Field** | Z-clip heatmap overlay of a field dump (layout pane stays top-down). |
 
 **Field view** (requires a host Python with PyVista + Pillow):
 
-1. Run a simulation that writes field dumps (`fdump` / VTK / VTU / Palace `.pvd`, or Elmer Thermal `thermal_results*.vtu`).
+1. Run a simulation that writes field dumps: Palace `fdump` (`.pvd`), Elmer EM field dump (`fields_t*.vtu/.pvtu`), openEMS frequency-domain dump boxes (`*_abs.vtr` + `*_arg.vtr`), or Elmer Thermal (`thermal_results*.vtu`).
 2. On the Substrate tab, click **Field** (after a successful **Elmer Thermal** run this happens automatically at max-T Z).
-3. On first open, EMStudio auto-picks a “hot” Z (strongest field / max temperature), then exports a PNG via `scripts/field_slice_export.py`.
-4. Drag the **Z** slider, use **Max**, optional **Log** / **Arrows**.
+3. On first open, EMStudio auto-picks a “hot” Z (strongest field / max temperature), then exports a PNG via `scripts/field_slice_export.py`. The default field is |E| for EM runs and temperature for thermal runs.
+4. If the run has several result files or frequencies, pick one in the combo box at the top of the Field panel (e.g. `driven.pvd`, `6 GHz (cycle 1)`, `fields_t0002.vtu - 7.5 GHz`, `Ef - 10 GHz`).
+5. Drag the **Z** slider, use **Max**, optional **Log** / **Arrows**.
 
 **Field → 3D** (separate OS window):
 
-1. With Field on, click **3D**. EMStudio shows a short splash, then starts `scripts/field_volume_viewer.py` with the current dump and Z clip.
-2. The layout pane stays on the 2D slice; the volume window is independent (orbit with drag, **Arrows/WASD** pan, **F** reset camera, Z-clip slider).
-3. Geometry extents come from the mesh in the dump (scaled to µm); EMStudio does not invent the Z height.
-4. Same **FIELD_VIEWER_PYTHON** as the 2D exporter. Optional: `pip install pyvistaqt PySide6` for a Qt `BackgroundPlotter` (nicer window / taskbar icon). Without it, the viewer uses VTK `Plotter.show()` and still sets the EMStudio window icon on Windows.
+1. With Field on, click **3D**. EMStudio shows a short splash, then starts `scripts/field_viewer.py` for the whole run, with the file / frequency chosen in the Field panel preselected. Clicking **3D** again while the window is open brings it to the front (and switches to the current choice).
+2. The viewer offers every result file of the run (volume / boundary dumps, excitations, frequencies; AMR iterations on request), a **Cycle** picker for multi-frequency `.pvd` files, and a grouped **Field** list with physical names and units (|E|, |B|, |H|, |J_s| magnitudes, real / imaginary parts, S, U_e, temperature, …).
+3. **Clip Plane**: X / Y / Z plane with a fine slider, **Find max.** jumps to the field maximum, **2D plane only** shows just the section. Clipping runs in the background, so large dumps do not freeze the window.
+4. **Display** / **Field**: opacity, mesh overlay, legend, log scale, Min / Max with **Reset range to data**, and direction arrows for vector fields. **View**: ±X/±Y/±Z buttons (parallel projection) with the cut face turned toward the camera. **Ctrl+C** or right-click copies the 3D view.
+5. Positions are shown in µm for every solver (Elmer Thermal and openEMS dumps are in meters and are scaled).
+6. Same **FIELD_VIEWER_PYTHON** as the 2D exporter; it needs `pyvistaqt` and `PySide6`.
+7. The viewer also runs on its own and headless, e.g. `python scripts/field_viewer.py --run-path <..._data> --source palace --clip-axis Z --clip-max --screenshot out.png`; see `--help`.
 
 Set **Preferences → Layout Field → FIELD_VIEWER_PYTHON** to a Windows `python.exe` that has:
 
 ```bash
-python -m pip install pyvista pillow
-# optional, smoother sampling / Qt volume window:
-python -m pip install scipy pyvistaqt PySide6
+python -m pip install pyvista pillow pyvistaqt PySide6
+# optional, smoother 2D sampling:
+python -m pip install scipy
 ```
 
 The **Windows installer** bundles `field_viewer_python\` (embeddable CPython + those packages)

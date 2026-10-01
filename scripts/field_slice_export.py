@@ -20,6 +20,9 @@ import os
 import sys
 from typing import Optional
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import field_io  # noqa: E402
+
 
 def _die(msg: str, code: int = 1) -> None:
     print(f"field_slice_export: {msg}", file=sys.stderr)
@@ -97,7 +100,7 @@ def _pick_scalar(names, prefer: Optional[str]):
     return names[0] if names else None
 
 
-def _pick_vector(names: list[str]) -> str | None:
+def _pick_vector(names: list[str], mesh=None) -> str | None:
     for key in ("S", "Poynting", "S_abs", "H", "E"):
         for n in names:
             if n.lower() == key.lower():
@@ -106,7 +109,34 @@ def _pick_vector(names: list[str]) -> str | None:
         nl = n.lower()
         if "poynt" in nl or nl == "s" or nl.startswith("s_"):
             return n
+    # No Poynting vector (Elmer EM, openEMS): E-field real part.
+    if mesh is not None:
+        return field_io.resolve_field_shorthand("e", mesh)
     return None
+
+
+def _load_field_mesh(mesh_path: str, source: Optional[str], cycle: Optional[int]):
+    """One cycle of a field dump with derived |X| arrays (shared field_io reader).
+
+    cycle is 1-based (None = first). Exits with a message on failure.
+    """
+    try:
+        mesh, _idx, _n = field_io.load(mesh_path, None if cycle is None else int(cycle) - 1)
+    except Exception as exc:
+        _die(f"cannot read {mesh_path}: {exc}")
+    if source is None:
+        source = field_io.guess_source_from_names(mesh.point_data.keys())
+    field_io.attach_derived(mesh, source)
+    return mesh, source
+
+
+def _default_scalar(mesh, names, source: Optional[str], quantity: Optional[str]):
+    """Same default field as the 3D viewer, unless a quantity is requested."""
+    if not quantity:
+        name, _cmap, _log = field_io.pick_default(mesh, source)
+        if name:
+            return name
+    return _pick_scalar(names, quantity)
 
 
 def _mesh_bounds_um(mesh, scale_to_um: float):
@@ -148,12 +178,9 @@ def _colormap_rgba(values, log_scale: bool, vmin=None, vmax=None):
         vmin, vmax = 0.0, 1.0
     t = np.clip((v - vmin) / (vmax - vmin), 0.0, 1.0)
 
-    # Simple turbo-ish LUT (blue → cyan → yellow → red)
-    r = np.clip(1.5 - np.abs(3.5 * t - 2.5), 0, 1)
-    g = np.clip(1.5 - np.abs(3.5 * t - 1.5), 0, 1)
-    b = np.clip(1.5 - np.abs(3.5 * t - 0.5), 0, 1)
-    a = np.full_like(t, 0.85)
-    rgba = np.stack([r, g, b, a], axis=-1)
+    # Shared EMStudio scale (same as the 3D viewer).
+    rgb = field_io.emstudio_colormap_rgb(t)
+    rgba = np.concatenate([rgb, np.full(t.shape + (1,), 0.85)], axis=-1)
     rgba_u8 = (rgba * 255.0).astype(np.uint8)
     return rgba_u8, vmin, vmax
 
@@ -754,6 +781,8 @@ def export_slice(
     roi_ymax_um: Optional[float] = None,
     roi_pad_frac: float = 0.35,
     auto_z: bool = False,
+    source: Optional[str] = None,
+    cycle: Optional[int] = None,
 ):
     layout_roi = None
     if None not in (roi_xmin_um, roi_xmax_um, roi_ymin_um, roi_ymax_um):
@@ -780,19 +809,12 @@ def export_slice(
         _die(f"input not found: {mesh_path}")
     os.makedirs(outdir, exist_ok=True)
 
-    mesh = pv.read(mesh_path)
-    if hasattr(mesh, "n_blocks"):
-        for i in range(mesh.n_blocks):
-            block = mesh[i]
-            if block is not None and getattr(block, "n_points", 0) > 0:
-                mesh = block
-                break
-
+    mesh, source = _load_field_mesh(mesh_path, source, cycle)
     if mesh.n_points == 0:
         _die("mesh has no points")
 
     bounds_native = list(mesh.bounds)
-    scale = scale_to_um if scale_to_um is not None else _guess_scale_to_um(bounds_native)
+    scale = scale_to_um if scale_to_um is not None else field_io.scale_to_um(source, bounds_native)
     mxmin, mxmax, mymin, mymax, zmin, zmax = _mesh_bounds_um(mesh, scale)
 
     if layout_roi is not None:
@@ -801,7 +823,7 @@ def export_slice(
         xmin, xmax, ymin, ymax = mxmin, mxmax, mymin, mymax
 
     names = _array_names(mesh)
-    scalar_name = _pick_scalar(names, quantity)
+    scalar_name = _default_scalar(mesh, names, source, quantity)
     if not scalar_name:
         _die(f"no scalar arrays found in {mesh_path}; arrays={names}")
 
@@ -917,7 +939,7 @@ def export_slice(
 
     arrow_list = []
     if arrows and not is_thermal:
-        vec_name = _pick_vector(names)
+        vec_name = _pick_vector(names, mesh)
         if vec_name:
             try:
                 n_arr = max(4, int(math.sqrt(arrow_count)))
@@ -976,6 +998,7 @@ def export_slice(
         "status": "",
         "arrays": names,
         "source": os.path.abspath(mesh_path),
+        "cycle": int(cycle) if cycle else 1,
         "from_volume_cache": False,
     }
     meta_path = os.path.join(outdir, "field_slice_meta.json")
@@ -1670,6 +1693,9 @@ def main(argv=None) -> int:
     p.add_argument("--no-arrows", action="store_true", help="Skip vector glyphs (2D slice only)")
     p.add_argument("--arrow-count", type=int, default=64)
     p.add_argument("--quantity", default=None, help="Preferred scalar array name")
+    p.add_argument("--source", default=None, choices=sorted(field_io.SOURCES),
+                   help="Field source preset (units, default field); guessed if omitted")
+    p.add_argument("--cycle", type=int, default=None, help="1-based cycle of a .pvd (2D slice)")
     p.add_argument("--scale-to-um", type=float, default=None, help="Multiply mesh coords by this to get µm")
     p.add_argument("--xmin-um", type=float, default=None, help="Crop ROI xmin (layout µm)")
     p.add_argument("--xmax-um", type=float, default=None, help="Crop ROI xmax (layout µm)")
@@ -1736,6 +1762,8 @@ def main(argv=None) -> int:
             roi_ymin_um=args.ymin_um,
             roi_ymax_um=args.ymax_um,
             auto_z=args.auto_z,
+            source=args.source,
+            cycle=args.cycle,
         )
     return 0
 

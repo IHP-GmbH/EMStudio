@@ -826,6 +826,16 @@ void MainWindow::testOpenThermalResultsInFieldView(const QString &runDir)
     openThermalResultsInFieldView(runDir);
 }
 
+QStringList MainWindow::testParseFieldChoices(const QByteArray &json)
+{
+    QStringList labels;
+    if (!parseFieldChoices(json))
+        return labels;
+    for (const FieldChoice &c : std::as_const(m_fieldChoices))
+        labels << c.label;
+    return labels;
+}
+
 QString MainWindow::testResolveKeywordsPath(const QString &simKeyLower) const
 {
     return resolveKeywordsPath(simKeyLower);

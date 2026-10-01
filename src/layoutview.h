@@ -212,6 +212,12 @@ public:
      * \brief Relabels the probe checkbox: \c Temp for Elmer Thermal, \c Probe for EM Field.
      **********************************************************************************************************************/
     void                        setFieldProbeThermal(bool thermal);
+    /*!
+     * \brief Fills the Field panel's result file / cycle picker (hidden if < 2 entries).
+     */
+    void                        setFieldChoices(const QStringList &labels, int current);
+    /*! Selected index of the result file / cycle picker, or -1. */
+    int                         fieldChoiceIndex() const;
     /*! GDS µm Y-up bounding box of non-port layout polygons (for field crop). */
     QRectF                      layoutContentBoundsUm() const;
 
@@ -241,6 +247,8 @@ signals:
     void                        fieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
     /*! User asked to jump to the hottest Z (max |E| / temperature in layout ROI). */
     void                        fieldHotZRequest();
+    /*! User picked another result file / cycle in the Field panel. */
+    void                        fieldChoiceChanged(int index);
     /*! Cursor position in GDS micrometres (Y-up). */
     void                        cursorUmChanged(qreal xUm, qreal yUm);
     /*! Measure segment in GDS micrometres; both ends valid when \a active. */
@@ -366,6 +374,7 @@ private:
     class QCheckBox            *m_fieldArrowsChk = nullptr;
     class QCheckBox            *m_fieldTempChk = nullptr;
     class QLabel               *m_fieldStatusLbl = nullptr;
+    class QComboBox            *m_fieldChoiceCombo = nullptr;
     class QTimer               *m_volumeCamSettle = nullptr; //!< Debounce volume zoom re-render
     class QTimer               *m_orbitRebuildTimer = nullptr; //!< Coalesce Iso3D orbit rebuilds
     Iso3dRebuildStats           m_lastIso3dStats;

@@ -424,6 +424,42 @@ void ElmerTest::openThermalResults_switchesToFieldView()
     QVERIFY(w.testIsFieldMode());
 }
 
+void ElmerTest::fieldChoices_parseListingAndViewerArgs()
+{
+    MainWindow w;
+
+    // field_io.py --list output: volume + boundary dump, each 6 GHz + a
+    // geometry-only cycle, plus an AMR iteration copy that must be skipped.
+    const QByteArray palace = R"json({"source":"palace","files":[
+        {"path":"/r/driven/driven.pvd","label":"V driven.pvd","amr":false,
+         "cycles":[{"label":"6 GHz (cycle 1)","geometry":false},{"label":"geometry (cycle 2)","geometry":true}]},
+        {"path":"/r/driven_boundary/driven_boundary.pvd","label":"B driven_boundary.pvd","amr":false,
+         "cycles":[{"label":"6 GHz (cycle 1)","geometry":false}]},
+        {"path":"/r/iteration1/driven/driven.pvd","label":"iteration1/driven.pvd","amr":true,
+         "cycles":[{"label":"6 GHz (cycle 1)","geometry":false}]}]})json";
+    QCOMPARE(w.testParseFieldChoices(palace),
+             QStringList({QStringLiteral("V driven.pvd"), QStringLiteral("B driven_boundary.pvd")}));
+
+    const QStringList args = w.testFieldViewerArguments(QStringLiteral("/s/field_viewer.py"),
+                                                        QStringLiteral("/r"));
+    QCOMPARE(args.first(), QStringLiteral("/s/field_viewer.py"));
+    QVERIFY(args.contains(QStringLiteral("--stdin-control")));
+    const int sel = args.indexOf(QStringLiteral("--select-file"));
+    QVERIFY(sel > 0);
+    QCOMPARE(args.at(sel + 1), QStringLiteral("/r/driven/driven.pvd"));
+    QCOMPARE(args.at(args.indexOf(QStringLiteral("--cycle")) + 1), QStringLiteral("1"));
+    QCOMPARE(args.at(args.indexOf(QStringLiteral("--run-path")) + 1), QStringLiteral("/r"));
+
+    // One file with several frequencies: entries are the cycle labels.
+    const QByteArray multi = R"json({"files":[{"path":"/r/a.pvd","label":"a.pvd","amr":false,
+        "cycles":[{"label":"5 GHz (cycle 1)","geometry":false},{"label":"7.5 GHz (cycle 2)","geometry":null}]}]})json";
+    QCOMPARE(w.testParseFieldChoices(multi),
+             QStringList({QStringLiteral("5 GHz (cycle 1)"), QStringLiteral("7.5 GHz (cycle 2)")}));
+
+    QVERIFY(w.testParseFieldChoices(QByteArrayLiteral("{\"files\":[]}")).isEmpty());
+    QVERIFY(w.testParseFieldChoices(QByteArrayLiteral("not json")).isEmpty());
+}
+
 void ElmerTest::generateScript_elmerThermalFromGui()
 {
     MainWindow w;

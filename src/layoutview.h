@@ -101,6 +101,12 @@ public:
         double  zToUm = 0.0;   //!< Mid-Z of To layer [µm]
         bool    hasFromZ = false;
         bool    hasToZ = false;
+        double  fromZminUm = 0.0; //!< Bottom / top of the From layer [µm] (port surface in Iso3D)
+        double  fromZmaxUm = 0.0;
+        double  toZminUm = 0.0;   //!< Bottom / top of the To (in-plane: target) layer [µm]
+        double  toZmaxUm = 0.0;
+        bool    hasFromRange = false;
+        bool    hasToRange = false;
     };
 
     /*! Top-down (2D) vs isometric extrusion (3D) preview. */
@@ -175,14 +181,28 @@ public:
      * \brief Enables or disables Field mode (Z-clip heatmap or volume).
      *
      * Field = Z-slice overlay on layout (always Top2D in this pane). 3D while
-     * Field is on emits \c fieldExternalVolumeRequested. Persists
-     * LayoutPreview/viewField and emits \c fieldModeChanged.
+     * Field is on emits \c fieldExternalVolumeRequested. Emits \c fieldModeChanged
+     * (not persisted: the Fields page owns the mode).
      *
      * \param on True to show the Field panel and request an export.
      **********************************************************************************************************************/
     void                        setFieldMode(bool on);
     /*! True while Field mode is active. */
     bool                        isFieldMode() const { return m_fieldOn; }
+    /*! Shows or hides the Field toggle button (hidden when a page owns the Field mode). */
+    void                        setFieldToggleVisible(bool visible);
+
+    /*! Zoom / pan of one page that shows this view (Substrate, Fields). */
+    struct ViewState
+    {
+        QTransform              transform;
+        QPointF                 center;          //!< Scene point at the viewport centre
+        bool                    userZoomed = false; //!< Zoomed or panned by hand (else auto-fit)
+    };
+    /*! Current zoom / pan. */
+    ViewState                   viewState() const;
+    /*! Restores a zoom / pan saved with \c viewState; an auto-fit state just refits. */
+    void                        restoreViewState(const ViewState &state);
     /*! Field+3D no longer uses an in-pane volume; always false (2D pane). */
     bool                        isFieldVolume() const { return false; }
     /*! Current orbit yaw [deg] (shared by Iso3D layout and Field volume camera). */
@@ -248,6 +268,9 @@ signals:
     void                        viewModeChanged(bool iso3d);
     /*! Field mode toggled (MainWindow should load / clear field dumps). */
     void                        fieldModeChanged(bool on);
+    /*! Shift+F: switch to (on) or away from (off) the Fields page. Without a receiver,
+     *  Shift+F toggles Field mode directly. */
+    void                        fieldPageRequested(bool on);
     /*! Field is on and user pressed 3D — open external PyVista volume window. */
     void                        fieldExternalVolumeRequested();
     /*! Z-clip or display options changed; MainWindow should re-export the slice. */

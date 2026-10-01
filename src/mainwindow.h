@@ -35,6 +35,7 @@
 #include "pythonparser.h"
 #include "sanitycheck.h"
 #include "navigationstyle.h"
+#include "layoutview.h"
 
 class QProcess;
 class QProcessEnvironment;
@@ -487,7 +488,11 @@ private:
     void                            rebuildLayerMapping();
     void                            refreshLayoutPreview();
     void                            setupLayoutLayerPanel();
-    /*! F5 Run and Ctrl+1…6 tab shortcuts (menu shortcuts are in mainwindow.ui). */
+    /*! Moves the layout + Layers pane to the Fields page (Field mode on) or back to Substrate. */
+    void                            placeLayoutPane(bool fieldsPage);
+    /*! Opens a run control page by its list title (selects the list item too). */
+    void                            showRunControlPage(const QString &title);
+    /*! F5 Run and Ctrl+1…7 page shortcuts (menu shortcuts are in mainwindow.ui). */
     void                            setupGlobalShortcuts();
     /*! Writes the Top Cell selection into the variable read_gds() uses (see pythonToEditor.cpp). */
     void                            applyTopCellToScript(QString &script, const QString &topCell);
@@ -667,6 +672,12 @@ private:
     QAction                        *m_actionAssistant = nullptr;
     QTableWidget                   *m_tblThermalObjects = nullptr;
     class LayoutLayerPanel         *m_layoutLayerPanel = nullptr;
+    QWidget                        *m_layoutPaneSplit = nullptr;   //!< Layout view + Layers, moved between pages
+    bool                            m_layoutOnFieldsPage = false;
+    bool                            m_substrateIso3d = false;       //!< Substrate's 2D/3D while on Fields
+    QString                         m_fieldNoDumpLoggedKey;         //!< Run folder whose "no field dump" note was logged
+    LayoutView::ViewState           m_substrateViewState;
+    LayoutView::ViewState           m_fieldsViewState;
     QTimer                         *m_fieldSliceDebounce = nullptr;
     qreal                           m_pendingFieldZUm = 0.0;
     bool                            m_pendingFieldLog = false;

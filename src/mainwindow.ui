@@ -496,6 +496,16 @@
         </property>
        </layout>
       </widget>
+      <widget class="QWidget" name="tabFields">
+       <attribute name="title">
+        <string>Fields</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="verticalLayoutFieldsPage">
+        <property name="spacing">
+         <number>2</number>
+        </property>
+       </layout>
+      </widget>
      </widget>
     </item>
    </layout>
@@ -592,6 +602,11 @@
        <item>
         <property name="text">
          <string>Results</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Fields</string>
         </property>
        </item>
       </widget>

@@ -182,3 +182,58 @@ def test_opacity_redraws_on_release_or_after_settling(window, app):
     slider.setValue(100)
     QTest.qWait(450)
     del window._schedule_redraw
+
+
+def test_file_switch_keeps_field_pane_when_field_exists(window, tmp_path):
+    first = window.file_path
+    grid = pv.read(first)
+    for name in ("E_real", "E_imag"):
+        grid.point_data[name] = grid.point_data[name] * 5.0
+    same_fields = str(tmp_path / "same_fields.vtu")
+    grid.save(same_fields)
+    other = pv.ImageData(dimensions=(5, 5, 5), spacing=(2, 2, 2)).cast_to_unstructured_grid()
+    other.point_data["B_real"] = np.ones((other.n_points, 3))
+    other.point_data["B_imag"] = np.ones((other.n_points, 3))
+    other_fields = str(tmp_path / "other_fields.vtu")
+    other.save(other_fields)
+
+    # A non-default field and manual settings.
+    names = [window.array_combo.itemData(i) for i in range(window.array_combo.count())]
+    names = [n for n in names if isinstance(n, str) and n]
+    chosen = next(n for n in names if n != window._current_array())
+    window._select_array(chosen)
+    window.log_scale_cb.setChecked(False)
+    window.clim_min_edit.setText("0.5")
+    window.clim_max_edit.setText("2")
+
+    window._camera_needs_reset = False
+    window.plotter.camera.position = (7.0, -5.0, 9.0)
+    window.plotter.camera.zoom(1.7)
+    camera = (window.plotter.camera.position, window.plotter.camera.parallel_scale,
+              window.plotter.camera.view_angle)
+    window.clip_slider.setValue(window.clip_slider.maximum() // 4)
+    clip = window.clip_slider.value()
+
+    window._switch_to_file(same_fields)
+    # Same model extent: view, zoom and clip plane stay.
+    assert not window._camera_needs_reset
+    assert (window.plotter.camera.position, window.plotter.camera.parallel_scale,
+            window.plotter.camera.view_angle) == camera
+    assert window.clip_slider.value() == clip
+    assert window._current_array() == chosen
+    assert not window.log_scale_cb.isChecked()
+    assert (window.clim_min_edit.text(), window.clim_max_edit.text()) == ("0.5", "2")
+
+    # The field doesn't exist there: the file's defaults (field, Log, data range).
+    window.log_scale_cb.setChecked(True)
+    window._switch_to_file(other_fields)
+    # Other extent: camera and clip plane are reset.
+    assert window._camera_needs_reset
+    assert window.clip_slider.value() == window.clip_slider.maximum() // 2
+    default_array, _cmap, default_log = field_viewer.field_io.pick_default(
+        window._full_mesh, window.source)
+    assert window._current_array() == default_array != chosen
+    assert window.log_scale_cb.isChecked() == default_log
+    assert window.clim_max_edit.text() not in ("", "2")
+
+    window._switch_to_file(first)  # the window is shared with other tests

@@ -21,6 +21,8 @@
 #include "layoutview.h"
 #include "appsettings.h"
 
+#include <QMetaMethod>
+
 #include <algorithm>
 
 #include <QPen>
@@ -989,19 +991,8 @@ void LayoutView::rebuildScene3D(bool refit)
         if (!isPort)
             continue;
 
-        QPointF c(0, 0);
-        int nPts = 0;
-        const int n = it.poly.pointsUm.size();
-        const int count = (n > 1 && it.poly.pointsUm.first() == it.poly.pointsUm.last())
-                ? n - 1 : n;
-        for (int i = 0; i < count; ++i) {
-            c += it.poly.pointsUm.at(i);
-            ++nPts;
-        }
-        if (nPts < 1)
-            continue;
-        c /= nPts;
-
+        // Port surface as gds2palace builds it, from the polygon's bounding box.
+        const QRectF bb = it.poly.pointsUm.boundingRect();
         const PortInfo pi = m_ports.value(it.poly.layer);
         QString dir = pi.direction.trimmed().toLower();
         if (dir.isEmpty())
@@ -1013,51 +1004,131 @@ void LayoutView::rebuildScene3D(bool refit)
                 ? QStringLiteral("P%1").arg(it.poly.layer - 200)
                 : it.style.name;
 
+        // Translucent sheet (or a line when it has no area) under the arrow.
+        auto addPortSheet = [&](const QPolygonF &scenePoly) {
+            QGraphicsItem *sheet = nullptr;
+            QPen pen(col);
+            pen.setCosmetic(true);
+            qreal area2 = 0.0;  // twice the signed area (shoelace)
+            for (int i = 0; i < scenePoly.size(); ++i) {
+                const QPointF &p = scenePoly.at(i);
+                const QPointF &q = scenePoly.at((i + 1) % scenePoly.size());
+                area2 += p.x() * q.y() - q.x() * p.y();
+            }
+            const QRectF sb = scenePoly.boundingRect();
+            if (std::abs(area2) < 1e-6 * std::max<qreal>(1e-12, sb.width() * sb.width() + sb.height() * sb.height())) {
+                // Zero-area surface (seen edge-on, or a zero-width line): a thick line.
+                QPointF a = scenePoly.first(), b = scenePoly.first();
+                qreal best = -1.0;
+                for (const QPointF &p : scenePoly)
+                    for (const QPointF &q : scenePoly) {
+                        const qreal d = std::hypot(p.x() - q.x(), p.y() - q.y());
+                        if (d > best) { best = d; a = p; b = q; }
+                    }
+                pen.setWidth(kPortPenWidth);
+                pen.setCapStyle(Qt::FlatCap);
+                sheet = m_scene->addLine(QLineF(a, b), pen);
+            } else {
+                pen.setWidth(2);
+                QColor fill = it.style.color;
+                fill.setAlpha(qBound(20, int(110 * op + 0.5), 255));
+                sheet = m_scene->addPolygon(scenePoly, pen, QBrush(fill));
+            }
+            sheet->setData(kRoleName, pname);
+            sheet->setData(kRoleKind, QStringLiteral("port"));
+            sheet->setData(kRoleGds, it.poly.layer);
+            sheet->setData(kRoleIsPort, true);
+            sheet->setData(kRolePen, it.style.color);
+            sheet->setToolTip(tr("%1 port surface").arg(pname));
+            sheet->setVisible(vis);
+            sheet->setZValue(1e9 - 0.5);
+            portBounds |= scenePoly.boundingRect();
+        };
+
         QPointF tipScene;
         QPointF labelPos;
 
         if (dir.contains(QLatin1Char('z'))) {
+            // Via port: vertical sheet from the top of the lower metal to the bottom of the
+            // upper one, on the xmin edge (polygon taller in y) or the ymin edge.
+            // The arrow points from From to To; -z reverses it (so swapping From/To does too).
             const bool neg = dir.startsWith(QLatin1Char('-'));
-            qreal zFrom = 0.0;
-            qreal zTo = 0.0;
-            bool gotFrom = pi.hasFromZ;
-            bool gotTo = pi.hasToZ;
-            if (gotFrom)
-                zFrom = pi.zFromUm;
-            else
-                gotFrom = layerMidZ(pi.fromLayer, &zFrom);
-            if (gotTo)
-                zTo = pi.zToUm;
-            else
-                gotTo = layerMidZ(pi.toLayer, &zTo);
-
-            if (gotFrom && !gotTo)
-                zTo = zFrom + 0.5;
-            else if (!gotFrom && gotTo)
-                zFrom = zTo - 0.5;
-            else if (!gotFrom && !gotTo) {
-                zFrom = 0.5 * (zLo + zHi) - 0.25;
-                zTo = zFrom + 0.5;
+            qreal zA = 0.0;      // lower end of the sheet
+            qreal zB = 0.0;      // upper end
+            bool toAbove = true; // To layer above From
+            if (pi.hasFromRange && pi.hasToRange) {
+                toAbove = pi.toZminUm >= pi.fromZminUm;
+                zA = toAbove ? pi.fromZmaxUm : pi.toZmaxUm;
+                zB = toAbove ? pi.toZminUm : pi.fromZminUm;
+            } else {
+                qreal zFrom = 0.0;
+                qreal zTo = 0.0;
+                bool gotFrom = pi.hasFromZ;
+                bool gotTo = pi.hasToZ;
+                if (gotFrom)
+                    zFrom = pi.zFromUm;
+                else
+                    gotFrom = layerMidZ(pi.fromLayer, &zFrom);
+                if (gotTo)
+                    zTo = pi.zToUm;
+                else
+                    gotTo = layerMidZ(pi.toLayer, &zTo);
+                if (gotFrom && !gotTo)
+                    zTo = zFrom + 0.5;
+                else if (!gotFrom && gotTo)
+                    zFrom = zTo - 0.5;
+                else if (!gotFrom && !gotTo) {
+                    zFrom = 0.5 * (zLo + zHi) - 0.25;
+                    zTo = zFrom + 0.5;
+                }
+                toAbove = zTo >= zFrom;
+                zA = std::min(zFrom, zTo);
+                zB = std::max(zFrom, zTo);
             }
+            if (zB - zA < 0.05)
+                zB = zA + 0.05;
 
-            if (qAbs(zTo - zFrom) < 0.05)
-                zTo = zFrom + (neg ? -0.05 : 0.05);
-            const qreal zTip = neg ? zFrom : zTo;
-            const qreal zTail = neg ? zTo : zFrom;
+            QPointF s0, s1;  // sheet edge in XY [µm]
+            if (bb.height() > bb.width()) {
+                s0 = QPointF(bb.left(), bb.top());
+                s1 = QPointF(bb.left(), bb.bottom());
+            } else {
+                s0 = QPointF(bb.left(), bb.top());
+                s1 = QPointF(bb.right(), bb.top());
+            }
+            addPortSheet(QPolygonF({project3D(s0.x(), s0.y(), zA), project3D(s1.x(), s1.y(), zA),
+                                    project3D(s1.x(), s1.y(), zB), project3D(s0.x(), s0.y(), zB)}));
+
+            const QPointF c = 0.5 * (s0 + s1);
+            const bool up = (toAbove != neg);
+            const qreal zTip = up ? zB : zA;
+            const qreal zTail = up ? zA : zB;
             tipScene = project3D(c.x(), c.y(), zTip);
             const QPointF tailScene = project3D(c.x(), c.y(), zTail);
             addPortArrowAlong(tailScene, tipScene, col, pname, QStringLiteral("port"),
                               it.poly.layer, vis, 1e9,
-                              neg ? QStringLiteral("-z") : QStringLiteral("z"));
+                              QStringLiteral("%1 (%2 → %3)").arg(neg ? QStringLiteral("-z")
+                                                                     : QStringLiteral("z"),
+                                                                 pi.fromLayer, pi.toLayer));
             labelPos = project3D(c.x(), c.y(), 0.5 * (zTail + zTip));
         } else {
+            // In-plane port: the bounding rectangle at the bottom of the target metal.
             qreal zMark = 0.5 * (zLo + zHi);
-            if (pi.hasFromZ && pi.hasToZ)
+            if (pi.hasToRange)
+                zMark = pi.toZminUm;
+            else if (pi.hasFromZ && pi.hasToZ)
                 zMark = 0.5 * (pi.zFromUm + pi.zToUm);
             else if (pi.hasToZ)
                 zMark = pi.zToUm;
             else if (pi.hasFromZ)
                 zMark = pi.zFromUm;
+
+            addPortSheet(QPolygonF({project3D(bb.left(), bb.top(), zMark),
+                                    project3D(bb.right(), bb.top(), zMark),
+                                    project3D(bb.right(), bb.bottom(), zMark),
+                                    project3D(bb.left(), bb.bottom(), zMark)}));
+
+            const QPointF c = bb.center();
             qreal dx = 1.0, dy = 0.0;
             QString dirLabel = QStringLiteral("x");
             if (dir == QLatin1String("-x")) {
@@ -1351,7 +1422,7 @@ void LayoutView::onFieldButtonToggled(bool on)
  * \brief Enables or disables Field mode (Z-clip heatmap overlay).
  *
  * Layout pane stays Top2D; Iso3D geometry preview is turned off while Field is
- * on. Persists LayoutPreview/viewField and emits \c fieldModeChanged.
+ * on. Emits \c fieldModeChanged.
  *
  * \param on True to enter Field mode.
  **********************************************************************************************************************/
@@ -1824,7 +1895,7 @@ void LayoutView::repositionFloatingControls()
         m_modeBtn->raise();
         x -= m;
     }
-    if (m_fieldBtn) {
+    if (m_fieldBtn && !m_fieldBtn->isHidden()) {
         x -= m_fieldBtn->width();
         m_fieldBtn->move(x, m);
         m_fieldBtn->raise();
@@ -1837,15 +1908,62 @@ void LayoutView::repositionFloatingControls()
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Shows or hides the Field toggle button.
+ *
+ * MainWindow hides it: the Fields page turns Field mode on and the Substrate page turns it off.
+ *
+ * \param visible True to show the button.
+ **********************************************************************************************************************/
+void LayoutView::setFieldToggleVisible(bool visible)
+{
+    if (!m_fieldBtn)
+        return;
+    m_fieldBtn->setVisible(visible);
+    repositionFloatingControls();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Current zoom / pan, to be restored when the page that shows this view comes back.
+ * \return Transform, centre scene point and whether the user zoomed by hand.
+ **********************************************************************************************************************/
+LayoutView::ViewState LayoutView::viewState() const
+{
+    ViewState st;
+    st.transform = transform();
+    st.center = mapToScene(viewport()->rect().center());
+    st.userZoomed = m_zoomLocked;
+    return st;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Restores a zoom / pan from \c viewState.
+ *
+ * A state the user never zoomed keeps the automatic fit instead.
+ *
+ * \param state Saved state.
+ **********************************************************************************************************************/
+void LayoutView::restoreViewState(const ViewState &state)
+{
+    if (!state.userZoomed) {
+        m_zoomLocked = false;
+        fitPreferredContent();
+        return;
+    }
+    setTransform(state.transform);
+    centerOn(state.center);
+    m_zoomLocked = true;
+}
+
 void LayoutView::loadViewModeFromSettings()
 {
     QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     const bool v3d = settings.value(QStringLiteral("view3d"), false).toBool();
-    const bool vField = settings.value(QStringLiteral("viewField"), false).toBool();
     const bool showTemp = settings.value(QStringLiteral("fieldShowTemp"), true).toBool();
     settings.endGroup();
-    m_fieldOn = vField;
+    // Field mode isn't restored: the Fields page turns it on (MainWindow::placeLayoutPane).
+    m_fieldOn = false;
     m_viewMode = v3d ? ViewMode::Iso3D : ViewMode::Top2D;
     if (m_fieldTempChk) {
         const QSignalBlocker block(m_fieldTempChk);
@@ -1857,8 +1975,10 @@ void LayoutView::saveViewModeToSettings() const
 {
     QSettings settings = emstudioSettings();
     settings.beginGroup(QStringLiteral("LayoutPreview"));
-    settings.setValue(QStringLiteral("view3d"), m_viewMode == ViewMode::Iso3D);
-    settings.setValue(QStringLiteral("viewField"), m_fieldOn);
+    // view3d is the layout preference; Field mode forces Top2D and must not overwrite it.
+    if (!m_fieldOn)
+        settings.setValue(QStringLiteral("view3d"), m_viewMode == ViewMode::Iso3D);
+    settings.remove(QStringLiteral("viewField"));
     settings.endGroup();
 }
 
@@ -2345,7 +2465,10 @@ bool LayoutView::handleViewKey(QKeyEvent *event)
         return true;
     case Qt::Key_F:
         if (shift) {
-            setFieldMode(!m_fieldOn);
+            if (isSignalConnected(QMetaMethod::fromSignal(&LayoutView::fieldPageRequested)))
+                emit fieldPageRequested(!m_fieldOn);
+            else
+                setFieldMode(!m_fieldOn);
             return true;
         }
         if (!plain)

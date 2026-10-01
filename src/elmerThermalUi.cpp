@@ -197,21 +197,18 @@ void MainWindow::openThermalResultsInFieldView(const QString &runDir)
                 .toUtf8());
     } else {
         appendToSimulationLog(
-            QStringLiteral("\n[Field] Opening thermal results in Layout Field (2D) on Substrate:\n  %1\n")
+            QStringLiteral("\n[Field] Opening thermal results on the Fields page:\n  %1\n")
                 .arg(vtu)
                 .toUtf8());
     }
 
-    const int subIdx = m_tabMap.value(QStringLiteral("Substrate"), -1);
-    if (subIdx >= 0)
-        showTab(subIdx);
-
     if (!m_ui || !m_ui->layoutView)
         return;
 
-    if (!m_ui->layoutView->isFieldMode())
-        m_ui->layoutView->setFieldMode(true);
-    else
+    // The Fields page turns Field mode on; when it is already open, just reload the slice.
+    const bool wasOpen = m_ui->layoutView->isFieldMode();
+    showRunControlPage(QStringLiteral("Fields"));
+    if (wasOpen)
         scheduleFieldOverlayRefresh(true);
 
     // Optional: also open the external Field 3D PyVista window when Python is available.

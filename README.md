@@ -144,12 +144,13 @@ and **Elmer Thermal** (steady-state heat conduction).
 - Project page: https://www.elmerfem.org/
 - Source / downloads: https://github.com/ElmerCSC/elmerfem
 
-For thermal / EM field visualization after a successful run, EMStudio opens the **Substrate**
-tab and turns on **Field** (2D Z-clip heatmap). If `FIELD_VIEWER_PYTHON` is set, it also
-opens the interactive PyVista **Field 3D** window (no ParaView). You can open 3D later with
-the **3D** button while Field is on.
+Field results have their own **Fields** page in the Run Control list (after Results): the
+layout with the 2D Z-clip heatmap and the Layers panel. After a successful Elmer Thermal run
+EMStudio opens it automatically; if `FIELD_VIEWER_PYTHON` is set, it also opens the interactive
+PyVista **Field 3D** window (no ParaView). You can open 3D later with the **3D** button on the
+Fields page.
 
-**Layout Field** (2D Z-clip on the Substrate layout pane):
+**Layout Field** (2D Z-clip on the Fields page):
 
 <img src="./doc/png/field.png" alt="Layout Field Z-clip heatmap on Substrate" width="700">
 
@@ -345,8 +346,9 @@ Floating controls on the layout preview (top-right):
 
 | Control | Role |
 | --- | --- |
-| **2D / 3D** | Without Field: top view vs isometric layout extrusion. With **Field** on: the pane stays 2D; **3D** opens the separate Field 3D viewer window. |
-| **Field** | Z-clip heatmap overlay of a field dump (layout pane stays top-down). |
+| **2D / 3D** | On Substrate: top view vs isometric layout extrusion. On the **Fields** page the layout stays 2D with the field heatmap; **3D** opens the separate Field 3D viewer window. |
+
+The Substrate and Fields pages share one layout view (same layer visibility and opacity); each page keeps its own zoom.
 
 **Navigation and key bindings.** **Setup → Key Bindings…** picks one mouse navigation style for the layout preview and the Field 3D viewer, and lists every binding:
 
@@ -358,19 +360,19 @@ Floating controls on the layout preview (top-right):
 | Right drag | 3D: orbit | zoom (drag up = in) |
 | Middle, Shift+left or Alt+left drag | pan | pan |
 
-Keys (click the view first): **F** fit, **Home** everything, **+ / −** zoom, arrows pan, **2 / 3** top view / 3D, **R** reset, **I** isometric, **X / Y / Z** axis views (Shift: negative side; Shift+Z looks from below), **M** measure ruler (or Ctrl+Shift+click), **Esc** clears, **Ctrl+C** copies the view. With Field on: **Shift+F** Field on/off, **PgUp / PgDn** Z slice, **L** log, **P** probe, **3** opens Field 3D. Window-wide: **Ctrl+O** load, **Ctrl+S** / **Ctrl+Shift+S** save, **F5** run, **Ctrl+1…6** tabs, **Ctrl+,** preferences, **F1** about.
+Keys (click the view first): **F** fit, **Home** everything, **+ / −** zoom, arrows pan, **2 / 3** top view / 3D, **R** reset, **I** isometric, **X / Y / Z** axis views (Shift: negative side; Shift+Z looks from below), **M** measure ruler (or Ctrl+Shift+click), **Esc** clears, **Ctrl+C** copies the view. **Shift+F** switches between Substrate and Fields. On Fields: **PgUp / PgDn** Z slice, **L** log, **P** probe, **3** opens Field 3D. Window-wide: **Ctrl+O** load, **Ctrl+S** / **Ctrl+Shift+S** save, **F5** run, **Ctrl+1…7** pages, **Ctrl+,** preferences, **F1** about.
 
 **Field view** (requires a host Python with PyVista + Pillow):
 
 1. Run a simulation that writes field dumps: Palace `fdump` (`.pvd`), Elmer EM field dump (`fields_t*.vtu/.pvtu`), openEMS frequency-domain dump boxes (`*_abs.vtr` + `*_arg.vtr`), or Elmer Thermal (`thermal_results*.vtu`).
-2. On the Substrate tab, click **Field** (after a successful **Elmer Thermal** run this happens automatically at max-T Z).
+2. Open the **Fields** page (after a successful **Elmer Thermal** run this happens automatically at max-T Z).
 3. On first open, EMStudio auto-picks a “hot” Z (strongest field / max temperature), then exports a PNG via `scripts/field_slice_export.py`. The default field is |E| for EM runs and temperature for thermal runs.
 4. If the run has several result files or frequencies, pick one in the combo box at the top of the Field panel (e.g. `driven.pvd`, `6 GHz (cycle 1)`, `fields_t0002.vtu - 7.5 GHz`, `Ef - 10 GHz`).
 5. Drag the **Z** slider, use **Max**, optional **Log** / **Arrows**.
 
 **Field → 3D** (separate OS window):
 
-1. With Field on, click **3D**. EMStudio shows a short splash, then starts `scripts/field_viewer.py` for the whole run, with the file / frequency chosen in the Field panel preselected. Clicking **3D** again while the window is open brings it to the front (and switches to the current choice).
+1. On the Fields page, click **3D**. EMStudio shows a short splash, then starts `scripts/field_viewer.py` for the whole run, with the file / frequency chosen in the Field panel preselected. Clicking **3D** again while the window is open brings it to the front (and switches to the current choice).
 2. The viewer offers every result file of the run (volume / boundary dumps, excitations, frequencies; AMR iterations on request), a **Cycle** picker for multi-frequency `.pvd` files, and a grouped **Field** list with physical names and units (|E|, |B|, |H|, |J_s| magnitudes, real / imaginary parts, S, U_e, temperature, …).
 3. **Clip Plane**: X / Y / Z plane with a fine slider, **Find max.** jumps to the field maximum, **2D plane only** shows just the section. Clipping runs in the background, so large dumps do not freeze the window.
 4. **Display** / **Field**: opacity, mesh overlay, legend, log scale (Min is then a dropdown, -10 … -70 dB below Max, default -70 dB), Min / Max with **Reset range to data**, and direction arrows for vector fields. **View**: ±X/±Y/±Z buttons (parallel projection) with the cut face turned toward the camera. **Ctrl+C** or right-click copies the 3D view. Mouse navigation follows **Setup → Key Bindings**; keys: **R / F / Home** reset camera, **I** isometric, **X / Y / Z** axis views (Shift: negative side), **+ / −** zoom, arrows pan, **O** parallel projection, **M** find max., **A** arrows, **PgUp / PgDn** clip plane.
@@ -423,7 +425,7 @@ When creating ports entries from scratch, there is a checkbox "Use Substrate Lay
 
 In the GDSII file, in-plane ports (X or Y direction) must be drawn as a rectangle for openEMS and Palace workflow. Vertical ports (Z direction) can be drawn as a zero area box (line) for Palace and openEMS. In addition, openEMS also allows via ports to have an area. 
 
-When **Elmer Thermal** is selected as the simulation tool, the Ports tab becomes **Thermal**. Instead of EM ports you define thermal objects (heat sources in Watts and constant-temperature boundaries in Kelvin), each with a GDS marker layer and a target stackup layer. After a successful solve, EMStudio switches to the **Substrate** tab and opens **Field** (2D) at max temperature Z; if `FIELD_VIEWER_PYTHON` is set it also launches **Field 3D** (see [Elmer (EM and Thermal)](#elmer-em-and-thermal) and Layout Field above).
+When **Elmer Thermal** is selected as the simulation tool, the Ports tab becomes **Thermal**. Instead of EM ports you define thermal objects (heat sources in Watts and constant-temperature boundaries in Kelvin), each with a GDS marker layer and a target stackup layer. After a successful solve, EMStudio opens the **Fields** page (2D) at max temperature Z; if `FIELD_VIEWER_PYTHON` is set it also launches **Field 3D** (see [Elmer (EM and Thermal)](#elmer-em-and-thermal) and Layout Field above).
 
 ## Simulate
 
@@ -478,7 +480,7 @@ select **meas** as `$1` and **open** as `$2` (or evaluate an already written `*_
 
 <img src="./doc/png/results1.png" alt="Results viewer S-parameters" width="700">
 
-For **Elmer Thermal**, the Results tab is hidden — temperature fields are viewed on the Substrate tab via **Field**
+For **Elmer Thermal**, the Results tab is hidden — temperature fields are viewed on the **Fields** page
 (see the Thermal section above).
 
 --
@@ -574,14 +576,14 @@ Typical ingredients:
 - Stackup XML with thermal conductivity (and optional temperature tables)  
 - GDS marker layers for heatsource / consttemp objects  
 - Python model using `create_elmer_thermal`  
-- Results: `thermal_results*.vtu` (Layout Field on Substrate) and `thermal_results.dat` (min/max T)
+- Results: `thermal_results*.vtu` (Fields page) and `thermal_results.dat` (min/max T)
 
 ### Using with EMStudio
 
 1. Set **Simulation Tool** to **Elmer Thermal**  
 2. Configure `ELMER_SOLVER_PATH`, `ELMER_PYTHON` (Python ≥ 3.12 recommended), and `FIELD_VIEWER_PYTHON` (PyVista)  
 3. Open or generate a thermal Python model, set GDS + XML, define Thermal objects  
-4. Run from the Simulate tab — on success, Substrate opens with Field (2D); Field 3D opens too if `FIELD_VIEWER_PYTHON` is set  
+4. Run from the Simulate tab — on success, the Fields page opens (2D); Field 3D opens too if `FIELD_VIEWER_PYTHON` is set  
 
 (See the Elmer Thermal screenshot under [Elmer (EM and Thermal)](#elmer-em-and-thermal).)
 

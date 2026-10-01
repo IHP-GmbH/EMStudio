@@ -162,6 +162,43 @@ static void replaceAnyDictVar(QString &script, const QString &key, const QString
 }
 
 /*!*******************************************************************************************************************
+ * \brief Converts a text cell of the Simulation Settings grid into a Python right-hand side.
+ *
+ * A value that was a quoted string literal in the script is written back quoted.
+ * Anything else (lists such as \c [10e9], references such as \c settings['fstop'],
+ * \c None) is a raw expression and written as typed. For \c fdump a bare value
+ * such as \c 10e9 is wrapped into a list and an empty cell means \c [].
+ *
+ * \param key    Setting key.
+ * \param text   Cell text.
+ * \param quoted True if the script had a quoted string literal for \a key.
+ * \param out    Receives the Python expression.
+ * \return False if nothing should be written (empty raw expression).
+ **********************************************************************************************************************/
+static bool textSettingToPython(const QString &key, const QString &text, bool quoted, QString *out)
+{
+    if (quoted) {
+        QString v = text;
+        v.replace(QLatin1Char('\\'), QStringLiteral("\\\\"));
+        v.replace(QLatin1Char('\''), QStringLiteral("\\'"));
+        *out = QLatin1Char('\'') + v + QLatin1Char('\'');
+        return true;
+    }
+
+    QString expr = text.simplified(); // one line, the script edit is line-based
+    if (key.compare(QLatin1String("fdump"), Qt::CaseInsensitive) == 0) {
+        if (expr.isEmpty())
+            expr = QStringLiteral("[]");
+        else if (!expr.startsWith(QLatin1Char('[')))
+            expr = QLatin1Char('[') + expr + QLatin1Char(']');
+    }
+    if (expr.isEmpty())
+        return false;
+    *out = expr;
+    return true;
+}
+
+/*!*******************************************************************************************************************
  * \brief Automatically enables the "SubLayer Names" option when substrate and ports are available.
  *
  * This helper checks whether a substrate file is loaded and at least one port
@@ -392,6 +429,18 @@ void MainWindow::applyOneSettingToScript(QString &script,
         }
     } else if (isFilePathSetting(key, val)) {
         pyValue = toPythonQuotedPath(val.toString());
+    } else if (val.type() == QVariant::String) {
+        // Text cells (lists, expressions, string literals) used to be skipped,
+        // so edits were lost when Save re-read the script. Unchanged cells are
+        // left alone to keep the script's own formatting.
+        const QVariant inScript = m_curPythonData.settings.contains(key)
+                ? m_curPythonData.settings.value(key)
+                : m_curPythonData.topLevel.value(key);
+        if (val.toString().trimmed() == inScript.toString().trimmed())
+            return;
+        if (!textSettingToPython(key, val.toString(),
+                                 m_curPythonData.quotedStrings.contains(key), &pyValue))
+            return;
     } else {
         if (!variantToPythonLiteral(val, &pyValue))
             return;

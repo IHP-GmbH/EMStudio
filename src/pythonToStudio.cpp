@@ -23,6 +23,7 @@
 #include <QDebug>
 #include <QAction>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QFileInfo>
 #include <QSettings>
 #include <QJsonArray>
@@ -609,10 +610,17 @@ bool MainWindow::shouldSkipStringSelfReference(const QString &key, const PalaceP
         return false;
 
     const QString s = info.value.toString();
-    if (key == s || s.contains(QLatin1Char('.')))
+    if (key == s)
         return true;
 
-    return false;
+    // Quoted strings with a '.' are file names, handled by the file settings.
+    if (m_curPythonData.quotedStrings.contains(key))
+        return s.contains(QLatin1Char('.'));
+
+    // Raw expressions: hide attribute access / calls (os.path..., foo.bar),
+    // but keep lists and numbers such as [1.5e9].
+    static const QRegularExpression reAttrOrCall(QStringLiteral(R"([A-Za-z_]\w*\s*[.(])"));
+    return reAttrOrCall.match(s).hasMatch();
 }
 
 /*!*******************************************************************************************************************

@@ -2,6 +2,8 @@
 
 #include <QtTest/QtTest>
 #include <QFile>
+#include <QRegularExpression>
+#include <QTemporaryDir>
 #include <QGraphicsView>
 #include <QKeyEvent>
 #include <QListWidget>
@@ -650,6 +652,56 @@ void MainWindowPortsTest::saveAction_writesScriptToFile_and_updatesState()
     QVERIFY2(!saved.trimmed().isEmpty(), "Saved script is empty");
 
     QFile::remove(savePath);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Text cells of the Simulation Settings grid (fdump list, other lists, quoted strings)
+ *        must survive Save: they used to be skipped when writing the script and then
+ *        reverted by the re-parse that Save does.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::saveAction_keepsEditedTextSettings()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QVERIFY(w.testInitDefaultPalaceModel());
+    // A quoted string setting next to the template's list settings.
+    w.testSetEditorText(w.testEditorText()
+                        + QStringLiteral("\nsettings['solver_note'] = \"direct\"  # keep comment\n"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString savePath = dir.filePath(QStringLiteral("text_settings_model.py"));
+    w.testSetRunPythonScriptLinePath(savePath);
+    w.testTriggerSave(); // parses the model into the grid
+
+    auto readSaved = [&]() {
+        QFile f(savePath);
+        return f.open(QIODevice::ReadOnly | QIODevice::Text) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+    QVERIFY(readSaved().contains(QStringLiteral("settings['solver_note'] = \"direct\"")));
+
+    // Edit like the grid does: text values for text cells.
+    w.testSetSimSetting(QStringLiteral("fdump"), QStringLiteral("10e9"));            // bare value -> list
+    w.testSetSimSetting(QStringLiteral("fpoint"), QStringLiteral("[1.5e9, 2e9]"));   // list with '.'
+    w.testSetSimSetting(QStringLiteral("solver_note"), QStringLiteral("it's iterative"));
+    w.testTriggerSave();
+
+    const QString saved = readSaved();
+    QVERIFY2(saved.contains(QRegularExpression(QStringLiteral(R"(settings\['fdump'\]\s*=\s*\[10e9\])"))),
+             qPrintable(saved));
+    QVERIFY2(saved.contains(QRegularExpression(QStringLiteral(R"(settings\['fpoint'\]\s*=\s*\[1\.5e9, 2e9\])"))),
+             qPrintable(saved));
+    QVERIFY2(saved.contains(QStringLiteral("settings['solver_note'] = 'it\\'s iterative'  # keep comment")),
+             qPrintable(saved));
+    // Untouched list cells keep the script's own text.
+    QVERIFY(saved.contains(QRegularExpression(QStringLiteral(R"(settings\['purpose'\]\s*=\s*\[0\])"))));
+
+    // A third Save (values now come from the re-parse) must not change anything.
+    w.testTriggerSave();
+    QCOMPARE(readSaved(), saved);
 }
 
 void MainWindowPortsTest::collectSanityFindings_reportsMissingInputs()

@@ -329,7 +329,9 @@ MainWindow::MainWindow(QWidget *parent)
     initRecentMenu();
     setupSettingsPanel();
     setupGlobalShortcuts();
+    setupNewModelMenu();
     applyNavigationStyle();
+    applyLayoutPreviewPreferences();
 
     connect(m_ui->editRunPythonScript, &PythonEditor::sigFontSizeChanged,
             this, [=](qreal newSize){
@@ -447,15 +449,13 @@ void MainWindow::onTopCellChanged(const QString &text)
     // Keep Simulation Settings properties in sync when the model exposes them.
     if (m_simSettingsGroup && m_variantManager) {
         QSignalBlocker blocker(m_variantManager);
-        for (QtProperty *prop : m_simSettingsGroup->subProperties()) {
-            if (!prop)
-                continue;
+        forEachSimSettingProperty([&](QtProperty *prop) {
             const QString name = prop->propertyName();
             if (name.compare(QLatin1String("cellname"), Qt::CaseInsensitive) == 0
                 || name.compare(QLatin1String("gds_cellname"), Qt::CaseInsensitive) == 0) {
                 m_variantManager->setValue(prop, top);
             }
-        }
+        });
     }
 
     QString script = m_ui->editRunPythonScript->toPlainText();
@@ -1606,6 +1606,7 @@ void MainWindow::refreshSimToolOptions()
     updateBoundaryOptionsForCurrentTool();
     updateExcitationUiForCurrentTool();
     updateEditStackupButtonState();
+    updateNewModelActions();
 }
 
 /*!*******************************************************************************************************************
@@ -3404,6 +3405,16 @@ void MainWindow::setupSettingsPanel()
         m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), QLatin1String("Simulation Settings"));
     m_simSettingsGroup = simGroup;
 
+    // Remember which settings topics the user collapsed (restored after each grid rebuild).
+    connect(m_propertyBrowser, &QtTreePropertyBrowser::collapsed, this, [this](QtBrowserItem *item) {
+        if (!m_rebuildingSettingsGrid && item && m_settingTopicGroups.contains(item->property()))
+            m_collapsedSettingTopics.insert(item->property()->propertyName());
+    });
+    connect(m_propertyBrowser, &QtTreePropertyBrowser::expanded, this, [this](QtBrowserItem *item) {
+        if (!m_rebuildingSettingsGrid && item && m_settingTopicGroups.contains(item->property()))
+            m_collapsedSettingTopics.remove(item->property()->propertyName());
+    });
+
     const QString simTool =
         m_preferences.value(QLatin1String("SIMULATION_TOOL_KEY"), QLatin1String("OpenEMS")).toString();
 
@@ -3505,6 +3516,10 @@ void MainWindow::onSimulationSettingChanged(QtProperty* property, const QVariant
     if (!property || !m_variantManager || !m_propertyBrowser)
         return;
 
+    // Topic groups of the settings grid carry no value.
+    if (m_settingTopicGroups.contains(property))
+        return;
+
     const QString name = property->propertyName();
 
     static const QSet<QString> boundarySides = {
@@ -3536,6 +3551,9 @@ void MainWindow::onSimulationSettingChanged(QtProperty* property, const QVariant
         }
     } else {
         m_simSettings[name] = value;
+        // The preview shows vias merged like the workflow does.
+        if (settingKeyword(name) == QLatin1String("merge_polygon_size") && m_ui->layoutView)
+            m_ui->layoutView->setViaMergeSize(currentViaMergeSize());
     }
 
     updateBoundaryTooltipsForCurrentTool();
@@ -3690,6 +3708,17 @@ void MainWindow::updateSimulationSettings()
                 }
             }
         }
+        else if (groupProp == m_simSettingsGroup) {
+            forEachSimSettingProperty([&](QtProperty *prop) {
+                const QString name = prop->propertyName();
+                if (m_simSettings.contains(name)) {
+                    QVariant val = m_simSettings.value(name);
+
+                    if (val.isValid())
+                        m_variantManager->setValue(prop, val);
+                }
+            });
+        }
         else {
             for (QtProperty* prop : subProps) {
                 const QString name = prop->propertyName();
@@ -3831,7 +3860,7 @@ void MainWindow::updateGdsUserInfo()
         if (desired.isEmpty()) {
             top = m_ui->cbxTopCell->currentText().trimmed();
             topWasResolved = true;
-        } else {
+        } else if (!m_importingModelGds) {
             info(QString("TopCell '%1' not found in GDS; the script falls back to the top cell '%2'.")
                      .arg(desired, m_gdsTopCell));
         }
@@ -4224,14 +4253,7 @@ void MainWindow::on_btnRemovePorts_clicked()
  **********************************************************************************************************************/
 void MainWindow::on_btnSubstrate_clicked()
 {
-    QString defaultDir = QDir::homePath();
-
-    if (m_sysSettings.contains("SubstrateDir")) {
-        QString dirPath = m_sysSettings["SubstrateDir"].toString();
-        if (QDir(dirPath).exists()) {
-            defaultDir = dirPath;
-        }
-    }
+    const QString defaultDir = stackupDialogStartDir();
 
     QString filePath = QFileDialog::getOpenFileName(
         this,
@@ -4733,6 +4755,7 @@ void MainWindow::refreshLayoutPreview()
         }
     }
 
+    m_ui->layoutView->setViaMergeSize(currentViaMergeSize());
     m_ui->layoutView->setPolygons(polys, styles, ports);
 
     // New GDS / top cell / stackup → drop the previous Field heatmap so it cannot
@@ -4761,6 +4784,25 @@ void MainWindow::refreshLayoutPreview()
         QVector<LayoutLayerPanel::Entry> entries;
         QSet<int> listed;
 
+        // Port / thermal marker layers whose stackup layers are known (else: guessed position).
+        QSet<int> mappedMarkers;
+        for (auto it = ports.constBegin(); it != ports.constEnd(); ++it) {
+            const LayoutView::PortInfo &pi = it.value();
+            const bool via = pi.direction.contains(QLatin1Char('z'), Qt::CaseInsensitive);
+            if (via ? (pi.hasFromRange && pi.hasToRange) : pi.hasToRange)
+                mappedMarkers.insert(it.key());
+        }
+        if (isElmerThermalKey(currentSimToolKey()) && m_tblThermalObjects) {
+            for (int r = 0; r < m_tblThermalObjects->rowCount(); ++r) {
+                const QTableWidgetItem *src = m_tblThermalObjects->item(r, 2);
+                auto *tgt = qobject_cast<QComboBox *>(m_tblThermalObjects->cellWidget(r, 3));
+                bool ok = false;
+                const int gds = src ? src->text().trimmed().toInt(&ok) : -1;
+                if (ok && tgt && !tgt->currentText().trimmed().isEmpty())
+                    mappedMarkers.insert(gds);
+            }
+        }
+
         auto addEntry = [&](int gds, const LayoutView::LayerStyle &st, bool used) {
             if (listed.contains(gds))
                 return;
@@ -4773,6 +4815,7 @@ void MainWindow::refreshLayoutPreview()
             e.used = used;
             e.visible = m_ui->layoutView->isLayerVisible(gds);
             e.opacity = m_ui->layoutView->layerOpacity(gds);
+            e.unmapped = used && st.kind == QLatin1String("port") && !mappedMarkers.contains(gds);
             entries.append(e);
         };
 
@@ -5028,6 +5071,8 @@ void MainWindow::on_actionPrefernces_triggered()
     Preferences dlg(m_preferences, this);
     dlg.exec();
 
+    m_pythonModuleCache.clear();  // Python paths or installed packages may have changed
+    applyLayoutPreviewPreferences();
     refreshSimToolOptions();
     refreshKeywordTipsForCurrentTool();
 
@@ -5053,6 +5098,16 @@ void MainWindow::on_actionKeyBindings_triggered()
 /*!*******************************************************************************************************************
  * \brief Applies the navigation style preference to the Layout preview and a running 3D field viewer.
  **********************************************************************************************************************/
+/*!*******************************************************************************************************************
+ * \brief Applies layout preview preferences (LAYOUT_MAX_VIA_POLYGONS, default 100) to the layout view.
+ **********************************************************************************************************************/
+void MainWindow::applyLayoutPreviewPreferences()
+{
+    if (m_ui && m_ui->layoutView)
+        m_ui->layoutView->setMaxViaPolygonsPerLayer(
+            m_preferences.value(QStringLiteral("LAYOUT_MAX_VIA_POLYGONS"), 100).toInt());
+}
+
 void MainWindow::applyNavigationStyle()
 {
     const NavStyle style = NavigationStyle::fromPreferences(m_preferences);
@@ -6035,6 +6090,17 @@ void MainWindow::importPortsFromEditor()
  **********************************************************************************************************************/
 void MainWindow::on_btnGenDefaultPython_clicked()
 {
+    generateDefaultModelScript(true);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Puts the default template of the current simulation tool into the Python editor.
+ *
+ * \param askReplace Ask before replacing code that is already in the editor.
+ * \return True if the template was inserted.
+ **********************************************************************************************************************/
+bool MainWindow::generateDefaultModelScript(bool askReplace)
+{
     const QString simKey = currentSimToolKey().toLower();
 
     QString defaultScript;
@@ -6051,10 +6117,10 @@ void MainWindow::on_btnGenDefaultPython_clicked()
     }
 
     if (defaultScript.isEmpty())
-        return;
+        return false;
 
     const bool hasExisting = !m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty();
-    if (hasExisting) {
+    if (askReplace && hasExisting) {
         const auto ret = QMessageBox::question(
             this,
             tr("Replace Existing Script"),
@@ -6064,7 +6130,7 @@ void MainWindow::on_btnGenDefaultPython_clicked()
             QMessageBox::No
             );
         if (ret != QMessageBox::Yes)
-            return;
+            return false;
     }
 
     m_ui->editRunPythonScript->clear();
@@ -6076,6 +6142,169 @@ void MainWindow::on_btnGenDefaultPython_clicked()
     updateSubLayerNamesAutoCheck();
 
     setStateChanged();
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Adds File → New with one entry per simulation tool (Elmer EM and Elmer Thermal separate).
+ **********************************************************************************************************************/
+void MainWindow::setupNewModelMenu()
+{
+    if (!m_ui->menuFile || m_newModelMenu)
+        return;
+    m_newModelMenu = new QMenu(tr("&New"), this);
+    m_newModelMenu->setObjectName(QStringLiteral("menuNew"));
+    const QList<QPair<QString, QString>> tools = {
+        {QStringLiteral("openems"), tr("OpenEMS Model")},
+        {QStringLiteral("palace"), tr("Palace Model")},
+        {QStringLiteral("elmer_em"), tr("Elmer EM Model")},
+        {QStringLiteral("elmer_thermal"), tr("Elmer Thermal Model")}};
+    for (const auto &tool : tools) {
+        QAction *a = m_newModelMenu->addAction(tool.second);
+        a->setObjectName(QStringLiteral("actionNew_%1").arg(tool.first));
+        a->setData(tool.first);
+        a->setToolTip(tr("New model from the default %1 template").arg(tool.second));
+        const QString key = tool.first;
+        connect(a, &QAction::triggered, this, [this, key]() { newModel(key); });
+    }
+    m_ui->menuFile->insertMenu(m_ui->actionOpen_Python_Model, m_newModelMenu);
+    updateNewModelActions();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Enables the File → New entries of the simulation tools that are offered in the tool list.
+ **********************************************************************************************************************/
+void MainWindow::updateNewModelActions()
+{
+    if (!m_newModelMenu)
+        return;
+    for (QAction *a : m_newModelMenu->actions()) {
+        const bool available = m_ui->cbxSimTool->isEnabled()
+                && m_ui->cbxSimTool->findData(a->data()) >= 0;
+        a->setEnabled(available);
+        a->setStatusTip(available ? QString()
+                                  : tr("Not configured: set the tool's path in Setup → Preferences."));
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Folder where the XML stackup file dialog starts.
+ *
+ * Preference STACKUP_DIR_OPENEMS (OpenEMS, FDTD stackups) or STACKUP_DIR_FEM (Palace, Elmer EM,
+ * Elmer Thermal) when it is an existing folder; else the folder of the last stackup file used
+ * (SubstrateDir); else the home folder.
+ *
+ * \return Start folder.
+ **********************************************************************************************************************/
+QString MainWindow::stackupDialogStartDir() const
+{
+    const QString prefKey = currentSimToolKey().toLower() == QLatin1String("openems")
+            ? QStringLiteral("STACKUP_DIR_OPENEMS") : QStringLiteral("STACKUP_DIR_FEM");
+    const QString configured = m_preferences.value(prefKey).toString().trimmed();
+    if (!configured.isEmpty() && QFileInfo(configured).isDir())
+        return configured;
+    const QString last = m_sysSettings.value(QStringLiteral("SubstrateDir")).toString().trimmed();
+    if (!last.isEmpty() && QDir(last).exists())
+        return last;
+    return QDir::homePath();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Clears the model inputs for a new model: GDS file and cells, stackup file and its view,
+ *        stackup overrides, Ports and Thermal tables, and the layout preview.
+ **********************************************************************************************************************/
+void MainWindow::clearModelInputs()
+{
+    {
+        QSignalBlocker blocker(m_ui->txtGdsFile);
+        m_ui->txtGdsFile->clear();
+    }
+    setLineEditPalette(m_ui->txtGdsFile, QString());
+    m_cells.clear();
+    m_layers.clear();
+    m_gdsTopCell.clear();
+    {
+        QSignalBlocker blocker(m_ui->cbxTopCell);
+        m_ui->cbxTopCell->clear();
+    }
+
+    {
+        QSignalBlocker blocker(m_ui->txtSubstrate);
+        m_ui->txtSubstrate->clear();
+    }
+    setLineEditPalette(m_ui->txtSubstrate, QString());
+    m_subLayers.clear();
+    if (m_ui->substrateView)
+        m_ui->substrateView->setSubstrate(Substrate());
+    if (m_ui->lblStackupDescription) {
+        m_ui->lblStackupDescription->clear();
+        m_ui->lblStackupDescription->setVisible(false);
+    }
+    if (m_ui->tblStackupOverrides)
+        m_ui->tblStackupOverrides->setRowCount(0);
+
+    for (const QString &key : {QStringLiteral("GdsFile"), QStringLiteral("SubstrateFile"),
+                               QStringLiteral("TopCell"), QStringLiteral("gds_cellname"),
+                               QStringLiteral("cellname"), QStringLiteral("StackupVariableOverrides"),
+                               m_modelGdsKey, m_modelXmlKey})
+        if (!key.isEmpty())
+            m_simSettings.remove(key);
+    m_modelGdsKey.clear();
+    m_modelXmlKey.clear();
+
+    m_ui->tblPorts->setRowCount(0);
+    removeAllThermalObjectRows();
+
+    rebuildLayerMapping();
+    updateEditStackupButtonState();
+    updateSubLayerNamesCheckboxState();
+    refreshLayoutPreview();
+}
+
+/*!*******************************************************************************************************************
+ * \brief File → New: selects a simulation tool, puts its default template into the editor and
+ *        opens the Main page.
+ *
+ * The new model has no file yet, so the next Save asks where to store it (it never overwrites
+ * the previously loaded model). GDS, stackup and ports are cleared (clearModelInputs).
+ *
+ * \param simKey Tool key: openems, palace, elmer_em or elmer_thermal.
+ **********************************************************************************************************************/
+void MainWindow::newModel(const QString &simKey)
+{
+    const int idx = m_ui->cbxSimTool->findData(simKey);
+    if (idx < 0 || !m_ui->cbxSimTool->isEnabled()) {
+        error(tr("This simulation tool is not configured. Set its path in Setup → Preferences."));
+        return;
+    }
+
+#ifndef EMSTUDIO_TESTING
+    const bool unsaved = isStateChanged() || m_ui->editRunPythonScript->document()->isModified();
+    if (unsaved && !m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty()) {
+        const auto ret = QMessageBox::question(
+            this, tr("New Model"),
+            tr("The current model has unsaved changes.\n\nDiscard them and start a new model?"),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (ret != QMessageBox::Yes)
+            return;
+    }
+#endif
+
+    // Same as choosing the tool in the list (Ports / Thermal page, keywords, boundaries, ...).
+    m_ui->cbxSimTool->setCurrentIndex(idx);
+
+    // No file yet: Save asks for a location instead of overwriting the previous model.
+    m_ui->txtRunPythonScript->clear();
+    m_simSettings.remove(QStringLiteral("RunPythonScript"));
+    // A new model starts without the previous model's GDS, stackup and ports.
+    clearModelInputs();
+
+    if (!generateDefaultModelScript(false))
+        return;
+
+    showRunControlPage(QStringLiteral("Main"));
+    info(tr("New %1 model from the default template. Save (Ctrl+S) asks where to store it.")
+             .arg(m_ui->cbxSimTool->itemText(idx)), false);
 }
 
 /*!*******************************************************************************************************************
@@ -6408,8 +6637,19 @@ QString MainWindow::createDefaultElmerThermalScript()
         return QString();
 
     QString script = templateText;
+    PythonParser::Result parseResult = PythonParser::parseSettingsFromText(script);
+    if (parseResult.ok)
+        m_curPythonData = parseResult;
     applySimSettingsToScript(script, QStringLiteral("elmer_thermal"));
     applyGdsAndXmlPaths(script, QStringLiteral("elmer_thermal"));
+
+    // Same as Elmer EM: show the template's settings in the grid right away.
+    PythonParser::Result finalResult = PythonParser::parseSettingsFromText(script);
+    if (finalResult.ok) {
+        m_curPythonData = finalResult;
+        const auto tips = mergeTipsPreferModel(finalResult.settingTips, m_keywordTips);
+        rebuildSimulationSettingsFromPalace(finalResult.settings, tips, finalResult.topLevel);
+    }
     return script;
 }
 
@@ -6623,7 +6863,11 @@ void MainWindow::loadPythonModel(const QString &fileName)
     {
         const QString gdsPath = resolveModelInputFile(res.gdsFilename, modelDir);
 
+        // Reading the new GDS still sees the previous model's cell; its "not found" note would be
+        // misleading. The model's own cell is set below (and reported there if it is missing).
+        m_importingModelGds = true;
         m_ui->txtGdsFile->setText(gdsPath);
+        m_importingModelGds = false;
 
         m_modelGdsKey = !res.gdsSettingKey.isEmpty() ? res.gdsSettingKey
                         : !res.gdsLegacyVar.isEmpty()  ? res.gdsLegacyVar
@@ -6640,11 +6884,10 @@ void MainWindow::loadPythonModel(const QString &fileName)
         const QString wanted = res.getCellName().trimmed();
         // m_cells / m_gdsTopCell describe this model's GDS only if the model names one.
         const bool gdsFromModel = !res.gdsFilename.isEmpty();
+        // A cell the GDS doesn't have: gds2palace / gds2openEMS load the top cell, so the dropdown
+        // shows that (no log note on import; Save writes it into the script).
         const QString cellName = m_cells.contains(wanted) ? wanted
                                : (gdsFromModel ? m_gdsTopCell : QString());
-        if (gdsFromModel && !wanted.isEmpty() && !m_cells.contains(wanted) && !m_cells.isEmpty())
-            info(tr("Top cell '%1' of the model is not in the GDS; the script falls back to the top cell '%2'.")
-                     .arg(wanted, m_gdsTopCell), false);
         const int idx = cellName.isEmpty() ? -1 : m_ui->cbxTopCell->findText(cellName);
         if (idx >= 0) {
             m_ui->cbxTopCell->setCurrentIndex(idx);
@@ -6883,7 +7126,8 @@ QString MainWindow::ensurePySuffix(QString path) const
 /*!*******************************************************************************************************************
  * \brief Returns the required folder name for a given simulation backend key.
  *
- * OpenEMS expects the model next to a local \c modules tree (Volker openEMS workflow).
+ * OpenEMS: a script that imports the local \c modules copy needs that folder next to it, unless it
+ * prefers an installed \c gds2openEMS and the OpenEMS Python has it (see validateRequiredFolderForSim).
  * Palace / Elmer use \c gds2palace as an installed Python module — no local copy required.
  *
  * \param simKeyLower Simulation key in lower case ("openems" / "palace").
@@ -6913,9 +7157,55 @@ bool MainWindow::validateRequiredFolderForSim(const QString &dirPath,
     if (need.isEmpty())
         return true;
 
+    if (simKeyLower == QLatin1String("openems")) {
+        // The template tries an installed gds2openEMS first and falls back to 'modules'.
+        const QString script = m_ui->editRunPythonScript->toPlainText();
+        static const QRegularExpression rePackage(
+            QStringLiteral(R"((?m)^[ \t]*(?:from[ \t]+gds2openEMS[ \t]+import|import[ \t]+gds2openEMS\b))"));
+        static const QRegularExpression reModules(
+            QStringLiteral(R"((?m)^[ \t]*(?:from[ \t]+modules[ \t.]|import[ \t]+modules\b))"));
+        const bool usesPackage = rePackage.match(script).hasMatch();
+        const bool usesModules = reModules.match(script).hasMatch();
+        if (usesPackage && !usesModules)
+            return true;  // no local copy involved; the run reports a missing package
+        if (usesPackage && pythonHasModule(m_preferences.value(QStringLiteral("Python Path")).toString(),
+                                           QStringLiteral("gds2openEMS")))
+            return true;
+    }
+
     const bool ok = QDir(QDir(dirPath).filePath(need)).exists();
     if (!ok && missingName)
         *missingName = need;
+    return ok;
+}
+
+/*!*******************************************************************************************************************
+ * \brief True if \a python can import \a module (importlib.util.find_spec), cached per interpreter.
+ *
+ * \param python Interpreter path (e.g. preference "Python Path"); empty gives false.
+ * \param module Top-level module name.
+ * \return Whether the module is installed for that interpreter.
+ **********************************************************************************************************************/
+bool MainWindow::pythonHasModule(const QString &python, const QString &module) const
+{
+    const QString exe = python.trimmed();
+    if (exe.isEmpty())
+        return false;
+    const QString key = exe + QLatin1Char('|') + module;
+    const auto cached = m_pythonModuleCache.constFind(key);
+    if (cached != m_pythonModuleCache.cend())
+        return cached.value();
+
+    QProcess p;
+    p.start(exe, {QStringLiteral("-c"),
+                  QStringLiteral("import importlib.util, sys; "
+                                 "sys.exit(0 if importlib.util.find_spec('%1') else 1)").arg(module)});
+    const bool ok = p.waitForFinished(8000) && p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0;
+    if (p.state() != QProcess::NotRunning) {
+        p.kill();
+        p.waitForFinished(1000);
+    }
+    m_pythonModuleCache.insert(key, ok);
     return ok;
 }
 
@@ -6942,7 +7232,10 @@ MainWindow::askMissingFolderDecision(const QString &simKeyLower,
     msg.setWindowTitle(tr("Missing simulation modules"));
     msg.setText(tr("The selected folder does not contain the required '%1' directory for %2.")
                     .arg(missingFolder, simName));
-    msg.setInformativeText(tr("Choose another folder, or save here anyway."));
+    msg.setInformativeText(simKeyLower == QLatin1String("openems")
+        ? tr("Install gds2openEMS in the OpenEMS Python (pip install gds2openEMS), choose another "
+             "folder, or save here anyway.")
+        : tr("Choose another folder, or save here anyway."));
 
     QPushButton *btnChoose = msg.addButton(tr("Choose another directory"), QMessageBox::AcceptRole);
     QPushButton *btnSave   = msg.addButton(tr("Save here anyway"), QMessageBox::DestructiveRole);

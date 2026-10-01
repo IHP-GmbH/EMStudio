@@ -144,6 +144,20 @@ void Preferences::setupPreferencesPanel()
     tmplDirProp->setValue(QDir::toNativeSeparators(tmplDir));
     emstudioGroup->addSubProperty(tmplDirProp);
 
+    // Stackup file dialog start folders: FDTD (openEMS) and FEM (Palace, Elmer) stackups differ.
+    const QList<QPair<QString, QString>> stackupDirs = {
+        {QStringLiteral("STACKUP_DIR_OPENEMS"), tr("OpenEMS (FDTD)")},
+        {QStringLiteral("STACKUP_DIR_FEM"), tr("Palace, Elmer EM and Elmer Thermal (FEM)")}};
+    for (const auto &sd : stackupDirs) {
+        QtVariantProperty *prop = m_variantManager->addProperty(VariantManager::filePathTypeId(), sd.first);
+        prop->setWhatsThis("folder");
+        prop->setToolTip(tr("Folder where the XML stackup file dialog (Substrate tab) starts for %1 models.\n\n"
+                            "If empty or not an existing folder, the dialog starts in the folder of the\n"
+                            "last stackup file used, else in your home folder.").arg(sd.second));
+        prop->setValue(m_preferences.value(sd.first).toString());
+        emstudioGroup->addSubProperty(prop);
+    }
+
     m_propertyBrowser->addProperty(emstudioGroup);
 
     // -------------------------------------------------------------------------------------------------------------
@@ -390,11 +404,28 @@ void Preferences::setupPreferencesPanel()
     fieldPythonProp->setValue(m_preferences.value(QStringLiteral("FIELD_VIEWER_PYTHON"), QString()));
     layoutFieldGroup->addSubProperty(fieldPythonProp);
 
+    // -------------------------------------------------------------------------------------------------------------
+    // Layout preview
+    // -------------------------------------------------------------------------------------------------------------
+    QtVariantProperty *layoutPreviewGroup =
+        m_variantManager->addProperty(QtVariantPropertyManager::groupTypeId(), tr("Layout Preview"));
+    QtVariantProperty *maxViaProp =
+        m_variantManager->addProperty(QVariant::Int, QLatin1String("LAYOUT_MAX_VIA_POLYGONS"));
+    maxViaProp->setAttribute(QLatin1String("minimum"), 1);
+    maxViaProp->setAttribute(QLatin1String("maximum"), 10000000);
+    maxViaProp->setToolTip(tr(
+        "Most polygons a via layer may have (after via array merging with the model's\n"
+        "merge_polygon_size) before the 2D / 3D layout preview shows a message instead.\n"
+        "Thousands of single vias make the preview slow. Default: 100."));
+    maxViaProp->setValue(m_preferences.value(QStringLiteral("LAYOUT_MAX_VIA_POLYGONS"), 100).toInt());
+    layoutPreviewGroup->addSubProperty(maxViaProp);
+
     m_propertyBrowser->addProperty(openemsGroup);
     m_propertyBrowser->addProperty(palaceGroup);
     m_propertyBrowser->addProperty(elmerGroup);
     m_propertyBrowser->addProperty(klayoutGroup);
     m_propertyBrowser->addProperty(layoutFieldGroup);
+    m_propertyBrowser->addProperty(layoutPreviewGroup);
 
     connect(m_variantManager, &QtVariantPropertyManager::valueChanged,
             this, &Preferences::onVariantValueChanged);

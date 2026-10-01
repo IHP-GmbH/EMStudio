@@ -24,6 +24,7 @@
 #include <QDialog>
 #include <QStandardItemModel>
 #include <QSortFilterProxyModel>
+#include <QStyledItemDelegate>
 
 class QLineEdit;
 class QTableView;
@@ -66,6 +67,34 @@ protected:
     void                resizeEvent(QResizeEvent* e) override;
 
 private:
+    /*! Columns of a keyword file: keyword, description, topic, default, required ("yes"). */
+    static constexpr int kColumns = 5;
+
+    class TopicDelegate : public QStyledItemDelegate
+    {
+    public:
+        TopicDelegate(QStandardItemModel *model, QObject *parent);
+        QWidget        *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                                     const QModelIndex &index) const override;
+        void            setEditorData(QWidget *editor, const QModelIndex &index) const override;
+        void            setModelData(QWidget *editor, QAbstractItemModel *model,
+                                     const QModelIndex &index) const override;
+    private:
+        QStandardItemModel *m_model;
+    };
+
+    class RequiredDelegate : public QStyledItemDelegate
+    {
+    public:
+        explicit RequiredDelegate(QObject *parent);
+        QWidget        *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                                     const QModelIndex &index) const override;
+        void            setEditorData(QWidget *editor, const QModelIndex &index) const override;
+        void            setModelData(QWidget *editor, QAbstractItemModel *model,
+                                     const QModelIndex &index) const override;
+    };
+
+    void                setColumnHeaders();
     QString             detectDelimiter(const QString& line) const;
     QStringList         splitLine(const QString& line,
                           const QString& delim) const;

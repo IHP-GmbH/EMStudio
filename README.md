@@ -147,7 +147,7 @@ and **Elmer Thermal** (steady-state heat conduction).
 Field results have their own **Fields** page in the Run Control list (after Results): the
 layout with the 2D Z-clip heatmap and the Layers panel. After a successful Elmer Thermal run
 EMStudio opens it automatically; if `FIELD_VIEWER_PYTHON` is set, it also opens the interactive
-PyVista **Field 3D** window (no ParaView). You can open 3D later with the **3D** button on the
+PyVista **Field 3D** window (no ParaView). You can open 3D later with the **3D viewer ↗** button on the
 Fields page.
 
 **Layout Field** (2D Z-clip on the Fields page):
@@ -281,6 +281,10 @@ The screenshot shows the configuration of EMStudio on a Windows machine, with op
   Optional host Python for **Layout Field**: 2D slices (`scripts/field_slice_export.py`) and the Field→3D viewer (`scripts/field_viewer.py`), both reading results through `scripts/field_io.py`.  
   Prefer a native Windows `python.exe` with `pyvista`, `pillow`, `pyvistaqt` and `PySide6` installed (the 3D viewer needs the last two).  
   If empty, EMStudio falls back to the active tool Python / PATH.
+- **STACKUP_DIR_OPENEMS**, **STACKUP_DIR_FEM** (EMStudio)  
+  Folders where the XML stackup file dialog on the Substrate tab starts: the first for OpenEMS (FDTD stackups), the second for Palace, Elmer EM and Elmer Thermal (FEM stackups). If empty or not an existing folder, the dialog starts in the folder of the last stackup file used, else in your home folder.
+- **LAYOUT_MAX_VIA_POLYGONS** (Layout Preview, default 100)  
+  Most polygons a via layer may have, after via array merging with the model's `merge_polygon_size`, before the 2D / 3D layout preview shows a message instead of the layout. Thousands of single vias make the preview slow; set `merge_polygon_size` in the model or raise this limit.
 
 - **OpenEMS Python Path**  
   Path to the Python interpreter used for the **openEMS** workflow. 
@@ -321,11 +325,15 @@ The main tab is where you configure the layout input file (*.gds) and the main s
 
 <img src="./doc/png/main1.png" alt="main" width="700">
 
-When you start from scratch, the settings grid is almost empty. You can now load a project template using **File > Load Python Model ...** or you can go to the **Python** tab, choose the **simulator** that you want to use and then press **Generate Default**. Before leaving the tab, save your changes using File > Save or Ctrl+S 
+When you start from scratch, the settings grid is almost empty. Use **File > New** and pick the simulator (OpenEMS, Palace, Elmer EM or Elmer Thermal): EMStudio selects it, clears the previous model's GDS file, stackup and ports, creates the default model from its template and opens the Main tab; the first Save asks where to store the new model. You can also load an existing model using **File > Load Python Model ...**, or go to the **Python** tab, choose the **simulator** and press **Generate Default**. Before leaving the tab, save your changes using File > Save or Ctrl+S 
 
 <img src="./doc/png/generate1.png" alt="generate" width="700">
 
 When a valid model is loaded or created from the template, the main tab will look as shown below. Scripts parameters defined using the `settings[]=value` syntax will be shown in the settings grid and can be modified, with bi-directional synchronization to the built-in Python script editor. If the script line provides additional information in a comment, this will be shown as "flyout help" when moving the mouse over that item in the settings grid.
+
+The grid groups the settings by topic (Script control and output files, Input files, Frequencies, Mesh size and accuracy, …), in the order of the workflow's user guide; settings EMStudio doesn't know are listed under **Other**. Settings the workflow requires are shown in **bold**. Topics can be collapsed and stay collapsed when you save. The flyout help comes from the keyword files in `keywords/` (one per simulation tool) and also shows the workflow's default value. **Setup → Keywords** edits them: keyword, description, topic, default and required. In older openEMS models with freely named variables, a variable gets the topic of the workflow parameter it is passed to (e.g. the 9th argument of `setupSimulation()` is `refined_cellsize`).
+
+Stackup Variable overrides (`variable_overrides`) are edited in the Substrate tab's override table, not in the grid. EMStudio reads and writes the dict that `read_substrate(..., variable_overrides=...)` actually passes, whether it is a variable or a `settings['variable_overrides']` entry.
 
 <img src="./doc/png/main2.png" alt="main" width="700">
 
@@ -346,7 +354,8 @@ Floating controls on the layout preview (top-right):
 
 | Control | Role |
 | --- | --- |
-| **2D / 3D** | On Substrate: top view vs isometric layout extrusion. On the **Fields** page the layout stays 2D with the field heatmap; **3D** opens the separate Field 3D viewer window. |
+| **[2D \| 3D]** | Substrate page: a two-part switch between top view and isometric layout extrusion; the active side is highlighted (keys 2 / 3). |
+| **3D viewer ↗** | Fields page: the layout stays 2D with the field heatmap; this button (or key 3) opens the separate Field 3D viewer window. |
 
 The Substrate and Fields pages share one layout view (same layer visibility and opacity); each page keeps its own zoom.
 
@@ -372,7 +381,7 @@ Keys (click the view first): **F** fit, **Home** everything, **+ / −** zoom, a
 
 **Field → 3D** (separate OS window):
 
-1. On the Fields page, click **3D**. EMStudio shows a short splash, then starts `scripts/field_viewer.py` for the whole run, with the file / frequency chosen in the Field panel preselected. Clicking **3D** again while the window is open brings it to the front (and switches to the current choice).
+1. On the Fields page, click **3D viewer ↗** (or press 3). EMStudio shows a short splash, then starts `scripts/field_viewer.py` for the whole run, with the file / frequency chosen in the Field panel preselected. Clicking it again while the window is open brings it to the front (and switches to the current choice).
 2. The viewer offers every result file of the run (volume / boundary dumps, excitations, frequencies; AMR iterations on request), a **Cycle** picker for multi-frequency `.pvd` files, and a grouped **Field** list with physical names and units (|E|, |B|, |H|, |J_s| magnitudes, real / imaginary parts, S, U_e, temperature, …).
 3. **Clip Plane**: X / Y / Z plane with a fine slider, **Find max.** jumps to the field maximum, **2D plane only** shows just the section. Clipping runs in the background, so large dumps do not freeze the window.
 4. **Display** / **Field**: opacity, mesh overlay, legend, log scale (Min is then a dropdown, -10 … -70 dB below Max, default -70 dB), Min / Max with **Reset range to data**, and direction arrows for vector fields. **View**: ±X/±Y/±Z buttons (parallel projection) with the cut face turned toward the camera. **Ctrl+C** or right-click copies the 3D view. Mouse navigation follows **Setup → Key Bindings**; keys: **R / F / Home** reset camera, **I** isometric, **X / Y / Z** axis views (Shift: negative side), **+ / −** zoom, arrows pan, **O** parallel projection, **M** find max., **A** arrows, **PgUp / PgDn** clip plane.

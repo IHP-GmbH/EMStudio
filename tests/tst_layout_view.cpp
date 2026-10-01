@@ -16,6 +16,7 @@
 #include <QSignalSpy>
 #include <QToolButton>
 #include <QCheckBox>
+#include <QLabel>
 #include <QSlider>
 #include <QScrollBar>
 #include <QGraphicsPolygonItem>
@@ -350,24 +351,19 @@ void LayoutViewTest::fieldMode_keeps2d_and3dOpensExternalSignal()
 
     QSignalSpy spy(&view, &LayoutView::fieldExternalVolumeRequested);
     QVERIFY(spy.isValid());
-    // Simulate the 3D toolbutton while Field is on.
-    auto *modeBtn = view.findChild<QToolButton *>(QStringLiteral("layoutViewModeBtn"));
-    QVERIFY(modeBtn);
-    QCOMPARE(modeBtn->text(), QStringLiteral("3D"));
-    QVERIFY(!modeBtn->isChecked());
-    // Prefer click(): some platforms coalesce setChecked with prior syncFloatingControls.
-    QTest::mouseClick(modeBtn, Qt::LeftButton);
-    QCoreApplication::processEvents();
-    if (spy.count() == 0) {
-        // Fallback for headless/offscreen where click may not toggle.
-        modeBtn->setChecked(true);
-        QCoreApplication::processEvents();
-    }
+    // Field on: the 2D / 3D switch is replaced by the "3D viewer" launch button.
+    auto *modeSwitch = view.findChild<QWidget *>(QStringLiteral("layoutViewModeSwitch"));
+    auto *viewerBtn = view.findChild<QToolButton *>(QStringLiteral("layoutViewField3dBtn"));
+    QVERIFY(modeSwitch && viewerBtn);
+    QVERIFY(modeSwitch->isHidden());
+    QVERIFY(!viewerBtn->isHidden());
+    QVERIFY(!viewerBtn->isCheckable());
+    QVERIFY(viewerBtn->text().contains(QStringLiteral("3D viewer")));
+    QVERIFY(!viewerBtn->icon().isNull());
+    viewerBtn->click();
     QCOMPARE(spy.count(), 1);
     QVERIFY(!view.isView3d());
     QVERIFY(view.isFieldMode());
-    QCOMPARE(modeBtn->text(), QStringLiteral("3D"));
-    QVERIFY(!modeBtn->isChecked());
 
     // Iso3D while Field is on must stay Top2D (volume is external only).
     view.setViewMode(LayoutView::ViewMode::Iso3D);
@@ -451,6 +447,7 @@ void LayoutViewTest::iso3d_denseVias_growEnvelope_reportsTiming()
     view.show();
     if (view.isFieldMode())
         view.setFieldMode(false);
+    view.setMaxViaPolygonsPerLayer(1000000);  // this test measures drawing thousands of vias
 
     view.setPolygons(polys, styles);
 
@@ -539,6 +536,7 @@ void LayoutViewTest::iso3d_balunExample_flattenAndRebuild_reportsTiming()
     view.show();
     if (view.isFieldMode())
         view.setFieldMode(false);
+    view.setMaxViaPolygonsPerLayer(1000000);  // this test measures drawing thousands of vias
     view.setViewMode(LayoutView::ViewMode::Iso3D);
 
     step.restart();
@@ -719,12 +717,12 @@ void LayoutViewTest::navigationStyles_mouseAndKeys()
     sendKey(view, Qt::Key_F, Qt::ShiftModifier);
     QVERIFY(!view.isFieldMode());
 
-    // The mode button tooltip follows the style.
-    auto *modeBtn = view.findChild<QToolButton *>(QStringLiteral("layoutViewModeBtn"));
-    QVERIFY(modeBtn);
-    QVERIFY(modeBtn->toolTip().contains(QStringLiteral("setupEM")));
+    // The 2D / 3D switch tooltips follow the style.
+    auto *btn3d = view.findChild<QToolButton *>(QStringLiteral("layoutViewMode3dBtn"));
+    QVERIFY(btn3d);
+    QVERIFY(btn3d->toolTip().contains(QStringLiteral("setupEM")));
     view.setNavigationStyle(NavStyle::EMStudio);
-    QVERIFY(modeBtn->toolTip().contains(QStringLiteral("EMStudio")));
+    QVERIFY(btn3d->toolTip().contains(QStringLiteral("EMStudio")));
 
     settings.beginGroup(QStringLiteral("LayoutPreview"));
     if (prev3d.isValid())
@@ -1019,4 +1017,172 @@ void LayoutViewTest::iso3d_portsShowSurfaceAndFromToDirection()
             && item->toolTip().contains(QStringLiteral("surface")))
             surfaces.insert(item->data(3).toInt());
     QCOMPARE(surfaces, QSet<int>({201, 202}));
+}
+
+/*! Signed shoelace area sum of one layer's drawn polygons [µm²]. */
+static qreal drawnArea(const LayoutView &view, int layer, int *count = nullptr)
+{
+    qreal area = 0.0;
+    int n = 0;
+    for (const GdsFlatPolygon &p : view.drawnPolygons()) {
+        if (p.layer != layer)
+            continue;
+        ++n;
+        qreal a = 0.0;
+        for (int i = 0; i < p.pointsUm.size(); ++i) {
+            const QPointF &u = p.pointsUm.at(i);
+            const QPointF &v = p.pointsUm.at((i + 1) % p.pointsUm.size());
+            a += u.x() * v.y() - v.x() * u.y();
+        }
+        area += std::abs(a) / 2.0;
+    }
+    if (count)
+        *count = n;
+    return area;
+}
+
+/*! Via layers are merged like gds2palace's merge_via_array (grow spacing/2 + 0.01, unite, shrink)
+ *  with the model's merge_polygon_size, in 2D and 3D; 0 shows single vias. */
+void LayoutViewTest::viaMerge_followsModelMergeSize()
+{
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(400, 300);
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+
+    // 4 x 3 array of 0.19 µm vias with 0.22 µm gaps, plus an L of vias and a lone via far away.
+    QVector<GdsFlatPolygon> polys;
+    polys << makeRect(1, -5, -5, 20, 20);
+    for (int ix = 0; ix < 4; ++ix)
+        for (int iy = 0; iy < 3; ++iy)
+            polys << makeRect(29, ix * 0.41, iy * 0.41, ix * 0.41 + 0.19, iy * 0.41 + 0.19);
+    for (int k = 0; k < 4; ++k)  // L: 4 along x, 3 more up from the first
+        polys << makeRect(29, 10 + k * 0.41, 0, 10 + k * 0.41 + 0.19, 0.19);
+    for (int k = 1; k <= 3; ++k)
+        polys << makeRect(29, 10, k * 0.41, 10.19, k * 0.41 + 0.19);
+    polys << makeRect(29, 18, 18, 18.19, 18.19);
+
+    QHash<int, LayoutView::LayerStyle> styles;
+    styles.insert(1, style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10));
+    styles.insert(29, style(QStringLiteral("Via2"), QStringLiteral("via"), QColor(40, 120, 200), 20));
+
+    // Not set: 2D draws every via.
+    view.setPolygons(polys, styles);
+    int n = 0;
+    drawnArea(view, 29, &n);
+    QCOMPARE(n, 4 * 3 + 7 + 1);
+
+    // 0.75 µm: array -> its bounding box, L -> L shape (concave corner stays empty), lone via kept.
+    view.setViaMergeSize(0.75);
+    const qreal merged = drawnArea(view, 29, &n);
+    const qreal array = (3 * 0.41 + 0.19) * (2 * 0.41 + 0.19);
+    const qreal lShape = (3 * 0.41 + 0.19) * 0.19 + 0.19 * (3 * 0.41);
+    const qreal lone = 0.19 * 0.19;
+    QVERIFY2(std::abs(merged - (array + lShape + lone)) < 0.01,
+             qPrintable(QStringLiteral("area %1, expected %2").arg(merged).arg(array + lShape + lone)));
+    QCOMPARE(n, 3);
+
+    // Gaps larger than the merge distance: nothing merges.
+    view.setViaMergeSize(0.1);
+    drawnArea(view, 29, &n);
+    QCOMPARE(n, 4 * 3 + 7 + 1);
+
+    // The conductor layer is never touched; 3D uses the same merged vias.
+    view.setViaMergeSize(0.75);
+    QCOMPARE(drawnArea(view, 1), 25.0 * 25.0);
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    QCOMPARE(view.lastIso3dRebuildStats().viaPolyCount, 3);
+    view.setViewMode(LayoutView::ViewMode::Top2D);
+}
+
+/*! A via layer with more drawn polygons than the limit shows a message instead of the layout
+ *  (2D and 3D); merging the vias or raising the limit draws it again. */
+void LayoutViewTest::viaLimit_showsMessageInsteadOfLayout()
+{
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(500, 400);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+
+    QVector<GdsFlatPolygon> polys;
+    polys << makeRect(1, -5, -5, 40, 40);
+    for (int ix = 0; ix < 15; ++ix)          // 150 vias, 0.19 µm with 0.22 µm gaps
+        for (int iy = 0; iy < 10; ++iy)
+            polys << makeRect(29, ix * 0.41, iy * 0.41, ix * 0.41 + 0.19, iy * 0.41 + 0.19);
+    QHash<int, LayoutView::LayerStyle> styles;
+    styles.insert(1, style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10));
+    styles.insert(29, style(QStringLiteral("Via2"), QStringLiteral("via"), QColor(40, 120, 200), 20));
+
+    view.setViaMergeSize(-1.0);
+    view.setPolygons(polys, styles);  // default limit 100
+    QCOMPARE(view.denseViaLayers(), QStringList{QStringLiteral("Via2: 150")});
+    auto *label = view.findChild<QLabel *>(QStringLiteral("layoutViewDenseViaLabel"));
+    QVERIFY(label && label->isVisible());
+    QVERIFY(label->text().contains(QStringLiteral("Via2: 150")));
+    QCOMPARE(view.scene()->items().size(), 0);
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    QCOMPARE(view.scene()->items().size(), 0);
+    QVERIFY(label->isVisible());
+    view.setViewMode(LayoutView::ViewMode::Top2D);
+
+    // The model's merge_polygon_size merges the array into one shape: drawn again.
+    view.setViaMergeSize(0.75);
+    QVERIFY(view.denseViaLayers().isEmpty());
+    QVERIFY(!label->isVisible());
+    QVERIFY(view.scene()->items().size() > 0);
+
+    // A higher limit (Preferences) also draws the single vias.
+    view.setViaMergeSize(0.0);
+    QVERIFY(label->isVisible());
+    view.setMaxViaPolygonsPerLayer(200);
+    QVERIFY(!label->isVisible());
+    QVERIFY(view.scene()->items().size() > 150);
+}
+
+/*! The 2D / 3D switch shows both options, exactly one highlighted, and clicking a side switches. */
+void LayoutViewTest::modeSwitch_showsBothOptionsWithActiveHighlighted()
+{
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(400, 300);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+    view.setViewMode(LayoutView::ViewMode::Top2D);
+
+    QVector<GdsFlatPolygon> polys;
+    polys << makeRect(1, 0, 0, 10, 8);
+    QHash<int, LayoutView::LayerStyle> styles;
+    auto s1 = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+    s1.hasZ = true;
+    s1.zmaxUm = 0.5;
+    styles.insert(1, s1);
+    view.setPolygons(polys, styles);
+
+    auto *modeSwitch = view.findChild<QWidget *>(QStringLiteral("layoutViewModeSwitch"));
+    auto *b2 = view.findChild<QToolButton *>(QStringLiteral("layoutViewMode2dBtn"));
+    auto *b3 = view.findChild<QToolButton *>(QStringLiteral("layoutViewMode3dBtn"));
+    QVERIFY(modeSwitch && b2 && b3);
+    QVERIFY(!modeSwitch->isHidden());
+    QCOMPARE(b2->text(), QStringLiteral("2D"));
+    QCOMPARE(b3->text(), QStringLiteral("3D"));
+    QVERIFY(b2->isChecked() && !b3->isChecked());
+
+    b3->click();
+    QVERIFY(view.isView3d());
+    QVERIFY(!b2->isChecked() && b3->isChecked());
+    b3->click();  // clicking the active side keeps it
+    QVERIFY(view.isView3d());
+    b2->click();
+    QVERIFY(!view.isView3d());
+    QVERIFY(b2->isChecked() && !b3->isChecked());
+
+    // Keys keep the switch in sync.
+    QKeyEvent key3(QEvent::KeyPress, Qt::Key_3, Qt::NoModifier);
+    QApplication::sendEvent(&view, &key3);
+    QVERIFY(b3->isChecked());
+    view.setViewMode(LayoutView::ViewMode::Top2D);
 }

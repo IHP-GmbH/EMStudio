@@ -25,6 +25,9 @@ private slots:
     void iso3d_opacityAndVisibility_redrawDenseScene();
     void iso3d_viewFromBelow_reversesStackOrder();
     void iso3d_portsShowSurfaceAndFromToDirection();
+    void viaMerge_followsModelMergeSize();
+    void viaLimit_showsMessageInsteadOfLayout();
+    void modeSwitch_showsBothOptionsWithActiveHighlighted();
 };
 
 #endif // TST_LAYOUT_VIEW_H

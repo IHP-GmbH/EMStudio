@@ -2,7 +2,6 @@ no_gui	True|False, run in batch mode: no gmsh window, no user interaction	Script
 no_preview	True|False, don't show the unmeshed geometry, immediately show the meshed model	Script control and output files	False
 preview_only	True|False, only show the unmeshed geometry, then stop without meshing (EMStudio then does not start the solver)	Script control and output files	False
 save_gmsh_unrolled	True|False, also save the gmsh geometry file without meshing, for debugging	Script control and output files	False
-config_suffix	Text appended to the generated config.json / port_information.json names, e.g. '_fine'	Script control and output files	''
 start_simulation	Always False in EMStudio: EMStudio starts the solver itself after the Python stage	Script control and output files	False
 unit	Unit of geometry values, typically 1e-6 (micron)	Input files	1e-6	yes
 purpose	Which GDSII data type is evaluated? Values in [] can be separated by comma	Input files	[0]
@@ -14,25 +13,17 @@ fstart	Start frequency [Hz]	Frequencies		yes
 fstop	Stop frequency [Hz]	Frequencies		yes
 fstep	Frequency step [Hz] for output; with adaptive sweep not every step is EM simulated. Default: computed from fstart/fstop	Frequencies
 fpoint	Optional list [] of discrete frequencies [Hz], in addition to or instead of the sweep	Frequencies	[]
-fdump	List [] of frequencies [Hz] where Palace writes a field dump for ParaView	Frequencies	[]
-adaptive_sweep	True|False, efficient and robust interpolating frequency sweep	Frequencies	True
+fdump	Any non-empty list [] enables a field dump at all solved frequencies (sweep + fpoint)	Frequencies	[]
 refined_cellsize	Target mesh size along conductor edges, in project units	Mesh size and accuracy		yes
 cells_per_wavelength	Mesh cells per wavelength at the highest frequency, must be 10 or more	Mesh size and accuracy	10
 meshsize_max	Maximum mesh cell size in addition to cells per wavelength, in project units	Mesh size and accuracy	70
 refined_cellsize_override	Per-layer refined_cellsize, e.g. [['Metal3',10],['Metal2',2]]	Mesh size and accuracy	[]
 substrate_refinement	True|False, extra mesh refinement into the substrate, usually not required	Mesh size and accuracy	False
 order	Order of the FEM basis functions: 2 is accurate, 1 gives quick & dirty results	Mesh size and accuracy	2
-adaptive_mesh_iterations	Iterations of Palace adaptive mesh refinement (AMR), 0 disables AMR	Adaptive mesh refinement	0
-adaptive_mesh_conformal	True|False, conformal AMR instead of Palace's default nonconformal refinement	Adaptive mesh refinement	False
-amr_tol	Target relative error for AMR, only with adaptive_mesh_iterations > 0	Adaptive mesh refinement	1e-2
-amr_max_dof	Maximum number of unknowns for AMR, only with adaptive_mesh_iterations > 0	Adaptive mesh refinement	2e6
-save_adaptive_mesh	True|False, save the refined mesh from AMR for re-use	Adaptive mesh refinement	False
-complex_coarse_solve	True|False, coarse solver factorizes the full complex system (robust convergence, more RAM)	Linear solver (Palace)	True
-solver_maxits	Iteration limit of the linear solver (GMRES) per frequency	Linear solver (Palace)	400
-solver_tol	Relative residual tolerance of the linear solver	Linear solver (Palace)	1e-6
+elmer	True|False, gds2palace writes an Elmer model instead of Palace (set by EMStudio)	Elmer solver	False
+iterative	True|False, iterative linear solver instead of the direct solver (MUMPS)	Elmer solver	False
+ELMER_MPI_THREADS	Number of MPI processes for ElmerSolver (mesh is partitioned with ElmerGrid)	Elmer solver
 margin	Oversize of dielectric layers relative to the drawn geometry, in project units	Simulation boundary		yes
 boundary	Boundary at xmin,xmax,ymin,ymax,zmin,zmax: ABC/PML, PEC or PMC	Simulation boundary	['ABC','ABC','ABC','ABC','ABC','ABC']
 air_around	Air spacing around the dielectrics, single value or list of 6. Default: same as margin	Simulation boundary
-filled_metals	True|False, conductors as solid volumes with bulk conductivity instead of surface impedance	Conductor modelling	False
 fill_factor_correction	True|False, scale merged via conductivity by the via fill factor (needs merge_polygon_size > 0)	Conductor modelling	False
-z_thickness_factor	Factor for the metal thickness on vertical side walls, see user guide	Conductor modelling	1

@@ -10,6 +10,8 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 #include "layoutview.h"
+#include "QtPropertyBrowser/qttreepropertybrowser.h"
+#include "QtPropertyBrowser/qtvariantproperty.h"
 
 /*!*******************************************************************************************************************
  * \brief Initializes a default Palace Python model for test purposes without any UI dialogs.
@@ -856,6 +858,83 @@ QString MainWindow::testResolveKeywordsPath(const QString &simKeyLower) const
 QMap<QString, QString> MainWindow::testLoadKeywordTipsCsv(const QString &simKeyLower) const
 {
     return loadKeywordTipsCsv(simKeyLower);
+}
+
+QVector<MainWindow::KeywordEntry> MainWindow::testLoadKeywordTable(const QString &simKeyLower) const
+{
+    return loadKeywordTable(simKeyLower);
+}
+
+QStringList MainWindow::testSettingTopicLayout() const
+{
+    QStringList out;
+    if (!m_simSettingsGroup)
+        return out;
+    for (QtProperty *group : m_simSettingsGroup->subProperties()) {
+        QStringList keys;
+        for (QtProperty *p : group->subProperties())
+            keys << p->propertyName();
+        out << QStringLiteral("%1: %2").arg(group->propertyName(), keys.join(QStringLiteral(", ")));
+    }
+    return out;
+}
+
+void MainWindow::testSetSettingTopicExpanded(const QString &topic, bool expanded)
+{
+    for (QtProperty *group : m_simSettingsGroup->subProperties())
+        if (group->propertyName() == topic)
+            for (QtBrowserItem *item : m_propertyBrowser->items(group))
+                m_propertyBrowser->setExpanded(item, expanded);
+}
+
+bool MainWindow::testIsSettingTopicExpanded(const QString &topic) const
+{
+    for (QtProperty *group : m_simSettingsGroup->subProperties())
+        if (group->propertyName() == topic)
+            for (QtBrowserItem *item : m_propertyBrowser->items(group))
+                return m_propertyBrowser->isExpanded(item);
+    return false;
+}
+
+bool MainWindow::testIsSettingShownRequired(const QString &key) const
+{
+    bool required = false;
+    forEachSimSettingProperty([&](QtProperty *prop) {
+        if (prop->propertyName() == key)
+            required = prop->isModified();
+    });
+    return required;
+}
+
+void MainWindow::testRebuildSettingsGrid(const QString &script)
+{
+    m_curPythonData = PythonParser::parseSettingsFromText(script);
+    rebuildSimulationSettingsFromPalace(m_curPythonData.settings,
+                                        mergeTipsPreferModel(m_curPythonData.settingTips, m_keywordTips),
+                                        m_curPythonData.topLevel);
+}
+
+bool MainWindow::testSetGridSettingValue(const QString &key, const QVariant &value)
+{
+    bool found = false;
+    forEachSimSettingProperty([&](QtProperty *prop) {
+        if (!found && prop->propertyName() == key) {
+            m_variantManager->setValue(prop, value);
+            found = true;
+        }
+    });
+    return found;
+}
+
+bool MainWindow::testValidateRequiredFolder(const QString &dir, const QString &simKey)
+{
+    m_pythonModuleCache.clear();
+    return validateRequiredFolderForSim(dir, simKey, nullptr);
+}
+
+QString MainWindow::testStackupDialogStartDir()
+{
+    return stackupDialogStartDir();
 }
 
 void MainWindow::testRefreshKeywordTipsForCurrentTool()

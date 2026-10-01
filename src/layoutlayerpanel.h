@@ -56,6 +56,7 @@ public:
         bool    used = true;   // present in flattened GDS
         bool    visible = true;
         qreal   opacity = 1.0; // true 2D fill opacity 0..1 (LayoutView::layerOpacity)
+        bool    unmapped = false; // port / thermal marker without stackup layers: guessed position
     };
 
     explicit LayoutLayerPanel(QWidget *parent = nullptr);

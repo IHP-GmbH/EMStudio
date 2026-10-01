@@ -17,6 +17,8 @@ class TipsTest : public QObject
 private slots:
     void resolveKeywordsPath_mapsElmerToPalace();
     void loadKeywordTipsCsv_parsesDelimiters();
+    void loadKeywordTable_readsTopicsAndDefaults();
+    void bindWorkflowCalls_mapsLooseVariables();
     void mergeTipsPreferModel_keepsModelOverrides();
 };
 

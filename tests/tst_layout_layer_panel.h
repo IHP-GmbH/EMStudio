@@ -17,6 +17,7 @@ class LayoutLayerPanelTest : public QObject
 private slots:
     void layers_filterHighlightOpacityAndContextMenu();
     void opacity_deferredUntilSliderReleased();
+    void unmappedPort_isMarkedInList();
 };
 
 #endif // TST_LAYOUT_LAYER_PANEL_H

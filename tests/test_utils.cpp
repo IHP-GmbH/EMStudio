@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include "test_utils.h"
+#include <QCoreApplication>
 
 #include <QFile>
 #include <QDir>
@@ -218,3 +219,32 @@ void updateGoldenOnce(const QString& goldenPath,
 }
 
 } // namespace GoldenTestUtils
+
+KeywordFileBackup::KeywordFileBackup(const QString &name)
+    : m_path(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("keywords/") + name))
+{
+    QFile f(m_path);
+    m_existed = f.open(QIODevice::ReadOnly);
+    if (m_existed)
+        m_data = f.readAll();
+}
+
+KeywordFileBackup::~KeywordFileBackup()
+{
+    if (m_existed) {
+        QFile f(m_path);
+        if (f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            f.write(m_data);
+    } else {
+        QFile::remove(m_path);
+    }
+}
+
+bool KeywordFileBackup::write(const QByteArray &text) const
+{
+    QDir().mkpath(QFileInfo(m_path).absolutePath());
+    QFile f(m_path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        return false;
+    return f.write(text) == text.size();
+}

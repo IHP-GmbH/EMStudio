@@ -1,5 +1,7 @@
 #include "keywordseditor.h"
 
+#include <QComboBox>
+
 #include <QFile>
 #include <QDebug>
 #include <QFileInfo>
@@ -42,6 +44,88 @@ KeywordsEditorDialog::KeywordsEditorDialog(const QString& csvPath,
 }
 
 /*!*******************************************************************************************************************
+ * \brief Editable combo box for the Topic column, listing the topics already in the file.
+ **********************************************************************************************************************/
+KeywordsEditorDialog::TopicDelegate::TopicDelegate(QStandardItemModel *model, QObject *parent)
+    : QStyledItemDelegate(parent), m_model(model)
+{
+}
+
+QWidget *KeywordsEditorDialog::TopicDelegate::createEditor(QWidget *parent, const QStyleOptionViewItem &,
+                                                            const QModelIndex &) const
+{
+    auto *combo = new QComboBox(parent);
+    combo->setEditable(true);
+    QStringList topics;
+    for (int r = 0; r < m_model->rowCount(); ++r) {
+        const QString t = m_model->item(r, 2) ? m_model->item(r, 2)->text().trimmed() : QString();
+        if (!t.isEmpty() && !topics.contains(t))
+            topics << t;
+    }
+    combo->addItems(topics);
+    return combo;
+}
+
+void KeywordsEditorDialog::TopicDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
+{
+    if (auto *combo = qobject_cast<QComboBox *>(editor))
+        combo->setCurrentText(index.data(Qt::EditRole).toString());
+}
+
+void KeywordsEditorDialog::TopicDelegate::setModelData(QWidget *editor, QAbstractItemModel *model,
+                                                        const QModelIndex &index) const
+{
+    if (auto *combo = qobject_cast<QComboBox *>(editor))
+        model->setData(index, combo->currentText().trimmed(), Qt::EditRole);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Yes / no combo box for the Required column; "no" is stored as an empty cell.
+ **********************************************************************************************************************/
+KeywordsEditorDialog::RequiredDelegate::RequiredDelegate(QObject *parent)
+    : QStyledItemDelegate(parent)
+{
+}
+
+QWidget *KeywordsEditorDialog::RequiredDelegate::createEditor(QWidget *parent, const QStyleOptionViewItem &,
+                                                               const QModelIndex &) const
+{
+    auto *combo = new QComboBox(parent);
+    combo->addItem(tr("no"), QString());
+    combo->addItem(tr("yes"), QStringLiteral("yes"));
+    return combo;
+}
+
+void KeywordsEditorDialog::RequiredDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
+{
+    if (auto *combo = qobject_cast<QComboBox *>(editor)) {
+        const bool yes = index.data(Qt::EditRole).toString().trimmed().compare(
+                             QLatin1String("yes"), Qt::CaseInsensitive) == 0;
+        combo->setCurrentIndex(yes ? 1 : 0);
+    }
+}
+
+void KeywordsEditorDialog::RequiredDelegate::setModelData(QWidget *editor, QAbstractItemModel *model,
+                                                           const QModelIndex &index) const
+{
+    if (auto *combo = qobject_cast<QComboBox *>(editor))
+        model->setData(index, combo->currentData().toString(), Qt::EditRole);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the column count and headers: Keyword, Description, Topic, Default, Required.
+ **********************************************************************************************************************/
+void KeywordsEditorDialog::setColumnHeaders()
+{
+    m_model->setColumnCount(kColumns);
+    m_model->setHeaderData(0, Qt::Horizontal, tr("Keyword"));
+    m_model->setHeaderData(1, Qt::Horizontal, tr("Description"));
+    m_model->setHeaderData(2, Qt::Horizontal, tr("Topic"));
+    m_model->setHeaderData(3, Qt::Horizontal, tr("Default"));
+    m_model->setHeaderData(4, Qt::Horizontal, tr("Required"));
+}
+
+/*!*******************************************************************************************************************
  * \brief Builds the UI elements and connects signals/slots.
  *
  * Creates the filter row, model/proxy/view, and bottom action buttons.
@@ -70,9 +154,7 @@ void KeywordsEditorDialog::buildUi()
 
     // Model + proxy
     m_model = new QStandardItemModel(this);
-    m_model->setColumnCount(2);
-    m_model->setHeaderData(0, Qt::Horizontal, tr("Keyword"));
-    m_model->setHeaderData(1, Qt::Horizontal, tr("Description"));
+    setColumnHeaders();
 
     m_proxy = new QSortFilterProxyModel(this);
     m_proxy->setSourceModel(m_model);
@@ -92,9 +174,20 @@ void KeywordsEditorDialog::buildUi()
     m_view->setSortingEnabled(true);
     m_view->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_view->setSelectionMode(QAbstractItemView::ExtendedSelection);
-    m_view->horizontalHeader()->setStretchLastSection(true);
-    m_view->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Interactive);
-    m_view->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    // Model columns follow the file (keyword, description, topic, default, required); on
+    // screen the long description is moved to the end.
+    QHeaderView *header = m_view->horizontalHeader();
+    header->setStretchLastSection(false);
+    header->setSectionResizeMode(0, QHeaderView::Interactive);
+    header->setSectionResizeMode(1, QHeaderView::Stretch);
+    header->setSectionResizeMode(2, QHeaderView::Interactive);
+    header->setSectionResizeMode(3, QHeaderView::Interactive);
+    header->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    m_view->setColumnWidth(2, 190);
+    m_view->setColumnWidth(3, 120);
+    // Topic: pick one of the file's topics or type a new one. Required: yes / no.
+    m_view->setItemDelegateForColumn(2, new TopicDelegate(m_model, m_view));
+    m_view->setItemDelegateForColumn(4, new RequiredDelegate(m_view));
     root->addWidget(m_view, 1);
 
     // Buttons
@@ -211,23 +304,30 @@ QString KeywordsEditorDialog::detectDelimiter(const QString& line) const
 }
 
 /*!*******************************************************************************************************************
- * \brief Splits a line into keyword/description.
+ * \brief Splits a line into keyword, description, topic, default and required.
  *
- * Minimal 2-column parser: the first delimiter separates keyword and description.
- * Everything after the first delimiter is considered description.
+ * Tab files have all five columns. Other delimiters (older 2-column files) only separate keyword
+ * and description; everything after the first delimiter is the description.
  *
  * \param line  Input line.
  * \param delim Delimiter to use.
- * \return QStringList with 2 elements: { keyword, description }.
+ * \return QStringList with 5 elements: { keyword, description, topic, default, required }.
  **********************************************************************************************************************/
 QStringList KeywordsEditorDialog::splitLine(const QString& line, const QString& delim) const
 {
-    const int idx = line.indexOf(delim);
-    if (idx < 0) return { line.trimmed(), QString() };
-
-    const QString k = line.left(idx).trimmed();
-    const QString d = line.mid(idx + delim.size()).trimmed();
-    return { k, d };
+    QStringList cols;
+    if (delim == QLatin1String("\t")) {
+        cols = line.split(QLatin1Char('\t'));
+    } else {
+        // Older 2-column files: other delimiters can occur inside descriptions.
+        const int idx = line.indexOf(delim);
+        cols = (idx < 0) ? QStringList{line} : QStringList{line.left(idx), line.mid(idx + delim.size())};
+    }
+    for (QString &c : cols)
+        c = c.trimmed();
+    while (cols.size() < kColumns)
+        cols << QString();
+    return cols.mid(0, kColumns);
 }
 
 /*!*******************************************************************************************************************
@@ -243,9 +343,11 @@ bool KeywordsEditorDialog::load()
     m_loading = true;
 
     m_model->clear();
-    m_model->setColumnCount(2);
-    m_model->setHeaderData(0, Qt::Horizontal, tr("Keyword"));
-    m_model->setHeaderData(1, Qt::Horizontal, tr("Description"));
+    setColumnHeaders();
+    // clear() resets the header's section order: description last again (on screen only).
+    QHeaderView *header = m_view->horizontalHeader();
+    if (header->visualIndex(1) != kColumns - 1)
+        header->moveSection(header->visualIndex(1), kColumns - 1);
 
     QFile f(m_csvPath);
     if (!f.exists()) {
@@ -280,8 +382,8 @@ bool KeywordsEditorDialog::load()
 
         const QStringList cols = splitLine(line, m_lastDelimiter);
         QList<QStandardItem*> row;
-        row << new QStandardItem(cols.value(0));
-        row << new QStandardItem(cols.value(1));
+        for (int c = 0; c < kColumns; ++c)
+            row << new QStandardItem(cols.value(c));
         m_model->appendRow(row);
     }
 
@@ -333,13 +435,17 @@ bool KeywordsEditorDialog::save()
     QTextStream ts(&f);
     ts.setCodec("UTF-8");
 
-    const QString delim = m_lastDelimiter.isEmpty() ? "\t" : m_lastDelimiter;
-
+    // Always tab-separated: descriptions may contain ',' or ';'. Rows keep their order, which is
+    // the topic and key order of the settings grid. Trailing empty columns are left out.
     for (int r = 0; r < m_model->rowCount(); ++r) {
-        const QString k = m_model->item(r, 0)->text().trimmed();
-        const QString d = m_model->item(r, 1)->text().trimmed();
-        ts << k << delim << d << "\n";
+        QStringList cols;
+        for (int c = 0; c < kColumns; ++c)
+            cols << (m_model->item(r, c) ? m_model->item(r, c)->text().trimmed() : QString());
+        while (cols.size() > 2 && cols.last().isEmpty())
+            cols.removeLast();
+        ts << cols.join(QLatin1Char('\t')) << "\n";
     }
+    m_lastDelimiter = QStringLiteral("\t");
 
     return true;
 }
@@ -351,13 +457,25 @@ bool KeywordsEditorDialog::save()
  **********************************************************************************************************************/
 void KeywordsEditorDialog::onAddRow()
 {
+    // New keyword in the topic of the selected row, inserted after it (file order = grid order).
+    int insertAt = m_model->rowCount();
+    QString topic;
+    const QModelIndex cur = m_proxy->mapToSource(m_view->currentIndex());
+    if (cur.isValid()) {
+        insertAt = cur.row() + 1;
+        if (QStandardItem *t = m_model->item(cur.row(), 2))
+            topic = t->text();
+    }
     QList<QStandardItem*> row;
     row << new QStandardItem(QStringLiteral("new_keyword"));
     row << new QStandardItem(QStringLiteral("description..."));
-    m_model->appendRow(row);
+    row << new QStandardItem(topic);
+    row << new QStandardItem(QString());
+    row << new QStandardItem(QString());
+    m_model->insertRow(insertAt, row);
 
     // Focus new row
-    const QModelIndex srcIdx = m_model->index(m_model->rowCount() - 1, 0);
+    const QModelIndex srcIdx = m_model->index(insertAt, 0);
     const QModelIndex viewIdx = m_proxy->mapFromSource(srcIdx);
     if (viewIdx.isValid()) {
         m_view->scrollTo(viewIdx);

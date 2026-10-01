@@ -876,6 +876,7 @@ PythonParser::Result parseSettingsImpl(const QString &content,
     parseTopLevelAssignments(content, &result.topLevel);
     inferCellNameFromTopLevel(result);
     inferCellNameFromReadGds(content, result);
+    result.keywordAlias = PythonParser::bindWorkflowCalls(content, PythonParser::workflowSignatures());
     finalizeResult(scriptDir, baseName, contextForErrors, result);
 
     for (auto it = result.topLevel.begin(); it != result.topLevel.end(); ++it) {
@@ -906,38 +907,19 @@ PythonParser::Result parseSettingsImpl(const QString &content,
 } // namespace
 
 /*!*******************************************************************************************************************
- * \brief Finds the \c cellname argument of the first \c read_gds(...) call.
+ * \brief Index just past the bracket that closes the one at \a openPos.
  *
- * Scans the call's argument list with balanced parentheses (strings and comments skipped),
- * so multi-line calls work. Recognizes \c cellname=variable, \c cellname=settings['key'] and
- * a quoted literal.
+ * Skips quoted strings and \c # comments, so brackets inside them don't count.
  *
- * \param script Python script text.
- * \return What the call passes; \c found is false without a read_gds call.
+ * \param script  Python script text.
+ * \param openPos Offset of the opening bracket ( '(', '[' or '{' ).
+ * \return Offset after the matching closing bracket, or script.size() if unbalanced.
  **********************************************************************************************************************/
-PythonParser::ReadGdsCellRef PythonParser::readGdsCellRef(const QString &script)
+static int pastMatchingBracket(const QString &script, int openPos)
 {
-    ReadGdsCellRef ref;
-    static const QRegularExpression reCall(QStringLiteral(R"(\bread_gds\s*\()"));
-    QRegularExpressionMatch call;
-    int from = 0;
-    // Skip matches in comments (e.g. "# read_gds(...)").
-    while ((call = reCall.match(script, from)).hasMatch()) {
-        const int lineStart = script.lastIndexOf(QLatin1Char('\n'), call.capturedStart()) + 1;
-        if (!script.mid(lineStart, call.capturedStart() - lineStart).contains(QLatin1Char('#')))
-            break;
-        from = call.capturedEnd();
-    }
-    if (!call.hasMatch())
-        return ref;
-    ref.found = true;
-
-    // Argument list up to the matching ')'.
-    const int argsStart = call.capturedEnd();
-    int depth = 1;
-    int i = argsStart;
+    int depth = 0;
     QChar quote;
-    for (; i < script.size() && depth > 0; ++i) {
+    for (int i = openPos; i < script.size(); ++i) {
         const QChar c = script.at(i);
         if (!quote.isNull()) {
             if (c == QLatin1Char('\\'))
@@ -949,45 +931,347 @@ PythonParser::ReadGdsCellRef PythonParser::readGdsCellRef(const QString &script)
         } else if (c == QLatin1Char('#')) {
             const int nl = script.indexOf(QLatin1Char('\n'), i);
             i = (nl < 0) ? script.size() : nl;
-        } else if (c == QLatin1Char('(')) {
+        } else if (c == QLatin1Char('(') || c == QLatin1Char('[') || c == QLatin1Char('{')) {
             ++depth;
-        } else if (c == QLatin1Char(')')) {
-            --depth;
+        } else if (c == QLatin1Char(')') || c == QLatin1Char(']') || c == QLatin1Char('}')) {
+            if (--depth == 0)
+                return i + 1;
         }
     }
-    const QString args = script.mid(argsStart, i - argsStart);
+    return script.size();
+}
 
-    static const QRegularExpression reKw(QStringLiteral(R"((?:^|[,\s(])cellname\s*=\s*)"));
-    const QRegularExpressionMatch kw = reKw.match(args);
-    if (!kw.hasMatch())
-        return ref;
-    const int valueAt = kw.capturedEnd();
-
-    static const QRegularExpression reDict(
-        QStringLiteral(R"(\G\w+\s*\[\s*(['"])(.*?)\1\s*\])"));
-    static const QRegularExpression reLiteral(QStringLiteral(R"(\G(['"])(.*?)\1)"));
-    static const QRegularExpression reVar(QStringLiteral(R"(\G([A-Za-z_]\w*)\b(?!\s*[\[(.]))"));
-
-    QRegularExpressionMatch m = reDict.match(args, valueAt, QRegularExpression::NormalMatch,
-                                             QRegularExpression::AnchoredMatchOption);
-    if (m.hasMatch()) {
-        ref.settingsKey = m.captured(2);
-        return ref;
+/*!*******************************************************************************************************************
+ * \brief All calls of \a funcName (also as \c module.funcName) outside comments.
+ *
+ * \param script   Python script text.
+ * \param funcName Function name, e.g. "read_gds".
+ * \return Call sites in script order; argument offsets are absolute.
+ **********************************************************************************************************************/
+QVector<PythonParser::CallSite> PythonParser::findCalls(const QString &script, const QString &funcName)
+{
+    QVector<CallSite> out;
+    const QRegularExpression reCall(QStringLiteral(R"((?<![\w.])(?:\w+\.)*%1\s*\()")
+                                        .arg(QRegularExpression::escape(funcName)));
+    QRegularExpressionMatchIterator it = reCall.globalMatch(script);
+    int skipUntil = 0;
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        if (m.capturedStart() < skipUntil)
+            continue;
+        const int lineStart = script.lastIndexOf(QLatin1Char('\n'), m.capturedStart()) + 1;
+        if (script.mid(lineStart, m.capturedStart() - lineStart).contains(QLatin1Char('#')))
+            continue;  // e.g. "# read_gds(...)"
+        // A definition ("def read_gds(") isn't a call.
+        if (QRegularExpression(QStringLiteral(R"(\bdef\s+$)"))
+                .match(script.mid(lineStart, m.capturedStart() - lineStart)).hasMatch())
+            continue;
+        CallSite c;
+        c.start = m.capturedStart();
+        c.argsStart = m.capturedEnd();
+        const int past = pastMatchingBracket(script, m.capturedEnd() - 1);
+        c.argsEnd = qMax(c.argsStart, past - 1);
+        c.args = script.mid(c.argsStart, c.argsEnd - c.argsStart);
+        out << c;
+        skipUntil = past;
     }
-    m = reLiteral.match(args, valueAt, QRegularExpression::NormalMatch,
-                        QRegularExpression::AnchoredMatchOption);
-    if (m.hasMatch()) {
-        ref.hasLiteral = true;
-        ref.literal = m.captured(2);
-        ref.literalStart = argsStart + m.capturedStart();
-        ref.literalLength = m.capturedLength();
-        return ref;
+    return out;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Splits a call's argument list at top-level commas.
+ *
+ * \param script Python script text.
+ * \param call   Call site from \c findCalls.
+ * \return Arguments in order: keyword (empty if positional), value text and its absolute offsets.
+ **********************************************************************************************************************/
+QVector<PythonParser::CallArg> PythonParser::splitCallArgs(const QString &script, const CallSite &call)
+{
+    QVector<CallArg> out;
+    auto flush = [&](int from, int to) {
+        // Trim whitespace and comments around the argument.
+        QString raw = script.mid(from, to - from);
+        int a = 0;
+        int b = raw.size();
+        auto skipSpaceAndComments = [&](int &pos) {
+            for (;;) {
+                while (pos < b && raw.at(pos).isSpace())
+                    ++pos;
+                if (pos < b && raw.at(pos) == QLatin1Char('#')) {
+                    const int nl = raw.indexOf(QLatin1Char('\n'), pos);
+                    pos = nl < 0 ? b : nl;
+                    continue;
+                }
+                return;
+            }
+        };
+        skipSpaceAndComments(a);
+        while (b > a && raw.at(b - 1).isSpace())
+            --b;
+        if (a >= b)
+            return;
+        CallArg arg;
+        const QRegularExpressionMatch kw =
+            QRegularExpression(QStringLiteral(R"(^([A-Za-z_]\w*)\s*=(?!=)\s*)")).match(raw.mid(a, b - a));
+        if (kw.hasMatch()) {
+            arg.keyword = kw.captured(1);
+            a += kw.capturedLength();
+        }
+        arg.text = raw.mid(a, b - a);
+        arg.start = from + a;
+        arg.length = b - a;
+        out << arg;
+    };
+
+    int pieceStart = call.argsStart;
+    QChar quote;
+    int depth = 0;
+    for (int i = call.argsStart; i < call.argsEnd; ++i) {
+        const QChar c = script.at(i);
+        if (!quote.isNull()) {
+            if (c == QLatin1Char('\\'))
+                ++i;
+            else if (c == quote)
+                quote = QChar();
+        } else if (c == QLatin1Char('\'') || c == QLatin1Char('"')) {
+            quote = c;
+        } else if (c == QLatin1Char('#')) {
+            const int nl = script.indexOf(QLatin1Char('\n'), i);
+            i = (nl < 0 || nl > call.argsEnd) ? call.argsEnd : nl;
+        } else if (c == QLatin1Char('(') || c == QLatin1Char('[') || c == QLatin1Char('{')) {
+            ++depth;
+        } else if (c == QLatin1Char(')') || c == QLatin1Char(']') || c == QLatin1Char('}')) {
+            --depth;
+        } else if (c == QLatin1Char(',') && depth == 0) {
+            flush(pieceStart, i);
+            pieceStart = i + 1;
+        }
     }
-    m = reVar.match(args, valueAt, QRegularExpression::NormalMatch,
-                    QRegularExpression::AnchoredMatchOption);
-    if (m.hasMatch() && m.captured(1) != QLatin1String("None"))
-        ref.variable = m.captured(1);
+    flush(pieceStart, call.argsEnd);
+    return out;
+}
+
+/*!*******************************************************************************************************************
+ * \brief What the first \a funcName(...) call passes as keyword argument \a keyword.
+ *
+ * Recognizes \c keyword=variable, \c keyword=settings['key'], a quoted literal and a dict literal.
+ *
+ * \param script   Python script text.
+ * \param funcName Function name, e.g. "read_gds".
+ * \param keyword  Keyword argument name, e.g. "cellname".
+ * \return Reference; \c found is false without such a call.
+ **********************************************************************************************************************/
+PythonParser::CallArgRef PythonParser::callArgumentRef(const QString &script, const QString &funcName,
+                                                       const QString &keyword)
+{
+    CallArgRef ref;
+    const QVector<CallSite> calls = findCalls(script, funcName);
+    if (calls.isEmpty())
+        return ref;
+    ref.found = true;
+
+    for (const CallArg &arg : splitCallArgs(script, calls.first())) {
+        if (arg.keyword != keyword)
+            continue;
+        ref.hasArgument = true;
+        const QString v = arg.text;
+        static const QRegularExpression reDict(QStringLiteral(R"(^\w+\s*\[\s*(['"])(.*?)\1\s*\]$)"));
+        static const QRegularExpression reQuoted(QStringLiteral(R"(^(['"])(.*)\1$)"));
+        static const QRegularExpression reVar(QStringLiteral(R"(^[A-Za-z_]\w*$)"));
+        QRegularExpressionMatch m;
+        if ((m = reDict.match(v)).hasMatch()) {
+            ref.settingsKey = m.captured(2);
+        } else if ((m = reQuoted.match(v)).hasMatch()) {
+            ref.hasLiteral = true;
+            ref.literal = m.captured(2);
+            ref.literalStart = arg.start;
+            ref.literalLength = arg.length;
+        } else if (v.startsWith(QLatin1Char('{')) && v.endsWith(QLatin1Char('}'))) {
+            ref.hasLiteral = true;
+            ref.isDictLiteral = true;
+            ref.literal = v;
+            ref.literalStart = arg.start;
+            ref.literalLength = arg.length;
+        } else if (reVar.match(v).hasMatch() && v != QLatin1String("None")) {
+            ref.variable = v;
+        }
+        break;
+    }
     return ref;
+}
+
+static QVector<PythonParser::WorkflowParam> &signatureStore()
+{
+    static QVector<PythonParser::WorkflowParam> store;
+    return store;
+}
+
+void PythonParser::setWorkflowSignatures(const QVector<WorkflowParam> &signatures)
+{
+    signatureStore() = signatures;
+}
+
+QVector<PythonParser::WorkflowParam> PythonParser::workflowSignatures()
+{
+    return signatureStore();
+}
+
+/*!*******************************************************************************************************************
+ * \brief True if \a name has exactly one assignment in the script: a top-level `name = <literal>`.
+ *
+ * Literal: number, True/False, a quoted string, or a flat list of those. Any other binding of the
+ * name (reassignment, augmented assignment, tuple target, loop / with / import / def / global)
+ * rejects it, so only values with one obvious meaning are used.
+ *
+ * \param script Script text.
+ * \param name   Variable name.
+ **********************************************************************************************************************/
+static bool hasSingleLiteralAssignment(const QString &script, const QString &name)
+{
+    const QString n = QRegularExpression::escape(name);
+    const QRegularExpression reAssign(QStringLiteral(R"((?m)^([ \t]*)%1[ \t]*=(?!=)[ \t]*([^\n]*)$)").arg(n));
+    int count = 0;
+    bool topLevelLiteral = false;
+    QRegularExpressionMatchIterator it = reAssign.globalMatch(script);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        ++count;
+        QString rhs = m.captured(2);
+        const int hash = rhs.indexOf(QLatin1Char('#'));
+        if (hash >= 0 && !rhs.left(hash).contains(QLatin1Char('\'')) && !rhs.left(hash).contains(QLatin1Char('"')))
+            rhs = rhs.left(hash);
+        rhs = rhs.trimmed();
+        static const QRegularExpression reScalar(
+            QStringLiteral(R"(^(?:[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|True|False|None|'[^'\n]*'|"[^"\n]*")$)"));
+        static const QRegularExpression reList(
+            QStringLiteral(R"(^\[\s*(?:(?:[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?|True|False|None|'[^'\n]*'|"[^"\n]*")\s*,?\s*)*\]$)"));
+        topLevelLiteral = m.captured(1).isEmpty()
+                && (reScalar.match(rhs).hasMatch() || reList.match(rhs).hasMatch());
+    }
+    if (count != 1 || !topLevelLiteral)
+        return false;
+
+    // Tuple targets ("a, name = ..."): checked outside brackets only, so call arguments split over
+    // lines ("max_cellsize, refined_cellsize, xy_mesh_function=...") don't look like assignments.
+    QString outside = script;
+    {
+        QChar quote;
+        int depth = 0;
+        for (int i = 0; i < outside.size(); ++i) {
+            const QChar c = outside.at(i);
+            if (!quote.isNull()) {
+                if (c == QLatin1Char('\\'))
+                    ++i;
+                else if (c == quote)
+                    quote = QChar();
+            } else if (c == QLatin1Char('#')) {
+                const int nl = outside.indexOf(QLatin1Char('\n'), i);
+                i = (nl < 0) ? outside.size() : nl - 1;
+            } else if (c == QLatin1Char('\'') || c == QLatin1Char('"')) {
+                quote = c;
+            } else if (c == QLatin1Char('(') || c == QLatin1Char('[') || c == QLatin1Char('{')) {
+                ++depth;
+            } else if (c == QLatin1Char(')') || c == QLatin1Char(']') || c == QLatin1Char('}')) {
+                depth = qMax(0, depth - 1);
+            } else if (depth > 0 && c != QLatin1Char('\n')) {
+                outside[i] = QLatin1Char(' ');
+            }
+        }
+    }
+    const QRegularExpression reTuple(
+        QStringLiteral(R"((?m)^[ \t]*(?:[\w.]+\s*,\s*)*\b%1\b\s*(?:,\s*[\w.]+\s*)*,?\s*=(?!=))").arg(n));
+    QRegularExpressionMatchIterator tuples = reTuple.globalMatch(outside);
+    while (tuples.hasNext()) {
+        if (tuples.next().captured(0).contains(QLatin1Char(',')))
+            return false;
+    }
+
+    const QStringList otherBindings = {
+        QStringLiteral(R"(\b%1\s*(?:[-+*/%@&|^]|//|\*\*|<<|>>)=)"),           // augmented
+        QStringLiteral(R"(\bfor\s+[^\n:]*\b%1\b[^\n:]*\bin\b)"),
+        QStringLiteral(R"(\bas\s+%1\b)"),
+        QStringLiteral(R"(\bimport\b[^\n]*\b%1\b)"),
+        QStringLiteral(R"(\bdef\s+\w+\s*\([^)]*\b%1\b)"),
+        QStringLiteral(R"(\bglobal\s+[^\n]*\b%1\b)"),
+        QStringLiteral(R"(\b%1\s*:=)"),
+    };
+    for (const QString &pat : otherBindings)
+        if (QRegularExpression(pat.arg(n)).match(script).hasMatch())
+            return false;
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Maps loose variables to the workflow parameter they are passed to.
+ *
+ * Older openEMS models define arbitrary variables and pass them to setupSimulation(),
+ * runSimulation(), read_gds(), …: there the call defines what a variable means. Arguments are
+ * bound by keyword name or by position (\a signatures). Only a bare variable with a single
+ * top-level literal assignment counts; a variable bound to two different keywords is dropped.
+ *
+ * \param script     Script text.
+ * \param signatures Workflow parameters (keywords/workflow_signatures.csv).
+ * \return variable -> keyword, only where they differ.
+ **********************************************************************************************************************/
+QHash<QString, QString> PythonParser::bindWorkflowCalls(const QString &script,
+                                                       const QVector<WorkflowParam> &signatures)
+{
+    QHash<QString, QString> bound;
+    QSet<QString> ambiguous;
+    QSet<QString> functions;
+    for (const WorkflowParam &p : signatures)
+        functions.insert(p.function);
+
+    static const QRegularExpression reName(QStringLiteral(R"(^[A-Za-z_]\w*$)"));
+    for (const QString &func : functions) {
+        for (const CallSite &call : findCalls(script, func)) {
+            const QVector<CallArg> args = splitCallArgs(script, call);
+            int position = 0;
+            for (const CallArg &arg : args) {
+                QString keyword;
+                for (const WorkflowParam &p : signatures) {
+                    if (p.function != func)
+                        continue;
+                    if (arg.keyword.isEmpty() ? p.index == position : p.param == arg.keyword) {
+                        keyword = p.keyword;
+                        break;
+                    }
+                }
+                if (arg.keyword.isEmpty())
+                    ++position;
+                if (keyword.isEmpty() || !reName.match(arg.text).hasMatch()
+                    || arg.text == QLatin1String("None") || arg.text == QLatin1String("True")
+                    || arg.text == QLatin1String("False"))
+                    continue;
+                if (bound.contains(arg.text) && bound.value(arg.text) != keyword)
+                    ambiguous.insert(arg.text);
+                bound.insert(arg.text, keyword);
+            }
+        }
+    }
+
+    QHash<QString, QString> out;
+    for (auto it = bound.constBegin(); it != bound.constEnd(); ++it) {
+        if (ambiguous.contains(it.key()) || it.key() == it.value())
+            continue;
+        if (hasSingleLiteralAssignment(script, it.key()))
+            out.insert(it.key(), it.value());
+    }
+    return out;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Finds the \c cellname argument of the first \c read_gds(...) call.
+ *
+ * Multi-line calls work (balanced brackets, strings and comments skipped). Recognizes
+ * \c cellname=variable, \c cellname=settings['key'] and a quoted literal.
+ *
+ * \param script Python script text.
+ * \return What the call passes; \c found is false without a read_gds call.
+ **********************************************************************************************************************/
+PythonParser::ReadGdsCellRef PythonParser::readGdsCellRef(const QString &script)
+{
+    return callArgumentRef(script, QStringLiteral("read_gds"), QStringLiteral("cellname"));
 }
 
 /*!*******************************************************************************************************************

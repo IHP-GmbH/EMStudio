@@ -304,7 +304,9 @@ void LayoutLayerPanel::rebuildList()
     for (const Entry &e : m_all) {
         if (m_usedOnlyOn && !e.used)
             continue;
-        auto *it = new QListWidgetItem(swatchIcon(e.color), e.name, m_list);
+        // Display text only; lookups use kRoleName (the plain layer name).
+        const QString text = e.unmapped ? tr("%1 (not mapped)").arg(e.name) : e.name;
+        auto *it = new QListWidgetItem(swatchIcon(e.color), text, m_list);
         it->setFlags(it->flags() | Qt::ItemIsUserCheckable | Qt::ItemIsSelectable | Qt::ItemIsEnabled);
         it->setCheckState(e.visible ? Qt::Checked : Qt::Unchecked);
         it->setData(kRoleGds, e.gdsLayer);
@@ -313,12 +315,17 @@ void LayoutLayerPanel::rebuildList()
         QString tip = tr("GDS layer %1").arg(e.gdsLayer);
         if (!e.used)
             tip += tr(" (not in layout)");
+        if (e.unmapped)
+            tip += tr("\nNot mapped yet: no Ports / Thermal table entry with its stackup layers, so the "
+                      "layout shows it at a guessed position (height in 3D).");
         it->setToolTip(tip);
-        if (!e.used) {
+        if (!e.used || e.unmapped) {
             QFont f = it->font();
             f.setItalic(true);
             it->setFont(f);
         }
+        if (e.unmapped)
+            it->setForeground(QColor(170, 90, 0));
     }
 
     m_block = false;

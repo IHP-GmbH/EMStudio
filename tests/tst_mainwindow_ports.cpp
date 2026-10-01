@@ -244,6 +244,83 @@ void MainWindowPortsTest::importPortsFromEditor_sheetReferencePlane_toLayerPrese
 }
 
 /*!*******************************************************************************************************************
+ * \brief Multiline Volker-style add_port() must not grow extra port-2 rows on each GUI→script sync.
+ *
+ * findPortBlocks used to stop at the first wrapped argument line, leaving orphaned
+ * simulation_ports.add_port(...) tails that re-imported as duplicate Source Layer 202 rows.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::replacePortSection_multilineVolkerStyle_noDuplicatesOnResync()
+{
+    MainWindow w;
+
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY2(!gdsPath.isEmpty(), "Golden GDS missing");
+    QVERIFY2(!xmlPath.isEmpty(), "Golden XML missing");
+
+    const QString pyStub = ensureTestOpenemsPythonStub();
+    QVERIFY2(!pyStub.isEmpty(), "OpenEMS python stub missing");
+#ifndef Q_OS_WIN
+    QFile::setPermissions(pyStub,
+                          QFile::permissions(pyStub) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.setGdsFile(gdsPath);
+    w.setTopCell("t1");
+    w.setSubstrateFile(xmlPath);
+    w.testSetPreference("Python Path", pyStub);
+    w.refreshSimToolOptionsForTests();
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey("openems", &err), qPrintable(err));
+
+    // Same wrapping style as gds2openEMS more_accurate_models_L6n2/run_L6n2_*.py
+    const QString script = QStringLiteral(
+        "simulation_ports = simulation_setup.all_simulation_ports()\n"
+        "\n"
+        "simulation_ports.add_port(simulation_setup.simulation_port(portnumber=1, \n"
+        "                                                           voltage=1, \n"
+        "                                                           port_Z0=50, \n"
+        "                                                           source_layernum=201, \n"
+        "                                                           from_layername='SUBGND', \n"
+        "                                                           to_layername='TopMetal1', \n"
+        "                                                           direction='z'))\n"
+        "\n"
+        "simulation_ports.add_port(simulation_setup.simulation_port(portnumber=2, \n"
+        "                                                           voltage=1, \n"
+        "                                                           port_Z0=50, \n"
+        "                                                           source_layernum=202, \n"
+        "                                                           from_layername='SUBGND', \n"
+        "                                                           to_layername='TopMetal1', \n"
+        "                                                           direction='z'))\n"
+        "\n"
+        "# ======================== simulation ================================\n");
+
+    w.testSetEditorText(script);
+    w.testImportPortsFromEditor();
+    QCOMPARE(w.testPortsRowCount(), 2);
+
+    for (int pass = 0; pass < 4; ++pass) {
+        QString genErr;
+        const QString out = w.testGenerateScriptFromGuiState(&genErr);
+        QVERIFY2(!out.isEmpty(), qPrintable(genErr));
+        w.testSetEditorText(out);
+
+        const auto parsed = w.testParsePortsFromEditor();
+        QCOMPARE(parsed.size(), 2);
+        QCOMPARE(parsed[0].portnumber, 1);
+        QCOMPARE(parsed[1].portnumber, 2);
+        QCOMPARE(parsed[1].sourceLayer, QStringLiteral("202"));
+
+        QCOMPARE(out.count(QStringLiteral("simulation_ports.add_port")), 2);
+        QCOMPARE(out.count(QStringLiteral("source_layernum=202")), 1);
+    }
+}
+
+/*!*******************************************************************************************************************
  * \brief Verifies manual add/remove operations on the ports table.
  *
  * The test checks:

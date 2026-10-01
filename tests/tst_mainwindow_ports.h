@@ -13,6 +13,7 @@ private slots:
     void importPortsFromEditor_sheetReferencePlane_toLayerPreservedOnRoundTrip();
     void addAndRemovePorts_flow_works();
     void toggleSubLayerNames_convertsNumericLayersToNamesAndBack();
+    void replacePortSection_multilineVolkerStyle_noDuplicatesOnResync();
 
     void switchSimTool_updatesState();
     void defaultScriptGeneration_openems_and_palace_notEmpty();

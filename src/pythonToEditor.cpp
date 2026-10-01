@@ -1000,7 +1000,20 @@ QString MainWindow::buildPortCodeFromGuiTable() const
 QVector<QPair<int,int>> MainWindow::findPortBlocks(const QString &script)
 {
     auto isAddPortLine = [](const QString& t) -> bool {
-        return t.startsWith(QStringLiteral("simulation_ports.add_port"));
+        return t.startsWith(QStringLiteral("simulation_ports.add_port"))
+            || t.startsWith(QStringLiteral("simulation_ports.add_port("));
+    };
+
+    // Count () so Volker-style multiline add_port(...simulation_port(...)) stays in the block.
+    auto parenDelta = [](const QString &line) -> int {
+        int d = 0;
+        for (const QChar c : line) {
+            if (c == QLatin1Char('('))
+                ++d;
+            else if (c == QLatin1Char(')'))
+                --d;
+        }
+        return d;
     };
 
     QVector<QPair<int,int>> blocks;
@@ -1016,8 +1029,9 @@ QVector<QPair<int,int>> MainWindow::findPortBlocks(const QString &script)
 
         const int blockStart = m.capturedStart();
         int scan = m.capturedEnd();
+        int parenDepth = 0;
 
-        // Scan forward while lines belong to the port block
+        // Scan forward while lines belong to the port block (incl. wrapped add_port args).
         while (scan < script.size()) {
             int lineEnd = script.indexOf('\n', scan);
             if (lineEnd < 0)
@@ -1026,7 +1040,24 @@ QVector<QPair<int,int>> MainWindow::findPortBlocks(const QString &script)
             const QString line = script.mid(scan, lineEnd - scan);
             const QString t = line.trimmed();
 
-            if (t.isEmpty() || t.startsWith('#') || isAddPortLine(t)) {
+            if (parenDepth > 0) {
+                // Continuation of a multiline add_port(...) — keep until balanced.
+                parenDepth += parenDelta(line);
+                if (parenDepth < 0)
+                    parenDepth = 0;
+                scan = (lineEnd < script.size()) ? (lineEnd + 1) : lineEnd;
+                continue;
+            }
+
+            if (t.isEmpty() || t.startsWith(QLatin1Char('#'))) {
+                scan = (lineEnd < script.size()) ? (lineEnd + 1) : lineEnd;
+                continue;
+            }
+
+            if (isAddPortLine(t)) {
+                parenDepth += parenDelta(line);
+                if (parenDepth < 0)
+                    parenDepth = 0;
                 scan = (lineEnd < script.size()) ? (lineEnd + 1) : lineEnd;
                 continue;
             }
@@ -1066,22 +1097,55 @@ void MainWindow::replaceOrInsertPortSection(QString &script, const QString &port
         const int s0 = blocks[0].first;
         const int e0 = blocks[0].second;
         script.replace(s0, e0 - s0, portCode);
-        return;
+    } else {
+        // No section found -> insert before "simulation ===" marker if present, else append
+        QRegularExpression simMarker(
+            R"(#[^\n]*simulation\s*={3,})",
+            QRegularExpression::MultilineOption);
+        QRegularExpressionMatch simMatch = simMarker.match(script);
+
+        const QString injected = QStringLiteral("\n\n") + portCode + QStringLiteral("\n");
+
+        if (simMatch.hasMatch()) {
+            const int insertPos = simMatch.capturedStart();
+            script.insert(insertPos, injected);
+        } else {
+            script.append(injected);
+        }
     }
 
-    // No section found -> insert before "simulation ===" marker if present, else append
-    QRegularExpression simMarker(
-        R"(#[^\n]*simulation\s*={3,})",
-        QRegularExpression::MultilineOption);
-    QRegularExpressionMatch simMatch = simMarker.match(script);
+    // Older builds truncated multiline add_port blocks and left orphaned calls behind.
+    // After writing one clean section, drop any add_port(...) still outside it.
+    const auto kept = findPortBlocks(script);
+    if (kept.isEmpty())
+        return;
 
-    const QString injected = QStringLiteral("\n\n") + portCode + QStringLiteral("\n");
+    const int keepStart = kept[0].first;
+    const int keepEnd = kept[0].second;
 
-    if (simMatch.hasMatch()) {
-        const int insertPos = simMatch.capturedStart();
-        script.insert(insertPos, injected);
-    } else {
-        script.append(injected);
+    QRegularExpression orphanRe(
+        R"(simulation_ports\s*\.\s*add_port\s*\(\s*simulation_setup\s*\.\s*simulation_port\s*\(\s*.*?\s*\)\s*\))",
+        QRegularExpression::DotMatchesEverythingOption | QRegularExpression::MultilineOption);
+
+    QVector<QPair<int, int>> orphans;
+    auto it = orphanRe.globalMatch(script);
+    while (it.hasNext()) {
+        const auto m = it.next();
+        if (m.capturedStart() < keepStart || m.capturedEnd() > keepEnd)
+            orphans.push_back({m.capturedStart(), m.capturedEnd()});
+    }
+    for (int i = orphans.size() - 1; i >= 0; --i) {
+        const int s = orphans[i].first;
+        int e = orphans[i].second;
+        // Eat following newline so we do not leave blank-gap debris.
+        if (e < script.size() && (script.at(e) == QLatin1Char('\n')
+                                  || script.at(e) == QLatin1Char('\r'))) {
+            ++e;
+            if (e < script.size() && script.at(e - 1) == QLatin1Char('\r')
+                && script.at(e) == QLatin1Char('\n'))
+                ++e;
+        }
+        script.remove(s, e - s);
     }
 }
 

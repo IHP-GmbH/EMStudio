@@ -295,7 +295,15 @@ int fillEmptyPreferences(QMap<QString, QVariant> &prefs)
 
     setIfEmpty(prefs, QStringLiteral("KLAYOUT_EXE"), findKlayoutExe(), &n);
     setIfEmpty(prefs, QStringLiteral("ELMER_SOLVER_PATH"), findElmerSolver(), &n);
-    setIfEmpty(prefs, QStringLiteral("PALACE_INSTALL_PATH"), findPalaceInstallRoot(), &n);
+    // Do not invent PALACE_INSTALL_PATH when the user already runs via Script mode —
+    // filling an empty install key confused enablement / Preference UI earlier.
+    {
+        const int runMode = prefs.value(QStringLiteral("PALACE_RUN_MODE"), 0).toInt();
+        const bool scriptMode = (runMode == 1)
+            || !prefs.value(QStringLiteral("PALACE_RUN_SCRIPT")).toString().trimmed().isEmpty();
+        if (!scriptMode)
+            setIfEmpty(prefs, QStringLiteral("PALACE_INSTALL_PATH"), findPalaceInstallRoot(), &n);
+    }
     setIfEmpty(prefs, QStringLiteral("OPENEMS_INSTALL_PATH"), findOpenemsInstallRoot(), &n);
 
     return n;

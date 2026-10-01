@@ -4,7 +4,7 @@
 #   pyvista          — VTK slices / volume viewer
 #   pillow           — PNG export for 2D Field overlay
 #   scipy            — optional smoother sampling
-#   pyvistaqt+PySide6 — Qt BackgroundPlotter (nicer Field 3D window)
+#   pyvistaqt+PySide6 — Field 3D viewer window (scripts/field_viewer.py)
 
 pyvista
 pillow

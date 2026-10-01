@@ -186,6 +186,7 @@ void MainWindow::openThermalResultsInFieldView(const QString &runDir)
     m_fieldDumpSearchDir = dir;
     m_fieldLastDumpPath.clear();
     m_fieldPreferAutoZ = true;
+    refreshFieldChoices();
 
     const QString vtu = findThermalResultsVtu(dir);
     if (vtu.isEmpty()) {

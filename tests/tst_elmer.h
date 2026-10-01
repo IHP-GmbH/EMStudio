@@ -28,6 +28,7 @@ private slots:
     void substrateOffset_expressionResolvesWithVariables();
     void thermalRows_addRemoveAndWorkflowHelpers();
     void openThermalResults_switchesToFieldView();
+    void fieldChoices_parseListingAndViewerArgs();
     void generateScript_elmerThermalFromGui();
     void forceStartSimulationOff_clearsTrueFlags();
     void applyGdsAndXmlPaths_updatesCellnameAndGdsCellname();

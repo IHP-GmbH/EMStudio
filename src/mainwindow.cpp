@@ -55,8 +55,9 @@
 #include <QDockWidget>
 #include <QPixmap>
 #include <QSet>
-#include <QElapsedTimer>
 #include <QEventLoop>
+#include <QShortcut>
+#include <QKeySequence>
 #include <algorithm>
 
 #include "extension/variantmanager.h"
@@ -86,6 +87,7 @@
 #include "pythonparser.h"
 #include "pythoneditor.h"
 #include "keywordseditor.h"
+#include "keybindingsdialog.h"
 #include "sanitycheck.h"
 
 #include <QRegularExpression>
@@ -279,6 +281,8 @@ MainWindow::MainWindow(QWidget *parent)
                 this, &MainWindow::onLayoutFieldSliceRequest);
         connect(m_ui->layoutView, &LayoutView::fieldHotZRequest,
                 this, &MainWindow::onLayoutFieldHotZRequest);
+        connect(m_ui->layoutView, &LayoutView::fieldChoiceChanged,
+                this, &MainWindow::onLayoutFieldChoiceChanged);
         if (!m_fieldSliceDebounce) {
             m_fieldSliceDebounce = new QTimer(this);
             m_fieldSliceDebounce->setSingleShot(true);
@@ -318,6 +322,8 @@ MainWindow::MainWindow(QWidget *parent)
     loadSettings();
     initRecentMenu();
     setupSettingsPanel();
+    setupGlobalShortcuts();
+    applyNavigationStyle();
 
     connect(m_ui->editRunPythonScript, &PythonEditor::sigFontSizeChanged,
             this, [=](qreal newSize){
@@ -362,7 +368,6 @@ MainWindow::MainWindow(QWidget *parent)
     const qreal pt = QFontInfo(QApplication::font()).pointSizeF();
     if (pt > 0.0)
         mono.setPointSizeF(pt);
-    mono.setPixelSize(-1);
     m_ui->editSimulationLog->setFont(mono);
 
     //hide python code button and text line
@@ -1927,12 +1932,16 @@ QString MainWindow::findFieldDumpPath(const QString &runDir) const
 
     const QString key = currentSimToolKey().toLower();
 
+    // openEMS FD dumps: *_abs is the field; *_arg (phase) and *_p=<deg> snapshots are not.
+    static const QRegularExpression openemsAux(QStringLiteral(R"(_(arg|p=\d+)\.vt[ru]$)"));
     auto newestMatch = [](const QString &root, const QStringList &filters) -> QString {
         QFileInfo best;
         QDirIterator it(root, filters, QDir::Files, QDirIterator::Subdirectories);
         int guard = 0;
         while (it.hasNext() && guard++ < 400) {
             const QFileInfo fi(it.next());
+            if (openemsAux.match(fi.fileName()).hasMatch())
+                continue;
             if (!best.exists() || fi.lastModified() > best.lastModified())
                 best = fi;
         }
@@ -1958,6 +1967,212 @@ QString MainWindow::findFieldDumpPath(const QString &runDir) const
         return vtk;
 
     return {};
+}
+
+/*!*******************************************************************************************************************
+ * \brief Field source preset for \c field_io.py / \c field_viewer.py (\c --source).
+ *
+ * \return \c palace, \c elmer_em, \c elmer_thermal or \c openems; empty for other tools.
+ **********************************************************************************************************************/
+QString MainWindow::fieldSourceId() const
+{
+    const QString key = currentSimToolKey();
+    static const QStringList known = {
+        QStringLiteral("palace"), QStringLiteral("elmer_em"),
+        QStringLiteral("elmer_thermal"), QStringLiteral("openems")};
+    return known.contains(key) ? key : QString();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Run directory searched for field dumps (\c --run-path).
+ *
+ * Elmer Thermal's explicit search dir wins. openEMS scripts write
+ * \c output/<model>_data next to the script, so the whole \c output folder is
+ * searched (several runs of one model are offered side by side).
+ **********************************************************************************************************************/
+QString MainWindow::fieldRunDirectory() const
+{
+    if (!m_fieldDumpSearchDir.isEmpty())
+        return m_fieldDumpSearchDir;
+    if (fieldSourceId() == QLatin1String("openems")) {
+        const QString script = currentPythonScriptPath();
+        if (!script.isEmpty()) {
+            const QDir modelDir(QFileInfo(script).absolutePath());
+            const QString out = modelDir.filePath(QStringLiteral("output"));
+            return QDir::cleanPath(QDir(out).exists() ? out : modelDir.absolutePath());
+        }
+    }
+    return resolveResultsDirectory();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Fills \c m_fieldChoices from \c field_io.py --list JSON.
+ *
+ * Final-pass files only (AMR iteration copies are left to the 3D viewer),
+ * one entry per cycle with field data. Returns false for unusable JSON.
+ **********************************************************************************************************************/
+bool MainWindow::parseFieldChoices(const QByteArray &json)
+{
+    const QJsonDocument doc = QJsonDocument::fromJson(json.trimmed());
+    if (!doc.isObject())
+        return false;
+
+    const FieldChoice *prev = currentFieldChoice();
+    const QString prevPath = prev ? prev->path : QString();
+    const int prevCycle = prev ? prev->cycle : 1;
+
+    QJsonArray files = doc.object().value(QStringLiteral("files")).toArray();
+    QJsonArray finalFiles;
+    for (const QJsonValue &v : files)
+        if (!v.toObject().value(QStringLiteral("amr")).toBool())
+            finalFiles.append(v);
+    if (!finalFiles.isEmpty())
+        files = finalFiles;
+
+    QVector<FieldChoice> choices;
+    const bool multiFile = files.size() > 1;
+    for (const QJsonValue &fv : files) {
+        const QJsonObject f = fv.toObject();
+        const QString path = f.value(QStringLiteral("path")).toString();
+        const QString fileLabel = f.value(QStringLiteral("label")).toString(QFileInfo(path).fileName());
+        const QJsonArray cycles = f.value(QStringLiteral("cycles")).toArray();
+        QVector<QPair<int, QString>> usable;
+        for (int i = 0; i < cycles.size(); ++i) {
+            const QJsonObject c = cycles.at(i).toObject();
+            if (c.value(QStringLiteral("geometry")).toBool(false))
+                continue; // mesh only, nothing to color in a slice
+            usable.append({i + 1, c.value(QStringLiteral("label")).toString()});
+        }
+        if (usable.isEmpty() && cycles.isEmpty())
+            usable.append({1, QString()});
+        for (const auto &u : usable) {
+            QStringList parts;
+            if (multiFile || usable.size() == 1)
+                parts << fileLabel;
+            if (usable.size() > 1)
+                parts << u.second;
+            choices.append({path, u.first, parts.join(QStringLiteral(" · "))});
+        }
+    }
+
+    m_fieldChoices = choices;
+    m_fieldChoiceIndex = 0;
+    for (int i = 0; i < m_fieldChoices.size(); ++i) {
+        if (m_fieldChoices.at(i).path == prevPath && m_fieldChoices.at(i).cycle == prevCycle) {
+            m_fieldChoiceIndex = i;
+            break;
+        }
+    }
+    if (m_ui && m_ui->layoutView) {
+        QStringList labels;
+        for (const FieldChoice &c : std::as_const(m_fieldChoices))
+            labels << c.label;
+        m_ui->layoutView->setFieldChoices(labels, m_fieldChoiceIndex);
+    }
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Re-lists field dumps for the current run via \c field_io.py (same discovery as the 3D viewer).
+ *
+ * Cheap: \c field_io.py only globs and reads XML headers. Leaves the list empty
+ * (legacy \c findFieldDumpPath fallback) when the tool, Python or script is missing.
+ **********************************************************************************************************************/
+void MainWindow::refreshFieldChoices()
+{
+    const QString source = fieldSourceId();
+    const QString runDir = fieldRunDirectory();
+    m_fieldChoicesKey = runDir + QLatin1Char('|') + source;
+    if (source.isEmpty() || runDir.isEmpty()) {
+        parseFieldChoices(QByteArrayLiteral("{\"files\":[]}"));
+        return;
+    }
+#ifdef EMSTUDIO_TESTING
+    parseFieldChoices(QByteArrayLiteral("{\"files\":[]}"));
+#else
+    const QString script = resolveModelTemplatePath(QStringLiteral("field_io.py"));
+    const QString python = resolveFieldViewerPython();
+    if (script.isEmpty() || !QFileInfo::exists(script) || python.isEmpty()) {
+        parseFieldChoices(QByteArrayLiteral("{\"files\":[]}"));
+        return;
+    }
+    QProcess proc;
+    proc.setProcessChannelMode(QProcess::SeparateChannels);
+    proc.start(python, {script, QStringLiteral("--list"),
+                        QStringLiteral("--run-path"), runDir,
+                        QStringLiteral("--source"), source});
+    if (!proc.waitForFinished(15000) || proc.exitCode() != 0
+        || !parseFieldChoices(proc.readAllStandardOutput())) {
+        proc.kill();
+        appendToSimulationLog(QByteArray("\n[Field] Listing field dumps failed:\n  ")
+                              + proc.readAllStandardError().trimmed().right(600) + "\n");
+        parseFieldChoices(QByteArrayLiteral("{\"files\":[]}"));
+        return;
+    }
+    appendToSimulationLog(QStringLiteral("\n[Field] %1 result choice(s) for %2 under:\n  %3\n")
+                              .arg(m_fieldChoices.size()).arg(source, runDir).toUtf8());
+#endif
+}
+
+const MainWindow::FieldChoice *MainWindow::currentFieldChoice() const
+{
+    if (m_fieldChoiceIndex < 0 || m_fieldChoiceIndex >= m_fieldChoices.size())
+        return nullptr;
+    return &m_fieldChoices.at(m_fieldChoiceIndex);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Dump shown in the Field views: the picked file / cycle, else the newest dump found.
+ **********************************************************************************************************************/
+QString MainWindow::currentFieldDumpPath(int *cycleOut) const
+{
+    if (const FieldChoice *c = currentFieldChoice()) {
+        if (cycleOut)
+            *cycleOut = c->cycle;
+        return c->path;
+    }
+    if (cycleOut)
+        *cycleOut = 1;
+    return findFieldDumpPath();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Command line for \c field_viewer.py: the whole run (so the viewer offers every file)
+ *        with the Layout Field selection preselected, or a single dump as fallback.
+ **********************************************************************************************************************/
+QStringList MainWindow::fieldViewerArguments(const QString &script,
+                                             const QString &runDir,
+                                             const QString &iconPath) const
+{
+    QStringList args{script};
+    const QString source = fieldSourceId();
+    if (const FieldChoice *c = currentFieldChoice()) {
+        args << QStringLiteral("--run-path") << runDir
+             << QStringLiteral("--source") << source
+             << QStringLiteral("--select-file") << c->path
+             << QStringLiteral("--cycle") << QString::number(c->cycle);
+    } else {
+        args << findFieldDumpPath(runDir);
+        if (!source.isEmpty())
+            args << QStringLiteral("--source") << source;
+    }
+    if (!iconPath.isEmpty())
+        args << QStringLiteral("--icon") << iconPath;
+    args << QStringLiteral("--nav-style")
+         << NavigationStyle::id(NavigationStyle::fromPreferences(m_preferences));
+    args << QStringLiteral("--stdin-control");
+    return args;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Slot: Field panel file / cycle picker — re-export the slice for the new choice.
+ **********************************************************************************************************************/
+void MainWindow::onLayoutFieldChoiceChanged(int index)
+{
+    if (index < 0 || index >= m_fieldChoices.size() || index == m_fieldChoiceIndex)
+        return;
+    m_fieldChoiceIndex = index;
+    scheduleFieldOverlayRefresh(true);
 }
 
 /*!*******************************************************************************************************************
@@ -2053,20 +2268,27 @@ void MainWindow::onLayoutFieldModeChanged(bool on)
     if (m_ui && m_ui->layoutView)
         m_ui->layoutView->setFieldProbeThermal(isElmerThermalKey(currentSimToolKey()));
     m_fieldPreferAutoZ = true;
+    refreshFieldChoices();
     // Prefer disk cache when re-entering Field — force re-export freezes the UI
     // (kill+waitForFinished + Python VTU load) and is rarely needed.
     scheduleFieldOverlayRefresh(false);
 }
 
 /*!*******************************************************************************************************************
- * \brief Opens an interactive PyVista 3D field window (Field → 3D); layout pane stays 2D.
+ * \brief Opens the Field 3D viewer (\c field_viewer.py); the layout pane stays 2D.
+ *
+ * The viewer gets the whole run, so it offers every result file / cycle, with
+ * the Layout Field choice preselected. If it is already open, the choice is
+ * sent over its stdin and the existing window reloads / comes to the front.
  **********************************************************************************************************************/
 void MainWindow::openFieldVolumeExternalViewer()
 {
-    const QString dump = findFieldDumpPath();
+    refreshFieldChoices();
+    int cycle = 1;
+    const QString dump = currentFieldDumpPath(&cycle);
     if (dump.isEmpty()) {
         appendToSimulationLog(
-            QByteArray("\n[Field 3D] No field dump found. Enable fdump / open a run with .pvd/.vtu.\n"));
+            QByteArray("\n[Field 3D] No field dump found. Enable fdump / field dumps and re-run.\n"));
         if (m_ui && m_ui->layoutView) {
             LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
             ov.status = tr("No field dump for 3D viewer.");
@@ -2074,11 +2296,27 @@ void MainWindow::openFieldVolumeExternalViewer()
         }
         return;
     }
+    const QString runDir = fieldRunDirectory();
 
-    const QString script = resolveModelTemplatePath(QStringLiteral("field_volume_viewer.py"));
+    if (m_fieldVolumeViewerProcess && m_fieldVolumeViewerProcess->state() == QProcess::Running) {
+        QJsonObject msg;
+        msg.insert(QStringLiteral("source"), fieldSourceId());
+        if (currentFieldChoice()) {
+            msg.insert(QStringLiteral("run_path"), runDir);
+            msg.insert(QStringLiteral("select_file"), dump);
+            msg.insert(QStringLiteral("cycle"), cycle);
+        } else {
+            msg.insert(QStringLiteral("files"), QJsonArray{dump});
+        }
+        m_fieldVolumeViewerProcess->write(QJsonDocument(msg).toJson(QJsonDocument::Compact) + '\n');
+        appendToSimulationLog(QByteArray("\n[Field 3D] Viewer already open — bringing it to the front.\n"));
+        return;
+    }
+
+    const QString script = resolveModelTemplatePath(QStringLiteral("field_viewer.py"));
     if (script.isEmpty() || !QFileInfo::exists(script)) {
         appendToSimulationLog(
-            QByteArray("\n[Field 3D] Missing scripts/field_volume_viewer.py next to EMStudio.\n"));
+            QByteArray("\n[Field 3D] Missing scripts/field_viewer.py next to EMStudio.\n"));
         return;
     }
 
@@ -2086,15 +2324,14 @@ void MainWindow::openFieldVolumeExternalViewer()
     const QString python = resolveFieldViewerPython(&pyDetail);
     if (python.isEmpty()) {
         appendToSimulationLog(
-            QByteArray("\n[Field 3D] No Python for volume viewer.\n  ")
+            QByteArray("\n[Field 3D] No Python for the 3D viewer.\n  ")
             + (pyDetail.isEmpty() ? QByteArray("Set FIELD_VIEWER_PYTHON.") : pyDetail.toUtf8())
-            + "\n  pip install pyvista\n  optional: pip install pyvistaqt PySide6\n");
+            + "\n  pip install pyvista pyvistaqt PySide6\n");
         return;
     }
 
     // Immediate feedback while PyVista starts (can take several seconds).
-    // Keep splash until the viewer prints ready / fails — not a fixed short timer
-    // (that made it look like "nothing opened").
+    // Keep the splash until the viewer prints ready / fails.
     if (m_ui && m_ui->layoutView) {
         LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
         ov.status = tr("Opening 3D viewer… (may take a few seconds)");
@@ -2145,61 +2382,27 @@ void MainWindow::openFieldVolumeExternalViewer()
         QTimer::singleShot(90000, this, [this]() { closeFieldVolumeViewerSplash(); });
     }
 
-    // Logo / window icon for the Python viewer.
-    QString logoPath;
+    // Window icon: the installed .ico, else the embedded logo in a temp file
+    // (never written into the results folder).
     QString iconPath;
     {
-        const QDir dumpDir(QFileInfo(dump).absolutePath());
-        const QString outLogo = dumpDir.filePath(QStringLiteral("emstudio_logo_field3d.png"));
-        if (QFile::exists(outLogo))
-            QFile::remove(outLogo);
-        if (QFile::copy(QStringLiteral(":/logo"), outLogo)) {
-            QFile::setPermissions(outLogo, QFileDevice::ReadOwner | QFileDevice::WriteOwner
-                    | QFileDevice::ReadUser | QFileDevice::WriteUser
-                    | QFileDevice::ReadOther);
-            logoPath = outLogo;
-        } else {
-            const QString nearApp = QDir(QCoreApplication::applicationDirPath())
-                    .filePath(QStringLiteral("icons/logo.png"));
-            if (QFileInfo::exists(nearApp))
-                logoPath = nearApp;
-        }
-
-        const QStringList iconCandidates = {
-            QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("appicon.ico")),
-            QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("icons/appicon.ico")),
-            QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("../appicon.ico")),
-        };
-        for (const QString &c : iconCandidates) {
+        const QDir appDir(QCoreApplication::applicationDirPath());
+        for (const QString &c : {appDir.filePath(QStringLiteral("appicon.ico")),
+                                 appDir.filePath(QStringLiteral("icons/appicon.ico")),
+                                 appDir.filePath(QStringLiteral("../appicon.ico"))}) {
             if (QFileInfo::exists(c)) {
-                iconPath = c;
+                iconPath = QFileInfo(c).absoluteFilePath();
                 break;
             }
         }
-        if (!iconPath.isEmpty()) {
-            const QString outIco = dumpDir.filePath(QStringLiteral("emstudio_field3d.ico"));
-            if (QFile::exists(outIco))
-                QFile::remove(outIco);
-            if (QFile::copy(iconPath, outIco)) {
-                QFile::setPermissions(outIco, QFileDevice::ReadOwner | QFileDevice::WriteOwner
-                        | QFileDevice::ReadUser | QFileDevice::WriteUser
-                        | QFileDevice::ReadOther);
-                iconPath = outIco;
-            }
+        if (iconPath.isEmpty()) {
+            const QString tmpLogo = QDir(QDir::tempPath()).filePath(QStringLiteral("emstudio_field_viewer_logo.png"));
+            if (QFileInfo::exists(tmpLogo) || QPixmap(QStringLiteral(":/logo")).save(tmpLogo))
+                iconPath = tmpLogo;
         }
     }
 
-    QStringList args;
-    args << script
-         << QStringLiteral("--input") << dump;
-    if (!logoPath.isEmpty())
-        args << QStringLiteral("--logo") << logoPath;
-    if (!iconPath.isEmpty())
-        args << QStringLiteral("--icon") << iconPath;
-    // Log scale from 2D Field; Z is chosen in the viewer at the top of the layout
-    // (2D mid-plane clip chops upper metal layers).
-    if (m_ui && m_ui->layoutView && m_ui->layoutView->fieldLogScale())
-        args << QStringLiteral("--log");
+    const QStringList args = fieldViewerArguments(script, runDir, iconPath);
 
     if (!m_fieldVolumeViewerProcess) {
         m_fieldVolumeViewerProcess = new QProcess(this);
@@ -2209,10 +2412,6 @@ void MainWindow::openFieldVolumeExternalViewer()
         connect(m_fieldVolumeViewerProcess,
                 QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                 this, &MainWindow::onFieldVolumeViewerFinished);
-    }
-    if (m_fieldVolumeViewerProcess->state() != QProcess::NotRunning) {
-        m_fieldVolumeViewerProcess->kill();
-        m_fieldVolumeViewerProcess->waitForFinished(1500);
     }
     m_fieldVolumeViewerOutput.clear();
 
@@ -2247,9 +2446,9 @@ void MainWindow::openFieldVolumeExternalViewer()
         return;
     }
     appendToSimulationLog(
-        QByteArray("\n[Field 3D] Starting interactive PyVista window "
+        QByteArray("\n[Field 3D] Starting the 3D field viewer "
                    "(first open can take several seconds)…\n  ")
-        + python.toUtf8() + "\n  " + dump.toUtf8() + "\n");
+        + python.toUtf8() + "\n  " + runDir.toUtf8() + "\n");
 }
 
 void MainWindow::closeFieldVolumeViewerSplash()
@@ -2266,8 +2465,7 @@ void MainWindow::onFieldVolumeViewerReadyRead()
     const QByteArray chunk = m_fieldVolumeViewerProcess->readAllStandardOutput();
     m_fieldVolumeViewerOutput += chunk;
     const QByteArray lower = chunk.toLower();
-    if (lower.contains("opened backgroundplotter")
-        || lower.contains("showing plotter")) {
+    if (lower.contains("field_viewer: ready")) {
         closeFieldVolumeViewerSplash();
         if (m_ui && m_ui->layoutView) {
             LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
@@ -2311,13 +2509,12 @@ void MainWindow::onFieldVolumeViewerFinished(int exitCode, QProcess::ExitStatus 
 }
 
 /*!*******************************************************************************************************************
- * \brief Slot: LayoutView Z / Log / Arrows request — queue a forced re-export.
+ * \brief Slot: LayoutView Z / Log request — queue a forced re-export.
  **********************************************************************************************************************/
-void MainWindow::onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showArrows)
+void MainWindow::onLayoutFieldSliceRequest(qreal zUm, bool logScale)
 {
     m_pendingFieldZUm = zUm;
     m_pendingFieldLog = logScale;
-    m_pendingFieldArrows = showArrows;
     m_fieldPreferAutoZ = false; // user moved Z / options
     scheduleFieldOverlayRefresh(true);
 }
@@ -2330,7 +2527,6 @@ void MainWindow::onLayoutFieldHotZRequest()
     if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
         return;
     m_pendingFieldLog = m_ui->layoutView->fieldLogScale();
-    m_pendingFieldArrows = m_ui->layoutView->fieldShowArrows();
     m_fieldPreferAutoZ = true;
     scheduleFieldOverlayRefresh(true);
 }
@@ -2390,7 +2586,6 @@ bool MainWindow::loadFieldOverlayFromCache(const QString &metaPath)
     ov.yminUm = o.value(QStringLiteral("ymin_um")).toDouble();
     ov.ymaxUm = o.value(QStringLiteral("ymax_um")).toDouble();
     ov.logScale = o.value(QStringLiteral("log_scale")).toBool();
-    ov.showArrows = o.value(QStringLiteral("show_arrows")).toBool(true);
     ov.volume = o.value(QStringLiteral("volume")).toBool(false);
     if (o.contains(QStringLiteral("clip_um")) && ov.volume)
         ov.zUm = o.value(QStringLiteral("clip_um")).toDouble(ov.zUm);
@@ -2436,19 +2631,6 @@ bool MainWindow::loadFieldOverlayFromCache(const QString &metaPath)
         }
     }
 
-    const QJsonArray arrows = o.value(QStringLiteral("arrows")).toArray();
-    ov.arrows.reserve(arrows.size());
-    for (const QJsonValue &v : arrows) {
-        const QJsonObject a = v.toObject();
-        LayoutView::FieldArrow fa;
-        fa.xUm = a.value(QStringLiteral("x_um")).toDouble();
-        fa.yUm = a.value(QStringLiteral("y_um")).toDouble();
-        fa.dx = a.value(QStringLiteral("dx")).toDouble();
-        fa.dy = a.value(QStringLiteral("dy")).toDouble();
-        fa.mag = a.value(QStringLiteral("mag")).toDouble(1.0);
-        ov.arrows.push_back(fa);
-    }
-
     m_ui->layoutView->setFieldOverlay(ov);
     {
         const QString qty = ov.quantity.toLower();
@@ -2476,9 +2658,14 @@ void MainWindow::refreshFieldOverlay(bool force)
     LayoutView::FieldOverlay pending;
     pending.zUm = m_pendingFieldZUm;
     pending.logScale = m_pendingFieldLog;
-    pending.showArrows = m_pendingFieldArrows;
 
-    const QString dump = findFieldDumpPath();
+    // The model's tool / run folder may have changed since the last listing
+    // (e.g. the layout loads before the simulation tool is switched).
+    if (fieldRunDirectory() + QLatin1Char('|') + fieldSourceId() != m_fieldChoicesKey)
+        refreshFieldChoices();
+
+    int cycle = 1;
+    const QString dump = currentFieldDumpPath(&cycle);
     if (dump.isEmpty()) {
         pending.status = tr("No field dump found. Enable fdump / field_dumps, or open a run with .pvd/.vtk/.vtu.");
         m_ui->layoutView->setFieldOverlay(pending);
@@ -2493,19 +2680,32 @@ void MainWindow::refreshFieldOverlay(bool force)
     const QString outDir = QFileInfo(dump).absolutePath();
     const QString metaPath = QDir(outDir).filePath(QStringLiteral("field_slice_meta.json"));
 
+    // A cached slice is only reused for the same file and cycle.
+    const bool sameDump = (dump == m_fieldLastDumpPath && cycle == m_fieldLastCycle);
+    auto cacheMatches = [&]() {
+        QFile mf(metaPath);
+        if (!mf.open(QIODevice::ReadOnly))
+            return false;
+        const QJsonObject mo = QJsonDocument::fromJson(mf.readAll()).object();
+        const QString src = mo.value(QStringLiteral("source")).toString();
+        return mo.value(QStringLiteral("cycle")).toInt(1) == cycle
+            && (src.isEmpty() || QFileInfo(src) == QFileInfo(dump));
+    };
+
     // Instant paint from last export while a new one is prepared (avoids UI freeze).
     // Do not keep an old overlay when the dump path changed (new model / new run).
     if (!force && m_ui->layoutView->fieldOverlay().valid()
-        && dump == m_fieldLastDumpPath
+        && sameDump
         && !m_ui->layoutView->fieldOverlay().volume) {
         return;
     }
     if (!m_ui->layoutView->fieldOverlay().valid() && QFileInfo::exists(metaPath)
-        && (m_fieldLastDumpPath.isEmpty() || dump == m_fieldLastDumpPath)) {
+        && (m_fieldLastDumpPath.isEmpty() || sameDump) && cacheMatches()) {
         if (loadFieldOverlayFromCache(metaPath)
             && !m_ui->layoutView->fieldOverlay().volume
             && !force) {
             m_fieldLastDumpPath = dump;
+            m_fieldLastCycle = cycle;
             m_fieldPreferAutoZ = false;
             return;
         }
@@ -2538,27 +2738,30 @@ void MainWindow::refreshFieldOverlay(bool force)
 
     const qreal zUm = m_ui->layoutView->fieldClipZUm();
     const bool logScale = m_ui->layoutView->fieldLogScale();
-    const bool showArrows = m_ui->layoutView->fieldShowArrows();
 
     LayoutView::FieldOverlay busy = m_ui->layoutView->fieldOverlay();
     busy.zUm = zUm;
     busy.volume = false;
     busy.status = tr("Exporting slice…");
     busy.logScale = logScale;
-    busy.showArrows = showArrows;
     m_ui->layoutView->setFieldOverlay(busy);
 
+    // New file: pick a fresh hot Z. Another cycle of the same file keeps Z.
     const bool dumpChanged = (dump != m_fieldLastDumpPath);
     if (dumpChanged)
         m_fieldPreferAutoZ = true;
     m_fieldLastDumpPath = dump;
+    m_fieldLastCycle = cycle;
     m_fieldExportOutDir = outDir;
 
     QStringList args;
     args << script
          << QStringLiteral("--input") << dump
          << QStringLiteral("--outdir") << outDir
-         << QStringLiteral("--resolution") << QStringLiteral("512");
+         << QStringLiteral("--resolution") << QStringLiteral("512")
+         << QStringLiteral("--cycle") << QString::number(cycle);
+    if (const QString source = fieldSourceId(); !source.isEmpty())
+        args << QStringLiteral("--source") << source;
 
     if (m_fieldPreferAutoZ)
         args << QStringLiteral("--auto-z");
@@ -2567,8 +2770,6 @@ void MainWindow::refreshFieldOverlay(bool force)
 
     if (logScale)
         args << QStringLiteral("--log");
-    if (!showArrows)
-        args << QStringLiteral("--no-arrows");
 
     const QRectF layoutBb = m_ui->layoutView->layoutContentBoundsUm();
     if (layoutBb.isValid() && layoutBb.width() > 0 && layoutBb.height() > 0) {
@@ -4269,16 +4470,12 @@ void MainWindow::refreshLayoutPreview()
     }
 
     QApplication::setOverrideCursor(Qt::WaitCursor);
-    QElapsedTimer wall;
-    wall.start();
     // Keep the message pump alive so Windows does not mark us "Not Responding"
     // during flatten / Iso3D of via-dense layouts.
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     QVector<GdsFlatPolygon> polys;
     QString err;
-    QElapsedTimer step;
-    step.start();
     if (!GdsLayout::flattenTopCell(gdsPath, topCell, &polys, &err)) {
         QApplication::restoreOverrideCursor();
         m_ui->layoutView->clear();
@@ -4290,7 +4487,6 @@ void MainWindow::refreshLayoutPreview()
             info(err);
         return;
     }
-    const qint64 flattenMs = step.elapsed();
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // Model load always uses Top2D first — Iso3D is slow on via-dense GDS; user can switch after.
@@ -4441,19 +4637,7 @@ void MainWindow::refreshLayoutPreview()
         }
     }
 
-    step.restart();
     m_ui->layoutView->setPolygons(polys, styles, ports);
-    const qint64 setPolysMs = step.elapsed();
-    const auto iso = m_ui->layoutView->lastIso3dRebuildStats();
-    qInfo().nospace()
-        << "Layout preview: polys=" << polys.size()
-        << " flattenMs=" << flattenMs
-        << " setPolygonsMs=" << setPolysMs
-        << " iso3dMs=" << iso.ms
-        << " vias=" << iso.viaPolyCount
-        << " envelopes=" << iso.viaEnvelopeCount
-        << " faces=" << iso.faceCount
-        << " wallMs=" << wall.elapsed();
 
     // New GDS / top cell / stackup → drop the previous Field heatmap so it cannot
     // ghost over the new layout or stretch sceneRect into a cropped strip.
@@ -4464,8 +4648,10 @@ void MainWindow::refreshLayoutPreview()
         m_ui->layoutView->clearFieldOverlay();
         m_fieldLastDumpPath.clear();
         m_fieldPreferAutoZ = true;
-        if (m_ui->layoutView->isFieldMode())
+        if (m_ui->layoutView->isFieldMode()) {
+            refreshFieldChoices();
             scheduleFieldOverlayRefresh(true);
+        }
     } else if (m_ui->layoutView->isFieldMode()
                && !m_ui->layoutView->fieldOverlay().valid()) {
         scheduleFieldOverlayRefresh();
@@ -4583,6 +4769,24 @@ void MainWindow::setupLayoutLayerPanel()
             this, [this](int gds, qreal op) {
                 if (m_ui->layoutView)
                     m_ui->layoutView->setLayerOpacity(gds, op);
+            });
+    // Iso3D rebuilds are costly: apply the opacity when the slider is released.
+    if (m_ui->layoutView) {
+        m_layoutLayerPanel->setDeferOpacityUpdates(m_ui->layoutView->isView3d());
+        connect(m_ui->layoutView, &LayoutView::viewModeChanged,
+                m_layoutLayerPanel, &LayoutLayerPanel::setDeferOpacityUpdates);
+    }
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::allOpacityChanged,
+            this, [this](qreal op) {
+                if (m_ui->layoutView)
+                    m_ui->layoutView->setAllLayerOpacity(op);
+            });
+    // "All layers" selected in the panel: drop the layer highlight everywhere
+    // (LayoutView::highlightCleared also clears the substrate view).
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::layerDeactivated,
+            this, [this]() {
+                if (m_ui->layoutView)
+                    m_ui->layoutView->clearHighlight();
             });
     connect(m_layoutLayerPanel, &LayoutLayerPanel::layerActivated,
             this, [this](const QString &name, const QString &kind) {
@@ -4734,6 +4938,62 @@ void MainWindow::on_actionPrefernces_triggered()
     configureAssistantAgent();
 
     saveSettings();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Setup → Key Bindings: choose the viewer navigation style; shows all bindings.
+ **********************************************************************************************************************/
+void MainWindow::on_actionKeyBindings_triggered()
+{
+    KeyBindingsDialog dlg(NavigationStyle::fromPreferences(m_preferences), this);
+    if (dlg.exec() != QDialog::Accepted)
+        return;
+    m_preferences[NavigationStyle::preferenceKey()] = NavigationStyle::id(dlg.style());
+    applyNavigationStyle();
+    saveSettings();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Applies the navigation style preference to the Layout preview and a running 3D field viewer.
+ **********************************************************************************************************************/
+void MainWindow::applyNavigationStyle()
+{
+    const NavStyle style = NavigationStyle::fromPreferences(m_preferences);
+    if (m_ui && m_ui->layoutView)
+        m_ui->layoutView->setNavigationStyle(style);
+    if (m_fieldVolumeViewerProcess && m_fieldVolumeViewerProcess->state() == QProcess::Running) {
+        QJsonObject msg;
+        msg.insert(QStringLiteral("nav_style"), NavigationStyle::id(style));
+        m_fieldVolumeViewerProcess->write(QJsonDocument(msg).toJson(QJsonDocument::Compact) + '\n');
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Creates the window-wide shortcuts that have no menu action: F5 Run, Ctrl+1…6 tabs.
+ *
+ * Ctrl+N opens the N-th Run Control entry (Main, Substrate, Python, Ports/Thermal, Simulate,
+ * Results); hidden entries (Results for Elmer Thermal) are skipped.
+ **********************************************************************************************************************/
+void MainWindow::setupGlobalShortcuts()
+{
+    auto *run = new QShortcut(QKeySequence(Qt::Key_F5), this);
+    connect(run, &QShortcut::activated, this, [this]() {
+        // Works from any tab; runOpenEMS / runPalace refuse a second concurrent run.
+        if (m_ui->btnRun->isEnabled())
+            m_ui->btnRun->click();
+    });
+
+    for (int n = 1; n <= 6; ++n) {
+        auto *tab = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(n)), this);
+        connect(tab, &QShortcut::activated, this, [this, n]() {
+            QListWidget *list = m_ui->lstRunControl;
+            QListWidgetItem *item = list ? list->item(n - 1) : nullptr;
+            if (!item || item->isHidden())
+                return;
+            list->setCurrentItem(item);
+            on_lstRunControl_itemClicked(item);
+        });
+    }
 }
 
 /*!*******************************************************************************************************************
@@ -6148,8 +6408,12 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
     updateBoundaryOptionsForCurrentTool();
     updateExcitationUiForCurrentTool();
     syncResultsViewerHostPython();
-    if (m_ui && m_ui->layoutView)
+    if (m_ui && m_ui->layoutView) {
         m_ui->layoutView->setFieldProbeThermal(isElmerThermalKey(key));
+        // Other tool = other result layout: re-list on the next (debounced) export.
+        if (m_ui->layoutView->isFieldMode())
+            scheduleFieldOverlayRefresh(true);
+    }
 }
 
 /*!*******************************************************************************************************************

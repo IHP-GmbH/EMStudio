@@ -9,6 +9,7 @@
 
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
+#include "layoutview.h"
 
 /*!*******************************************************************************************************************
  * \brief Initializes a default Palace Python model for test purposes without any UI dialogs.
@@ -241,6 +242,17 @@ bool MainWindow::testSetSimToolKey(const QString& simToolKey, QString* outErr)
 void MainWindow::testSetPreference(const QString& key, const QVariant& value)
 {
     m_preferences[key] = value;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Applies the VIEWER_NAV_STYLE preference and reports the Layout preview's style.
+ *
+ * \return Navigation style now used by the Layout preview.
+ **********************************************************************************************************************/
+NavStyle MainWindow::testApplyNavigationStyle()
+{
+    applyNavigationStyle();
+    return m_ui->layoutView->navigationStyle();
 }
 
 /*!*******************************************************************************************************************
@@ -824,6 +836,16 @@ QString MainWindow::testApplyGdsAndXmlPaths(const QString &script,
 void MainWindow::testOpenThermalResultsInFieldView(const QString &runDir)
 {
     openThermalResultsInFieldView(runDir);
+}
+
+QStringList MainWindow::testParseFieldChoices(const QByteArray &json)
+{
+    QStringList labels;
+    if (!parseFieldChoices(json))
+        return labels;
+    for (const FieldChoice &c : std::as_const(m_fieldChoices))
+        labels << c.label;
+    return labels;
 }
 
 QString MainWindow::testResolveKeywordsPath(const QString &simKeyLower) const

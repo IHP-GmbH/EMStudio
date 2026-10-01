@@ -40,6 +40,8 @@ class QLabel;
  * \brief Layer list for the GDS layout preview (visibility, opacity, used-only filter).
  *
  * Shown to the right of LayoutView on the Substrate tab. Inspired by KLayout's Layers panel.
+ * The opacity slider shows the true 2D fill opacity: for the selected layer, or for all
+ * layers when "All layers" (the first row) or nothing is selected.
  **********************************************************************************************************************/
 class LayoutLayerPanel : public QWidget
 {
@@ -53,7 +55,7 @@ public:
         QColor  color;
         bool    used = true;   // present in flattened GDS
         bool    visible = true;
-        qreal   opacity = 1.0; // 0..1 multiplier on fill alpha
+        qreal   opacity = 1.0; // true 2D fill opacity 0..1 (LayoutView::layerOpacity)
     };
 
     explicit LayoutLayerPanel(QWidget *parent = nullptr);
@@ -67,10 +69,25 @@ public:
     void                        setShowCoordinates(bool on);
     bool                        usedLayersOnly() const;
     void                        setUsedLayersOnly(bool on);
+    /*!
+     * \brief Defers opacity signals while the slider moves (Iso3D rebuilds are costly).
+     *
+     * When on, \c opacityChanged / \c allOpacityChanged are emitted when the slider is released,
+     * or after the value settles for wheel / key changes; the label still follows the slider.
+     */
+    void                        setDeferOpacityUpdates(bool defer);
+    bool                        deferOpacityUpdates() const { return m_deferOpacity; }
+
+protected:
+    bool                        eventFilter(QObject *watched, QEvent *event) override;
 
 signals:
     void                        visibilityChanged(int gdsLayer, bool visible);
     void                        opacityChanged(int gdsLayer, qreal opacity);
+    /*! Slider moved with no single layer selected: every layer gets \a opacity. */
+    void                        allOpacityChanged(qreal opacity);
+    /*! The selection went back to "All layers" (Esc, empty-area click, "All layers" row). */
+    void                        layerDeactivated();
     void                        layerActivated(const QString &name, const QString &kind);
     void                        showCoordinatesToggled(bool on);
     void                        usedLayersOnlyToggled(bool on);
@@ -80,11 +97,16 @@ private slots:
     void                        onItemChanged(QListWidgetItem *item);
     void                        onCurrentItemChanged(QListWidgetItem *current, QListWidgetItem *previous);
     void                        onOpacitySlider(int value);
+    /*! Emits the opacity change that was held back while the slider moved. */
+    void                        flushPendingOpacity();
     void                        onListContextMenu(const QPoint &pos);
     void                        setAllVisible(bool visible);
 
 private:
     void                        rebuildList();
+    void                        selectAllLayersMode(bool notify);
+    void                        updateOpacityControls();
+    bool                        isAllLayersItem(const QListWidgetItem *item) const;
     QListWidgetItem            *itemForGds(int gdsLayer) const;
     static QIcon                swatchIcon(const QColor &c);
 
@@ -98,6 +120,11 @@ private:
     QVector<Entry>              m_all;
     bool                        m_usedOnlyOn = true;
     bool                        m_block = false;
+    bool                        m_deferOpacity = false;
+    bool                        m_opacityPending = false;
+    int                         m_pendingGds = 0;   //!< kGdsAllLayers or a GDS layer
+    qreal                       m_pendingOpacity = 1.0;
+    class QTimer               *m_opacitySettle = nullptr;
 };
 
 #endif // QT_VERSION

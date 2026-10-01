@@ -33,6 +33,7 @@
 
 #include "pythonparser.h"
 #include "sanitycheck.h"
+#include "navigationstyle.h"
 
 class QProcess;
 class QProcessEnvironment;
@@ -165,6 +166,8 @@ public:
     void                            testSetEditorText(const QString& s);
     void                            refreshSimToolOptionsForTests();
     void                            testSetPreference(const QString& key, const QVariant& value);
+    /*! Runs applyNavigationStyle() and returns the style the Layout preview now uses. */
+    NavStyle                        testApplyNavigationStyle();
     QVector<PortInfo>               testParsePortsFromEditor() const;
     bool                            testInitDefaultOpenemsModel();
     int                             testPortsRowCount() const;
@@ -264,6 +267,13 @@ public:
     QString                         testApplyGdsAndXmlPaths(const QString &script,
                                                            const QString &simKeyLower) const;
     void                            testOpenThermalResultsInFieldView(const QString &runDir);
+    QString                         testFieldSourceId() const { return fieldSourceId(); }
+    QStringList                     testParseFieldChoices(const QByteArray &json);
+    QStringList                     testFieldViewerArguments(const QString &script,
+                                                             const QString &runDir) const
+    {
+        return fieldViewerArguments(script, runDir, QString());
+    }
     QString                         testResolveKeywordsPath(const QString &simKeyLower) const;
     QMap<QString, QString>          testLoadKeywordTipsCsv(const QString &simKeyLower) const;
     void                            testRefreshKeywordTipsForCurrentTool();
@@ -323,6 +333,7 @@ private slots:
     void                            on_actionAbout_EMStudio_triggered();
     void                            updateBoundaryOptionsForCurrentTool();
     void                            on_actionTerminal_triggered();
+    void                            on_actionKeyBindings_triggered();
 
 private:
     void                            saveSettings();
@@ -404,6 +415,23 @@ private:
                                                            const QString &targetLayer);
     QString                         findThermalResultsVtu(const QString &runDir) const;
     QString                         findFieldDumpPath(const QString &runDir = QString()) const;
+    /*! One selectable result file + cycle for the Field views. */
+    struct FieldChoice
+    {
+        QString path;       //!< Absolute result file
+        int     cycle = 1;  //!< 1-based cycle within \c path
+        QString label;      //!< Shown in the Layout Field picker
+    };
+    QString                         fieldSourceId() const;
+    QString                         fieldRunDirectory() const;
+    void                            refreshFieldChoices();
+    bool                            parseFieldChoices(const QByteArray &json);
+    const FieldChoice              *currentFieldChoice() const;
+    QString                         currentFieldDumpPath(int *cycleOut = nullptr) const;
+    QStringList                     fieldViewerArguments(const QString &script,
+                                                         const QString &runDir,
+                                                         const QString &iconPath) const;
+    void                            onLayoutFieldChoiceChanged(int index);
     QString                         resolveFieldViewerPython(QString *detailOut = nullptr) const;
     QString                         resolveFieldSliceExportScript() const;
     void                            refreshFieldOverlay(bool force = false);
@@ -413,7 +441,7 @@ private:
     void                            onFieldVolumeViewerReadyRead();
     void                            onFieldVolumeViewerFinished(int exitCode, QProcess::ExitStatus status);
     void                            closeFieldVolumeViewerSplash();
-    void                            onLayoutFieldSliceRequest(qreal zUm, bool logScale, bool showArrows);
+    void                            onLayoutFieldSliceRequest(qreal zUm, bool logScale);
     void                            onLayoutFieldHotZRequest();
     void                            scheduleFieldOverlayRefresh(bool force = false);
     void                            onFieldExportFinished(int exitCode, QProcess::ExitStatus status);
@@ -455,6 +483,10 @@ private:
     void                            rebuildLayerMapping();
     void                            refreshLayoutPreview();
     void                            setupLayoutLayerPanel();
+    /*! F5 Run and Ctrl+1…6 tab shortcuts (menu shortcuts are in mainwindow.ui). */
+    void                            setupGlobalShortcuts();
+    /*! Pushes preference VIEWER_NAV_STYLE to the Layout preview and an open 3D field viewer. */
+    void                            applyNavigationStyle();
     QVector<SanityFinding>          collectSanityFindings() const;
 
     bool                            applyPythonScriptFromEditor();
@@ -627,7 +659,6 @@ private:
     QTimer                         *m_fieldSliceDebounce = nullptr;
     qreal                           m_pendingFieldZUm = 0.0;
     bool                            m_pendingFieldLog = false;
-    bool                            m_pendingFieldArrows = true;
     bool                            m_fieldExportBusy = false;
     bool                            m_fieldPreferAutoZ = true;
     bool                            m_fieldRefreshForce = false;
@@ -639,6 +670,10 @@ private:
     bool                            m_fieldLastVolumeLog = false;
     QString                         m_layoutPreviewKey;
     QString                         m_fieldDumpSearchDir;
+    QVector<FieldChoice>            m_fieldChoices;
+    int                             m_fieldChoiceIndex = 0;
+    QString                         m_fieldChoicesKey;     //!< runDir|source of m_fieldChoices
+    int                             m_fieldLastCycle = 1;
     QProcess                       *m_fieldExportProcess = nullptr;
     QProcess                       *m_fieldVolumeViewerProcess = nullptr;
     QPointer<QFrame>                m_fieldVolumeViewerSplash;

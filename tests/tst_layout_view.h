@@ -21,6 +21,9 @@ private slots:
     void fieldMode_keeps2d_and3dOpensExternalSignal();
     void iso3d_denseVias_growEnvelope_reportsTiming();
     void iso3d_balunExample_flattenAndRebuild_reportsTiming();
+    void navigationStyles_mouseAndKeys();
+    void iso3d_opacityAndVisibility_redrawDenseScene();
+    void iso3d_viewFromBelow_reversesStackOrder();
 };
 
 #endif // TST_LAYOUT_VIEW_H

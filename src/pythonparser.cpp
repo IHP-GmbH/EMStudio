@@ -942,6 +942,47 @@ static int pastMatchingBracket(const QString &script, int openPos)
 }
 
 /*!*******************************************************************************************************************
+ * \brief Offset just past the statement that starts at \a pos, including its newline.
+ *
+ * Brackets, quoted strings and backslash line continuations keep the statement going; a
+ * \c # comment ends at its line. Used to insert or remove whole settings lines.
+ *
+ * \param script Python script text.
+ * \param pos    Offset of the statement's first character.
+ * \return Offset after the statement's last newline (script.size() at the end of the text).
+ **********************************************************************************************************************/
+int PythonParser::statementEnd(const QString &script, int pos)
+{
+    int depth = 0;
+    QChar quote;
+    for (int i = qMax(0, pos); i < script.size(); ++i) {
+        const QChar c = script.at(i);
+        if (!quote.isNull()) {
+            if (c == QLatin1Char('\\'))
+                ++i;
+            else if (c == quote)
+                quote = QChar();
+        } else if (c == QLatin1Char('\'') || c == QLatin1Char('"')) {
+            quote = c;
+        } else if (c == QLatin1Char('#')) {
+            const int nl = script.indexOf(QLatin1Char('\n'), i);
+            if (nl < 0)
+                return script.size();
+            i = nl - 1;  // the newline is handled below
+        } else if (c == QLatin1Char('\\') && i + 1 < script.size() && script.at(i + 1) == QLatin1Char('\n')) {
+            ++i;  // continuation
+        } else if (c == QLatin1Char('(') || c == QLatin1Char('[') || c == QLatin1Char('{')) {
+            ++depth;
+        } else if (c == QLatin1Char(')') || c == QLatin1Char(']') || c == QLatin1Char('}')) {
+            depth = qMax(0, depth - 1);
+        } else if (c == QLatin1Char('\n') && depth == 0) {
+            return i + 1;
+        }
+    }
+    return script.size();
+}
+
+/*!*******************************************************************************************************************
  * \brief All calls of \a funcName (also as \c module.funcName) outside comments.
  *
  * \param script   Python script text.

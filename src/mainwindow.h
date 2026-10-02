@@ -304,6 +304,13 @@ public:
     bool                            testSetGridSettingValue(const QString &key, const QVariant &value);
     bool                            testValidateRequiredFolder(const QString &dir, const QString &simKey);
     QString                         testStackupDialogStartDir();
+    bool                            testAddSetting(const QString &key, const QString &pyValue);
+    void                            testRemoveSetting(const QString &key);
+    void                            testResetSetting(const QString &key);
+    /*! Context menu of the grid row named \a name (topic or setting): "text|enabled" per action. */
+    QStringList                     testSettingsContextActions(const QString &name);
+    QString                         testSettingToolTip(const QString &key) const;
+    QString                         testReplaceThermalSection(QString script, const QString &code);
     void                            testRefreshKeywordTipsForCurrentTool();
     QMap<QString, QString>          testMergeTipsPreferModel(const QMap<QString, QString> &modelTips,
                                                             const QMap<QString, QString> &fallbackTips) const;
@@ -567,6 +574,34 @@ private:
     void                            setupNewModelMenu();
     void                            updateNewModelActions();
     void                            newModel(const QString &simKey);
+
+    /*! A top-level settings statement: key and [start, end) in the script. */
+    struct SettingStatement
+    {
+        QString                     key;
+        int                         start = -1;
+        int                         end = -1;
+    };
+    /*! Add / remove settings in the script (pythonToEditor.cpp) and from the grid (pythonToStudio.cpp). */
+    QString                         settingsDictName(const QString &script) const;
+    QVector<SettingStatement>       topLevelSettingStatements(const QString &script, const QString &dict) const;
+    QPair<int, int>                 settingSortKey(const QString &key) const;
+    bool                            insertSettingIntoScript(QString &script, const QString &key,
+                                                            const QString &pyValue) const;
+    bool                            canRemoveSetting(const QString &script, const QString &key,
+                                                     QString *why) const;
+    bool                            removeSettingFromScript(QString &script, const QString &key) const;
+    void                            reparseEditorIntoGrid();
+    bool                            addSetting(const QString &key, const QString &pyValue);
+    bool                            writeSettingValueToScript(QString &script, const QString &key,
+                                                              const QString &pyValue) const;
+    void                            fillSettingsContextMenu(QtProperty *prop, QMenu *menu);
+    void                            openAddSettingDialog(const QString &presetTopic);
+    void                            removeSetting(const QString &key);
+    void                            resetSettingToDefault(const QString &key);
+    void                            showSettingsContextMenu(const QPoint &pos);
+    void                            applySettingsFilter();
+    void                            updateAddSettingAvailability();
     void                            clearModelInputs();
     QString                         stackupDialogStartDir() const;
     bool                            generateDefaultModelScript(bool askReplace);
@@ -675,6 +710,7 @@ private:
     bool                            fileLooksValid(const QString &path) const;
 
     QVector<PortInfo>               parsePortsFromScript(const QString& script);
+    static bool                     portsEqual(const QVector<PortInfo> &a, const QVector<PortInfo> &b);
     void                            appendParsedPortsToTable(const QVector<PortInfo>& ports);
 
 private:
@@ -716,6 +752,8 @@ private:
     QTableWidget                   *m_tblThermalObjects = nullptr;
     class LayoutLayerPanel         *m_layoutLayerPanel = nullptr;
     QMenu                          *m_newModelMenu = nullptr;      //!< File → New
+    class QPushButton              *m_btnAddSetting = nullptr;     //!< "+ Add setting..." above the grid
+    class QLineEdit                *m_settingsFilter = nullptr;    //!< Filter field above the grid
     mutable QHash<QString, bool>    m_pythonModuleCache;            //!< "python|module" → installed
     QWidget                        *m_layoutPaneSplit = nullptr;   //!< Layout view + Layers, moved between pages
     bool                            m_layoutOnFieldsPage = false;

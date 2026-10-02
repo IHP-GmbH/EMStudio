@@ -124,7 +124,9 @@ regular expressions. It never regenerates the whole script.
   It collects:
   - `settings['key'] = value` (any dict name),
   - simple top-level `name = literal` lines,
-  - `# @brief` tooltip comments,
+  - `# @brief` tooltip comments (model-specific; the templates have none, the keyword files carry the
+    descriptions; the grid tooltip is the `@brief` text or else the keyword description, plus
+    "Required." and "Default: …" from the keyword file),
   - GDS/XML file names and the top cell.
 
   Values become `bool`, `double`/`longlong`, or `QString`. A quoted literal is
@@ -152,6 +154,15 @@ regular expressions. It never regenerates the whole script.
   `runSimulation`, `read_gds`, `read_substrate` arguments by position / keyword
   (`workflow_signatures.csv`), accepting only a variable with a single top-level
   literal assignment. This only affects topic, order and tooltip, never what is written.
+- **Adding / removing settings** (grid strip "+ Add setting..." + filter; right-click on a topic or
+  setting, `fillSettingsContextMenu`): `AddSettingDialog` (addsettingdialog.cpp) picks a keyword by
+  topic or a custom one. `addSetting()` first syncs the grid into the editor, then
+  `insertSettingIntoScript()` (pythonToEditor.cpp) inserts `dict['key'] = value` after the present
+  key that comes last before it in keyword-file order (only column-0 statements are anchors,
+  `PythonParser::statementEnd` spans multi-line values), and `reparseEditorIntoGrid()` re-reads the
+  editor so the key gets a `writeMode`. Remove (`canRemoveSetting`: one top-level assignment, not
+  required) deletes that statement; Reset writes the keyword-file default
+  (`writeSettingValueToScript`). Models without a settings dict (loose variables) can't add.
   `inferPalacePropertyInfo()` picks the editor: numbers are always `Double` (for
   `SciDoubleSpinBox`), plus `Bool` and `String`. Elmer EM `fdump` is a checkbox.
   Text that looks like code (`foo.bar`, calls) and quoted strings containing `.`
@@ -163,7 +174,8 @@ regular expressions. It never regenerates the whole script.
     replaces only the value, keeps trailing comments, and only touches keys
     already in `writeMode`. Text cells are written back only when they changed:
     quoted strings re-quoted, lists and expressions verbatim; for `fdump` a bare
-    value is wrapped in `[...]`.
+    value is wrapped in `[...]`. Numbers and True/False are also written only when the value
+    changed, so `1e9` keeps its spelling (golden files and templates rely on that).
   - `applyGdsAndXmlPaths`, `applyVariableOverridesToScript`, `applyBoundaries`.
     The Top Cell goes only into what the script's `read_gds(..., cellname=...)` uses
     (`PythonParser::readGdsCellRef`, `applyTopCellToScript`): a variable, a
@@ -243,13 +255,14 @@ sanitycheck.cpp) → `runOpenEMS()` or `runPalace()`. Both save first.
 | Stackup model | substrate, layer, material, dielectric, stackupexpr | Parses and writes the XML stackup. Schema 3.x: Variables with expressions, derived layers, thermal tables. `resolve(overrides)` evaluates expressions. |
 | Stackup cross-section | substrateview | 2.5D stack drawing; clicking a layer highlights it in the layout view |
 | Stackup editor | stackupeditor | Dialog that edits the XML; emits saved → reload |
-| Layout preview | gdslayout (flattening), layoutview, layoutlayerpanel | One `LayoutView` + Layers panel (`m_layoutPaneSplit`) shared by two pages: `placeLayoutPane()` (called from `showTab`) moves it to **Substrate** (top view / Iso3D, Field off) or **Fields** (Field mode on, 2D; 3D opens the Field viewer), keeps Substrate's 2D/3D choice and each page's manual zoom (`LayoutView::viewState`). The view's Field button is hidden; Shift+F emits `fieldPageRequested`. Field mode isn't persisted. The Layers panel lists port / thermal marker layers without stackup layers (no Ports row with From/To or target, no thermal object with a target) as "<name> (not mapped)" (`LayoutLayerPanel::Entry::unmapped`): the preview then draws them at a guessed position. Iso3D: dense scenes are one pre-rendered pixmap, so style changes rebuild the scene (`rebuildIso3dForStyleChange`); the sceneRect is a fixed square around the orbit center so orbiting doesn't move the scrollbars; pitch < 0 draws bottom caps and reverses the stack order. Iso3D ports are drawn as the surface gds2palace builds (in-plane: bounding box at the target metal's bottom; via: vertical sheet on the xmin or ymin edge between the metals); via arrows point From → To, and `-z` reverses them. Via layers follow the model's `merge_polygon_size` (`MainWindow::currentViaMergeSize` → `LayoutView::setViaMergeSize`): > 0 merges them in 2D and 3D exactly like gds2palace's `merge_via_array` (grow spacing/2 + 0.01 µm, unite, shrink; `mergeViaArray`, QRegion on a 1 nm grid), so the preview shows the simulated geometry; 0 shows every via; not set: 2D every via, Iso3D its own display-only merge of dense via layers. A via layer with more drawn polygons than preference `LAYOUT_MAX_VIA_POLYGONS` (default 100, `setMaxViaPolygonsPerLayer`) replaces the 2D / 3D layout with a message label (`denseViaLayers`); a Field heatmap is still drawn. Mouse wheel / drag mapping depends on `NavStyle` (`LayoutView::setNavigationStyle`); keys in `LayoutView::handleViewKey`. |
+| Layout preview | gdslayout (flattening), layoutview, layoutlayerpanel | One `LayoutView` + Layers panel (`m_layoutPaneSplit`) shared by two pages: `placeLayoutPane()` (called from `showTab`) moves it to **Substrate** (top view / Iso3D, Field off) or **Fields** (Field mode on, 2D; 3D opens the Field viewer), keeps Substrate's 2D/3D choice and each page's manual zoom (`LayoutView::viewState`). The view's Field button is hidden; Shift+F emits `fieldPageRequested`. Field mode isn't persisted. The Layers panel lists port / thermal marker layers without stackup layers (no Ports row with From/To or target, no thermal object with a target) as "<name> (not mapped)" (`LayoutLayerPanel::Entry::unmapped`): the preview then draws them at a guessed position. Iso3D: dense scenes are one pre-rendered pixmap, so style changes rebuild the scene (`rebuildIso3dForStyleChange`); the sceneRect is a fixed square around the orbit center so orbiting doesn't move the scrollbars; pitch < 0 draws bottom caps and reverses the stack order. Port marker layers are GDS 201–299 unless the stackup defines that number (e.g. a `SUBGND` sheet on 250: `LayoutView::isPortLayerNumber`). Iso3D ports are drawn as the surface gds2palace builds (in-plane: bounding box at the target metal's bottom; via: vertical sheet on the xmin or ymin edge between the metals); via arrows point From → To, and `-z` reverses them. Via layers follow the model's `merge_polygon_size` (`MainWindow::currentViaMergeSize` → `LayoutView::setViaMergeSize`): > 0 merges them in 2D and 3D exactly like gds2palace's `merge_via_array` (grow spacing/2 + 0.01 µm, unite, shrink; `mergeViaArray`, QRegion on a 1 nm grid), so the preview shows the simulated geometry; 0 shows every via; not set: 2D every via, Iso3D its own display-only merge of dense via layers. A via layer with more drawn polygons than preference `LAYOUT_MAX_VIA_POLYGONS` (default 100, `setMaxViaPolygonsPerLayer`) replaces the 2D / 3D layout with a message label (`denseViaLayers`); a Field heatmap is still drawn. Mouse wheel / drag mapping depends on `NavStyle` (`LayoutView::setNavigationStyle`); keys in `LayoutView::handleViewKey`. |
 | Navigation / key bindings | navigationstyle, keybindingsdialog | `NavStyle` EMStudio / setupEM, preference `VIEWER_NAV_STYLE` ("emstudio" / "setupem"). Setup → Key Bindings (`on_actionKeyBindings_triggered`) → `applyNavigationStyle()` sets the Layout preview and sends `{"nav_style": …}` to an open Field 3D viewer; new viewers get `--nav-style`. `NavigationStyle::bindingTable` is the one list of all bindings (dialog and tooltips): **change it together with LayoutView and `scripts/field_viewer.py`**. Window-wide shortcuts: menu actions in mainwindow.ui, F5 / Ctrl+1…7 in `setupGlobalShortcuts()`. |
 | Layout Field | layoutview + mainwindow.cpp `*Field*` methods | All Python, run with host Python `FIELD_VIEWER_PYTHON`. `scripts/field_io.py` is the shared reader: discovery per source (`palace`, `elmer_em`, `elmer_thermal`, `openems` FD `_abs`/`_arg.vtr`), cycle-aware `.pvd` reading, frequency labels, units → µm, derived \|E\| magnitudes, grouped field list. EMStudio lists the run's files with `field_io.py --list` (`refreshFieldChoices` → the Field panel's file/cycle combo). The 2D slice is `field_slice_export.py --source --cycle` (Z-slice PNG plus meta JSON, no arrows; color limits in `_slice_clim`: `--log` spans the slice max down to the slice min, at most 40 dB). Field→3D starts `field_viewer.py --run-path --source --select-file --cycle --stdin-control`, a PySide6/pyvistaqt window ported from setupEM. A second 3D click sends JSON on the viewer's stdin, so the open window reloads / comes to the front. The viewer remaps mouse presses and swallows VTK's own letter keys in `FieldViewerWindow.eventFilter` (`--nav-style`, stdin `nav_style`). Spec: FIELD_VIEWER_SPEC.md (setupEM). |
 | Results | resultsviewer, touchstone, smithchartwidget, resultscalculator, exprparser | Scans the run folder for `.sNp`; dB/phase/Smith; Compare; RF calculator (`cser($1)`, `ydiff_cser($1,$2)`, …); Model Fit via `snp2le` |
 | Python editor | pythoneditor, pythonsyntaxhighlighter, finddialog | `editRunPythonScript` on the Python tab |
 | Preferences | preferences (+ preferences.ui) | Property-browser dialog over `m_preferences` |
 | About | about (+ about.ui) | Async version probes for tools; native on Linux, WSL on Windows |
+| Add setting | addsettingdialog | Settings grid → Add setting: keyword list by topic (required bold, present greyed), default prefilled, custom keyword; `toPythonLiteral` |
 | Keywords | keywordseditor, tips | Edit `keywords/*.csv`: keyword, description, topic (combo of the file's topics), default, required (yes/no combo). Description is shown last (header `moveSection`, view only); the model and file keep the file column order. Always saves tab-separated, keeping row order |
 | Assistant | assistantchatpanel, assistantagent, assistantmcp, assistantpromptblob | Chat dock. `AssistantMcp` is an in-process tool registry; `MainWindow::registerAssistantMcpTools()` defines the tools (`get_app_state`, `load_model`, `run_simulation`, `set_preference`, …). `AssistantAgent` calls an OpenAI-compatible `/chat/completions` endpoint (`ASSISTANT_BASE_URL/MODEL/API_KEY`). `assistantpromptblob.cpp` holds an encoded policy fragment ("do not edit by hand"). |
 | KLayout | mainwindow.cpp `*Klayout*`, scripts/klEmsDriver.py, klayout_*.{py,rb}, KLayout.sh/.bat | Opens the GDS in KLayout; the KLayout macro starts EMStudio with `-gdsfile/-topcell`; the assistant can modify GDS via KLayout batch |
@@ -332,7 +345,9 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   part of the Qt test binary or CI yet. Creating several `QtInteractor` windows
   in one offscreen process aborts VTK; share one window per module.
 - Solver stubs in `tests/tools/` stand in for openEMS, Palace and Elmer. Tests set
-  them through preferences, e.g. `testSetPreference("PALACE_RUN_SCRIPT", stub)`.
+  them through preferences, e.g. `testSetPreference("PALACE_RUN_SCRIPT", stub)`. Tests that run a
+  Palace model must also set `PALACE_PYTHON` to `tools/palace_python_stub` (it writes the
+  `config.json` gds2palace would): otherwise a Python found on PATH runs real gds2palace and opens gmsh.
 - Tests that rewrite `keywords/*.csv` next to the test binary must use
   `KeywordFileBackup` (test_utils.h), which restores the file. Copy a fresh
   `keywords/` into the build folder when a run was interrupted.
@@ -380,7 +395,11 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
    `MainWindowPortsTest::saveAction_keepsEditedTextSettings`).
 2. **Regex patching.** Replacements must keep indentation and trailing `# comments`,
    and must only touch lines that exist (`writeMode`). Don't rewrite unchanged
-   values; users diff their scripts.
+   values; users diff their scripts. Models may set things inside loops (parameter
+   sweeps, e.g. openEMS `L6n2_sweep`): the port and thermal blocks, `Boundaries`,
+   GDS/XML paths and `gds_cellname` are only rewritten when they changed, and then
+   with the original indentation; paths that still name the same file (relative
+   ones too) stay as written (`MainWindowPortsTest::saveAction_keepsIndentedSweepModel`).
 3. **Tool-specific behaviour** (e.g. Elmer EM `fdump` is a checkbox, Palace `fdump`
    is a frequency list) is keyed on `currentSimToolKey()`. Check all four tools
    when changing shared code.

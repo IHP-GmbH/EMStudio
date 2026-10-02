@@ -1080,3 +1080,45 @@ void ElmerTest::stackupOverrides_followReadSubstrateArgument()
                            "(settings['SubstrateFile'], variable_overrides=variable_overrides)\n"),
             QStringLiteral("variable_overrides = "));
 }
+
+/*! Thermal objects and the cell variable inside a loop keep their indentation; an unchanged
+ *  thermal block (other formatting) is left alone, comments after it stay. */
+void ElmerTest::indentedThermalBlockAndCell_keepIndentation()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    const QString script = QStringLiteral(
+        "for power in [0.1, 0.2]:\n"
+        "    thermal_objects = simulation_setup.all_thermal_objects()\n"
+        "    # heat source on layer 201\n"
+        "    thermal_objects.add_heatsource(simulation_setup.heatsource(power=0.65,\n"
+        "                                   source_layernum=201, target_layername='TFR'))\n"
+        "\n"
+        "    # ======== simulation ========\n"
+        "    x = 1\n");
+    const QString same = QStringLiteral(
+        "thermal_objects = simulation_setup.all_thermal_objects()\n"
+        "thermal_objects.add_heatsource(simulation_setup.heatsource(power=0.65, source_layernum=201, target_layername='TFR'))\n");
+    QCOMPARE(w.testReplaceThermalSection(script, same), script);
+
+    const QString changed = QString(same).replace(QStringLiteral("0.65"), QStringLiteral("0.7"));
+    const QString out = w.testReplaceThermalSection(script, changed);
+    QVERIFY2(out.contains(QStringLiteral("\n    thermal_objects = simulation_setup.all_thermal_objects()\n"
+                                         "    thermal_objects.add_heatsource(simulation_setup.heatsource(power=0.7,")),
+             qPrintable(out));
+    QVERIFY2(out.contains(QStringLiteral("\n    # ======== simulation ========\n    x = 1\n")), qPrintable(out));
+
+    // An indented cell variable keeps its indentation.
+    auto *cbx = w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"));
+    QVERIFY(cbx);
+    {
+        QSignalBlocker b(cbx);
+        cbx->clear();
+        cbx->addItem(QStringLiteral("NewCell"));
+    }
+    const QString cellOut = w.testApplyGdsAndXmlPaths(QStringLiteral(
+        "for i in range(2):\n"
+        "    gds_cellname = \"Old\"\n"
+        "    allpolygons = gds_reader.read_gds(f, l, cellname=gds_cellname)\n"), QStringLiteral("palace"));
+    QVERIFY2(cellOut.contains(QStringLiteral("\n    gds_cellname = \"NewCell\"\n")), qPrintable(cellOut));
+}

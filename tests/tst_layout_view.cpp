@@ -1019,6 +1019,46 @@ void LayoutViewTest::iso3d_portsShowSurfaceAndFromToDirection()
     QCOMPARE(surfaces, QSet<int>({201, 202}));
 }
 
+/*!*******************************************************************************************************************
+ * \brief A stackup layer on a GDS number in 201–299 (a ground sheet on 250) is drawn as a layer in
+ *        Iso3D, not as a port surface.
+ **********************************************************************************************************************/
+void LayoutViewTest::iso3d_stackupLayerInPortRange_isNoPort()
+{
+    LayoutView view;
+    view.resize(400, 300);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+
+    QVector<GdsFlatPolygon> polys;
+    polys << makeRect(1, 0, 0, 10, 8) << makeRect(250, -5, -10, 15, -4);
+    QHash<int, LayoutView::LayerStyle> styles;
+    auto s1 = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+    s1.hasZ = true;
+    s1.zminUm = 2.0;
+    s1.zmaxUm = 2.5;
+    auto gnd = style(QStringLiteral("SUBGND"), QStringLiteral("sheet"), QColor(120, 120, 140), 0);
+    gnd.hasZ = true;
+    gnd.zminUm = 0.0;
+    gnd.zmaxUm = 0.0;
+    styles.insert(1, s1);
+    styles.insert(250, gnd);
+    view.setPolygons(polys, styles);
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+
+    int faces = 0;
+    for (QGraphicsItem *item : view.scene()->items()) {
+        if (item->data(3).toInt() != 250)
+            continue;
+        QVERIFY2(!item->data(4).toBool(), "SUBGND drawn as a port");
+        if (auto *poly = qgraphicsitem_cast<QGraphicsPolygonItem *>(item))
+            if (poly->polygon().boundingRect().height() > 1.0)
+                ++faces;
+    }
+    QVERIFY(faces > 0);
+}
+
 /*! Signed shoelace area sum of one layer's drawn polygons [µm²]. */
 static qreal drawnArea(const LayoutView &view, int layer, int *count = nullptr)
 {

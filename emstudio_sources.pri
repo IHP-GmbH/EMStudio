@@ -13,6 +13,7 @@ SOURCES += \
     $$TOP/src/toolautodetect.cpp \
     $$TOP/src/about.cpp \
     $$TOP/src/tips.cpp \
+    $$TOP/src/addsettingdialog.cpp \
     $$TOP/src/keywordseditor.cpp \
     $$TOP/src/keybindingsdialog.cpp \
     $$TOP/src/navigationstyle.cpp \
@@ -70,6 +71,7 @@ HEADERS += \
     $$TOP/src/wslHelper.h \
     $$TOP/src/toolautodetect.h \
     $$TOP/src/about.h \
+    $$TOP/src/addsettingdialog.h \
     $$TOP/src/keywordseditor.h \
     $$TOP/src/keybindingsdialog.h \
     $$TOP/src/navigationstyle.h \

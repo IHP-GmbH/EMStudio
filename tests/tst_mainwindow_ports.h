@@ -21,11 +21,17 @@ private slots:
     void boundaryOptions_updateOnToolChange_withoutCrash();
     void saveAction_writesScriptToFile_and_updatesState();
     void saveAction_keepsEditedTextSettings();
+    void saveAction_keepsUnchangedNumberSpelling();
+    void saveAction_keepsIndentedSweepModel();
     void settingsGrid_groupsByTopic();
     void settingsGrid_nestedEditSurvivesSave();
     void fileNew_createsTemplateForEachTool();
     void openemsSave_needsModulesOnlyWithoutPackage();
     void stackupDialog_startsInConfiguredFolder();
+    void addSetting_insertsByTopic();
+    void addSetting_saveEditResetRemove();
+    void addSetting_menuAndOldModels();
+    void settingsGrid_tooltipsCombineModelAndKeywordFile();
     void collectSanityFindings_reportsMissingInputs();
     void layoutPreview_withGoldenGds_populatesLayerPanel();
 };

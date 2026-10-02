@@ -5,6 +5,7 @@
 #include <QVector>
 #include <QDebug>
 #include <QDir>
+#include <QMenu>
 #include <QProcess>
 
 #include "mainwindow.h"
@@ -935,6 +936,56 @@ bool MainWindow::testValidateRequiredFolder(const QString &dir, const QString &s
 QString MainWindow::testStackupDialogStartDir()
 {
     return stackupDialogStartDir();
+}
+
+bool MainWindow::testAddSetting(const QString &key, const QString &pyValue)
+{
+    return addSetting(key, pyValue);
+}
+
+void MainWindow::testRemoveSetting(const QString &key)
+{
+    removeSetting(key);
+}
+
+void MainWindow::testResetSetting(const QString &key)
+{
+    resetSettingToDefault(key);
+}
+
+QStringList MainWindow::testSettingsContextActions(const QString &name)
+{
+    QtProperty *target = nullptr;
+    for (QtProperty *group : m_simSettingsGroup->subProperties()) {
+        if (group->propertyName() == name)
+            target = group;
+        for (QtProperty *p : group->subProperties())
+            if (p->propertyName() == name)
+                target = p;
+    }
+    QMenu menu;
+    fillSettingsContextMenu(target, &menu);
+    QStringList out;
+    for (QAction *a : menu.actions())
+        if (!a->isSeparator())
+            out << QStringLiteral("%1|%2").arg(a->text(), a->isEnabled() ? QStringLiteral("on") : QStringLiteral("off"));
+    return out;
+}
+
+QString MainWindow::testSettingToolTip(const QString &key) const
+{
+    QString tip;
+    forEachSimSettingProperty([&](QtProperty *p) {
+        if (p->propertyName() == key)
+            tip = p->toolTip();
+    });
+    return tip;
+}
+
+QString MainWindow::testReplaceThermalSection(QString script, const QString &code)
+{
+    replaceOrInsertThermalSection(script, code);
+    return script;
 }
 
 void MainWindow::testRefreshKeywordTipsForCurrentTool()

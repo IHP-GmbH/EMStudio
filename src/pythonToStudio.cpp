@@ -38,6 +38,9 @@
 #include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QProcessEnvironment>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QTreeWidget>
 
 #include "extension/variantmanager.h"
 #include "extension/variantfactory.h"
@@ -46,6 +49,7 @@
 #include "QtPropertyBrowser/qttreepropertybrowser.h"
 
 #include "mainwindow.h"
+#include "addsettingdialog.h"
 #include "preferences.h"
 #include "ui_mainwindow.h"
 #include "substrateview.h"
@@ -247,12 +251,22 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         if (!prop)
             continue;
 
-        // Model tip (# @brief) first, then the keyword file; loose variables passed to a workflow
-        // parameter of another name say so.
+        // Tooltip: the model's own text (# @brief) or else the keyword file's description, plus
+        // "Required." and "Default: ..." from the keyword file; loose variables passed to a
+        // workflow parameter of another name say so.
         const QString keyword = settingKeyword(key);
-        QString tip = tips.value(key);
+        const KeywordEntry *entry = nullptr;
+        for (const KeywordEntry &e : m_keywordTable)
+            if (e.keyword == keyword)
+                entry = &e;
+        QString tip = m_curPythonData.settingTips.value(key);
         if (tip.isEmpty())
-            tip = m_keywordTips.value(keyword);
+            tip = entry ? entry->description : tips.value(key);
+        if (entry && entry->required)
+            tip = tip.isEmpty() ? tr("Required.") : tr("Required. %1").arg(tip);
+        if (entry && !entry->defaultValue.isEmpty() && !tip.contains(QLatin1String("Default:")))
+            tip += (tip.isEmpty() ? QString() : QStringLiteral("\n"))
+                   + tr("Default: %1").arg(entry->defaultValue);
         if (keyword != key)
             tip += (tip.isEmpty() ? QString() : QStringLiteral("\n"))
                    + tr("Passed to the workflow as: %1").arg(keyword);
@@ -306,6 +320,8 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
         }
     }
     m_rebuildingSettingsGrid = false;
+    applySettingsFilter();
+    updateAddSettingAvailability();
 
     updateBoundaryTooltipsForCurrentTool();
 }
@@ -827,4 +843,267 @@ QString MainWindow::resolveModelInputFile(const QString &scriptValue, const QDir
              .arg(QDir::toNativeSeparators(path), QDir::toNativeSeparators(local)),
          false);
     return local;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Re-reads the editor text into the settings grid after a setting was added or removed.
+ *
+ * Keys that left the script leave \c m_simSettings; new keys enter it. Nothing is written to disk.
+ **********************************************************************************************************************/
+void MainWindow::reparseEditorIntoGrid()
+{
+    const PythonParser::Result res =
+        PythonParser::parseSettingsFromText(m_ui->editRunPythonScript->toPlainText());
+    if (!res.ok)
+        return;
+
+    QSet<QString> before;
+    for (const QString &k : m_curPythonData.settings.keys())
+        before.insert(k);
+    for (const QString &k : m_curPythonData.topLevel.keys())
+        before.insert(k);
+    for (const QString &k : before)
+        if (!res.settings.contains(k) && !res.topLevel.contains(k))
+            m_simSettings.remove(k);
+    for (auto it = res.topLevel.constBegin(); it != res.topLevel.constEnd(); ++it)
+        if (!m_simSettings.contains(it.key()))
+            m_simSettings.insert(it.key(), it.value());
+    for (auto it = res.settings.constBegin(); it != res.settings.constEnd(); ++it)
+        if (!m_simSettings.contains(it.key()))
+            m_simSettings.insert(it.key(), it.value());
+
+    m_curPythonData = res;
+    rebuildSimulationSettingsFromPalace(res.settings, mergeTipsPreferModel(res.settingTips, m_keywordTips),
+                                        res.topLevel);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Adds \c dict['key'] = value to the model script where it fits by topic, then shows it in the grid.
+ *
+ * Pending grid edits are written into the editor first, so nothing is lost. Nothing is saved.
+ *
+ * \param key     New key.
+ * \param pyValue Python literal.
+ * \return False when the model has no settings dict.
+ **********************************************************************************************************************/
+bool MainWindow::addSetting(const QString &key, const QString &pyValue)
+{
+    syncGuiSettingsToPythonEditor();
+    QString script = m_ui->editRunPythonScript->toPlainText();
+    if (!insertSettingIntoScript(script, key, pyValue)) {
+        error(tr("This model has no settings dict, so a new setting would not reach the workflow."), false);
+        return false;
+    }
+    setEditorScriptPreservingState(script);
+    reparseEditorIntoGrid();
+    setStateChanged();
+    info(tr("Added %1['%2'] = %3 (saved with the model).").arg(settingsDictName(script), key, pyValue), false);
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Opens the Add Setting dialog (optionally on one topic) and adds the chosen setting.
+ *
+ * \param presetTopic Topic to show first; empty for all topics.
+ **********************************************************************************************************************/
+void MainWindow::openAddSettingDialog(const QString &presetTopic)
+{
+    updateAddSettingAvailability();
+    if (m_btnAddSetting && !m_btnAddSetting->isEnabled()) {
+        error(m_btnAddSetting->toolTip(), false);
+        return;
+    }
+    QSet<QString> present;
+    for (const QString &k : m_curPythonData.settings.keys())
+        present << k << settingKeyword(k);
+    for (const QString &k : m_curPythonData.topLevel.keys())
+        present << k << settingKeyword(k);
+    QVector<AddSettingDialog::Keyword> keywords;
+    for (const KeywordEntry &e : m_keywordTable)
+        keywords.push_back({e.keyword, e.description, e.topic, e.defaultValue, e.required});
+
+    AddSettingDialog dlg(keywords, present, presetTopic, this);
+    if (dlg.exec() == QDialog::Accepted)
+        addSetting(dlg.key(), dlg.pythonValue());
+}
+
+/*!*******************************************************************************************************************
+ * \brief Removes a setting's line from the model script (after confirmation) and from the grid.
+ * \param key Setting key.
+ **********************************************************************************************************************/
+void MainWindow::removeSetting(const QString &key)
+{
+    syncGuiSettingsToPythonEditor();
+    QString script = m_ui->editRunPythonScript->toPlainText();
+    QString why;
+    if (!canRemoveSetting(script, key, &why)) {
+        error(tr("'%1' can't be removed: %2").arg(key, why), false);
+        return;
+    }
+#ifndef EMSTUDIO_TESTING
+    if (QMessageBox::question(this, tr("Remove Setting"),
+                              tr("Remove '%1' from the model? The workflow then uses its default.").arg(key),
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
+        return;
+#endif
+    removeSettingFromScript(script, key);
+    setEditorScriptPreservingState(script);
+    m_simSettings.remove(key);
+    reparseEditorIntoGrid();
+    setStateChanged();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets a setting to the workflow default from the keyword file (in the script and the grid).
+ * \param key Setting key.
+ **********************************************************************************************************************/
+void MainWindow::resetSettingToDefault(const QString &key)
+{
+    const QString keyword = settingKeyword(key);
+    QString def;
+    for (const KeywordEntry &e : m_keywordTable)
+        if (e.keyword == keyword)
+            def = e.defaultValue;
+    if (def.isEmpty())
+        return;
+    syncGuiSettingsToPythonEditor();
+    QString script = m_ui->editRunPythonScript->toPlainText();
+    if (!writeSettingValueToScript(script, key, def))
+        return;
+    setEditorScriptPreservingState(script);
+    m_simSettings.remove(key);  // take the value from the script again
+    reparseEditorIntoGrid();
+    setStateChanged();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Actions of the settings grid context menu for \a prop (topic group or setting).
+ *
+ * \param prop Property under the cursor.
+ * \param menu Menu to fill (actions are parented to it).
+ **********************************************************************************************************************/
+void MainWindow::fillSettingsContextMenu(QtProperty *prop, QMenu *menu)
+{
+    if (!prop || !menu)
+        return;
+    menu->setToolTipsVisible(true);
+    const bool isTopic = m_settingTopicGroups.contains(prop);
+    QString topic;
+    QString key;
+    if (isTopic) {
+        topic = prop->propertyName();
+    } else {
+        forEachSimSettingProperty([&](QtProperty *p) {
+            if (p == prop)
+                key = p->propertyName();
+        });
+        if (key.isEmpty())
+            return;  // e.g. Boundaries
+        for (QtProperty *g : m_simSettingsGroup->subProperties())
+            if (g->subProperties().contains(prop))
+                topic = g->propertyName();
+    }
+
+    QAction *add = menu->addAction(tr("Add setting to %1...").arg(topic));
+    add->setObjectName(QStringLiteral("settingsAddToTopic"));
+    // "Other" lists all keywords: custom keys land there.
+    const QString preset = topic == tr("Other") ? QString() : topic;
+    connect(add, &QAction::triggered, this, [this, preset]() { openAddSettingDialog(preset); });
+    add->setEnabled(!m_btnAddSetting || m_btnAddSetting->isEnabled());
+
+    if (isTopic) {
+        menu->addSeparator();
+        menu->addAction(tr("Collapse all topics"), this, [this]() {
+            for (QtProperty *g : m_simSettingsGroup->subProperties())
+                for (QtBrowserItem *item : m_propertyBrowser->items(g))
+                    m_propertyBrowser->setExpanded(item, false);
+        });
+        menu->addAction(tr("Expand all topics"), this, [this]() {
+            for (QtProperty *g : m_simSettingsGroup->subProperties())
+                for (QtBrowserItem *item : m_propertyBrowser->items(g))
+                    m_propertyBrowser->setExpanded(item, true);
+        });
+        return;
+    }
+
+    menu->addSeparator();
+    QString def;
+    for (const KeywordEntry &e : m_keywordTable)
+        if (e.keyword == settingKeyword(key))
+            def = e.defaultValue;
+    QAction *reset = menu->addAction(def.isEmpty() ? tr("Reset to default")
+                                                   : tr("Reset to default (%1)").arg(def));
+    reset->setObjectName(QStringLiteral("settingsReset"));
+    reset->setEnabled(!def.isEmpty());
+    if (def.isEmpty())
+        reset->setToolTip(tr("The keyword file has no default for this setting."));
+    connect(reset, &QAction::triggered, this, [this, key]() { resetSettingToDefault(key); });
+
+    QAction *remove = menu->addAction(tr("Remove from model"));
+    remove->setObjectName(QStringLiteral("settingsRemove"));
+    QString why;
+    remove->setEnabled(canRemoveSetting(m_ui->editRunPythonScript->toPlainText(), key, &why));
+    remove->setToolTip(why);
+    connect(remove, &QAction::triggered, this, [this, key]() { removeSetting(key); });
+}
+
+/*!*******************************************************************************************************************
+ * \brief Right-click in the settings grid: menu for the topic or setting under the cursor.
+ * \param pos Position in the grid's tree widget.
+ **********************************************************************************************************************/
+void MainWindow::showSettingsContextMenu(const QPoint &pos)
+{
+    auto *tree = m_propertyBrowser ? m_propertyBrowser->findChild<QTreeWidget *>() : nullptr;
+    if (!tree)
+        return;
+    if (QTreeWidgetItem *it = tree->itemAt(pos))
+        tree->setCurrentItem(it);  // the browser's current item follows
+    QtBrowserItem *bi = m_propertyBrowser->currentItem();
+    if (!bi)
+        return;
+    QMenu menu(this);
+    fillSettingsContextMenu(bi->property(), &menu);
+    if (!menu.isEmpty())
+        menu.exec(tree->viewport()->mapToGlobal(pos));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Shows only settings whose name contains the filter text (empty topics are hidden).
+ **********************************************************************************************************************/
+void MainWindow::applySettingsFilter()
+{
+    if (!m_simSettingsGroup || !m_propertyBrowser)
+        return;
+    const QString text = m_settingsFilter ? m_settingsFilter->text().trimmed() : QString();
+    for (QtProperty *group : m_simSettingsGroup->subProperties()) {
+        bool any = false;
+        for (QtProperty *p : group->subProperties()) {
+            const bool show = text.isEmpty() || p->propertyName().contains(text, Qt::CaseInsensitive);
+            any = any || show;
+            for (QtBrowserItem *item : m_propertyBrowser->items(p))
+                m_propertyBrowser->setItemVisible(item, show);
+        }
+        for (QtBrowserItem *item : m_propertyBrowser->items(group))
+            m_propertyBrowser->setItemVisible(item, any);
+    }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Enables "Add setting" only for models with a settings dict; explains why otherwise.
+ **********************************************************************************************************************/
+void MainWindow::updateAddSettingAvailability()
+{
+    if (!m_btnAddSetting)
+        return;
+    const QString script = m_ui->editRunPythonScript->toPlainText();
+    const bool ok = !settingsDictName(script).isEmpty();
+    m_btnAddSetting->setEnabled(ok);
+    m_btnAddSetting->setToolTip(
+        ok ? tr("Add a setting from the keyword list (by topic) or a custom one.\n"
+                "Right-click a topic or setting for more.")
+           : script.trimmed().isEmpty()
+                 ? tr("No model loaded.")
+                 : tr("This model passes plain variables to the workflow functions instead of a settings "
+                      "dict, so a new variable would have no effect. Use the settings{} style "
+                      "(File > New) to add settings here."));
 }

@@ -27,8 +27,8 @@ import numpy as np
 settings = {}
 
 
-settings['preview_only'] = False  # @brief Enable this to preview model/mesh only, without starting simulation
-settings['postprocess_only'] = False # @brief Enable this to show existing results only, without starting simulation
+settings['preview_only'] = False  # Enable this to preview model/mesh only, without starting simulation
+settings['postprocess_only'] = False # Enable this to show existing results only, without starting simulation
 
 # ===================== input files and path settings =======================
 
@@ -37,9 +37,9 @@ cellname = ""  # optional, set empty string "" to use top cell
 
 XML_filename = ""
 
-settings['purpose'] = [0] # @brief Which GDSII data type is evaluated? Values in [] can be separated by comma
-settings['preprocess_gds'] = True  # @brief  Preprocess GDSII for safe handling of cutouts/holes?
-settings['merge_polygon_size'] = 0.5 #  @brief  Merge via polygons with distance less than .. microns, set to 0 to disable via merging.
+settings['purpose'] = [0] # Which GDSII data type is evaluated? Values in [] can be separated by comma
+settings['preprocess_gds'] = True  # Preprocess GDSII for safe handling of cutouts/holes?
+settings['merge_polygon_size'] = 0.5 # Merge via polygons with distance less than .. microns, set to 0 to disable via merging.
 
 
 # get path for this simulation file
@@ -55,14 +55,14 @@ os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # ======================== simulation settings ================================
 
-settings['unit']   = 1e-06  # @brief Geometry units, 1E-6 is in microns
-settings['margin'] = 50    # @brief Distance from GDSII geometry boundary to simulation boundary, in project units 
+settings['unit']   = 1e-6  # Geometry units, 1E-6 is in microns
+settings['margin'] = 50    # Distance from GDSII geometry boundary to simulation boundary, in project units 
 
-settings['fstart']   = 0e9  # @brief start frequency [Hz]
-settings['fstop']    = 110000000000 # @brief stop frequency [Hz]
-settings['numfreq']  = 401  # @brief number of frequency steps [Hz]
+settings['fstart']   = 0e9  # start frequency [Hz]
+settings['fstop']    = 110e9 # stop frequency [Hz]
+settings['numfreq']  = 401  # number of frequency steps [Hz]
 
-settings['refined_cellsize'] = 2  # @brief mesh cell size in conductor region, in project units
+settings['refined_cellsize'] = 2  # mesh cell size in conductor region, in project units
 
 # choices for boundary:
 # 'PEC' : perfect electric conductor (default)
@@ -71,8 +71,8 @@ settings['refined_cellsize'] = 2  # @brief mesh cell size in conductor region, i
 # 'PML_8' : PML absorbing boundary conditions
 settings['Boundaries'] = ['PEC', 'PEC', 'PEC', 'PEC', 'PEC', 'PEC']
 
-settings['cells_per_wavelength'] = 20   # @brief how many mesh cells per wavelength, must be 10 or more
-settings['energy_limit'] = -40          # @brief end criteria for residual energy (dB), default is -40
+settings['cells_per_wavelength'] = 20   # how many mesh cells per wavelength, must be 10 or more
+settings['energy_limit'] = -40          # end criteria for residual energy (dB), default is -40
 
 # port configuration, port geometry is read from GDSII file on the specified layer
 simulation_ports = simulation_setup.all_simulation_ports()

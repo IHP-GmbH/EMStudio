@@ -19,6 +19,7 @@ private slots:
     void loadKeywordTipsCsv_parsesDelimiters();
     void loadKeywordTable_readsTopicsAndDefaults();
     void bindWorkflowCalls_mapsLooseVariables();
+    void statementEndAndValueLiterals();
     void mergeTipsPreferModel_keepsModelOverrides();
 };
 

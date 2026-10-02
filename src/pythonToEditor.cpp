@@ -51,6 +51,9 @@
 #include "substrateview.h"
 #include "pythonparser.h"
 
+#include <algorithm>
+#include <cmath>
+
 #include <QRegularExpression>
 
 /*!*******************************************************************************************************************
@@ -442,6 +445,24 @@ void MainWindow::applyOneSettingToScript(QString &script,
                                  m_curPythonData.quotedStrings.contains(key), &pyValue))
             return;
     } else {
+        // Numbers and True/False: unchanged values keep the script's own spelling (1e9 stays
+        // 1e9, not 1000000000), so Save doesn't rewrite lines the user didn't touch.
+        const QVariant inScript = m_curPythonData.settings.contains(key)
+                ? m_curPythonData.settings.value(key)
+                : m_curPythonData.topLevel.value(key);
+        if (inScript.isValid()) {
+            if (val.type() == QVariant::Bool || inScript.type() == QVariant::Bool) {
+                if (val.type() == inScript.type() && val.toBool() == inScript.toBool())
+                    return;
+            } else {
+                bool okA = false;
+                bool okB = false;
+                const double a = val.toDouble(&okA);
+                const double b = inScript.toDouble(&okB);
+                if (okA && okB && (a == b || std::abs(a - b) <= 1e-12 * std::max(std::abs(a), std::abs(b))))
+                    return;
+            }
+        }
         if (!variantToPythonLiteral(val, &pyValue))
             return;
     }
@@ -665,17 +686,36 @@ void MainWindow::applyBoundaries(QString &script, bool alsoTopLevelAssignment)
 
     const QString bndPython = QString("['%1']").arg(bndValues.join("', '"));
 
-    // Dict-style: <something>['Boundaries'] = ...
-    QRegularExpression reSettings(
-        R"(^\s*(\w+)\s*\[\s*['"]Boundaries['"]\s*\]\s*=\s*.*$)",
-        QRegularExpression::MultilineOption);
+    // <lhs> = <value>  # comment  -> keep indentation (e.g. inside a sweep loop) and the comment;
+    // an unchanged list (same six values) keeps its own spelling.
+    auto rewrite = [&](const QString &lhsPattern) {
+        const QRegularExpression re(
+            QStringLiteral(R"((?m)^([ \t]*%1[ \t]*=[ \t]*)([^#\n]*?)([ \t]*#[^\n]*)?$)").arg(lhsPattern));
+        QString out;
+        int last = 0;
+        QRegularExpressionMatchIterator it = re.globalMatch(script);
+        while (it.hasNext()) {
+            const QRegularExpressionMatch m = it.next();
+            QStringList current;
+            QRegularExpressionMatchIterator items =
+                QRegularExpression(QStringLiteral(R"(['"]([^'"]*)['"])")).globalMatch(m.captured(2));
+            while (items.hasNext())
+                current << items.next().captured(1).trimmed();
+            out += script.mid(last, m.capturedStart() - last);
+            out += (current == bndValues) ? m.captured(0)
+                                          : m.captured(1) + bndPython + m.captured(3);
+            last = m.capturedEnd();
+        }
+        out += script.mid(last);
+        script = out;
+    };
 
-    script.replace(reSettings, QString("\\1['Boundaries'] = %1").arg(bndPython));
+    // Dict-style: <something>['Boundaries'] = ...
+    rewrite(QStringLiteral(R"(\w+\s*\[\s*['"]Boundaries['"]\s*\])"));
 
     if (alsoTopLevelAssignment) {
-        // Top-level: Boundaries = ...
-        QRegularExpression reBnd("^Boundaries\\s*=.*$", QRegularExpression::MultilineOption);
-        script.replace(reBnd, QString("Boundaries = %1").arg(bndPython));
+        // Plain variable: Boundaries = ...
+        rewrite(QStringLiteral("Boundaries"));
     }
 }
 
@@ -729,10 +769,11 @@ void MainWindow::applyTopCellToScript(QString &script, const QString &topCell)
     // Only true top-level string assignments; never the call kwarg "cellname=gds_cellname".
     auto replaceTopLevelGdsCellname = [&]() -> bool {
         const QRegularExpression reVar(
-            QStringLiteral("(?m)^[ \\t]*gds_cellname[ \\t]*=[ \\t]*(?:\"[^\"]*\"|'[^']*')[ \\t]*(?:#.*)?$"));
+            QStringLiteral("(?m)^([ \\t]*)gds_cellname[ \\t]*=[ \\t]*(?:\"[^\"]*\"|'[^']*')[ \\t]*(?:#.*)?$"));
         if (!script.contains(reVar))
             return false;
-        script.replace(reVar, QStringLiteral("gds_cellname = %1").arg(quoted()));
+        // Whole line (golden style), keeping its indentation.
+        script.replace(reVar, QStringLiteral("\\1gds_cellname = %1").arg(quoted()));
         return true;
     };
     auto replaceDictCell = [&](const QString &keyPattern) -> bool {
@@ -821,21 +862,57 @@ void MainWindow::applyTopCellToScript(QString &script, const QString &topCell)
  **********************************************************************************************************************/
 void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower)
 {
-    auto replaceDictStringAssign = [&](const QString &key, const QString &value) {
+    // Does a path written in the script (maybe relative to the model, or a WSL path) name the same
+    // file as the GUI's path? Then the line stays as written (relative paths keep the model movable).
+    const QString modelDir = currentPythonScriptPath().isEmpty()
+            ? QString() : QFileInfo(currentPythonScriptPath()).absolutePath();
+    auto sameFile = [&](const QString &scriptValue, const QString &guiPath) -> bool {
+        QString p = fromWslPath(scriptValue.trimmed());
+        if (p.isEmpty() || guiPath.trimmed().isEmpty())
+            return false;
+        if (QFileInfo(p).isRelative()) {
+            if (modelDir.isEmpty())
+                return false;
+            p = QDir(modelDir).filePath(p);
+        }
+        const QFileInfo a(p);
+        const QFileInfo b(guiPath);
+        if (a.exists() && b.exists())
+            return a.canonicalFilePath() == b.canonicalFilePath();
+        return QDir::cleanPath(a.absoluteFilePath()) == QDir::cleanPath(b.absoluteFilePath());
+    };
+    // <lhs> = "path"  # comment : value replaced (comment kept) unless it is the same file.
+    auto replacePath = [&](const QString &lhsPattern, const QString &guiPath, const QString &value) {
+        const QRegularExpression re(
+            QStringLiteral(R"((?m)^([ \t]*%1[ \t]*=[ \t]*)([^#\n]*?)([ \t]*#[^\n]*)?$)").arg(lhsPattern));
+        QString out;
+        int last = 0;
+        QRegularExpressionMatchIterator it = re.globalMatch(script);
+        while (it.hasNext()) {
+            const QRegularExpressionMatch m = it.next();
+            const QRegularExpressionMatch quoted =
+                QRegularExpression(QStringLiteral(R"(^(['"])(.*)\1$)")).match(m.captured(2).trimmed());
+            out += script.mid(last, m.capturedStart() - last);
+            out += (quoted.hasMatch() && sameFile(quoted.captured(2), guiPath))
+                    ? m.captured(0)
+                    : m.captured(1) + QStringLiteral("\"%1\"").arg(value) + m.captured(3);
+            last = m.capturedEnd();
+        }
+        out += script.mid(last);
+        script = out;
+    };
+    auto replaceDictStringAssign = [&](const QString &key, const QString &guiPath, const QString &value) {
         if (key.isEmpty())
             return;
-        const QRegularExpression re(
-            QStringLiteral(R"((?m)^([ \t]*\w+\s*\[\s*['"]%1['"]\s*\]\s*=\s*)([^\n#]+)(.*)$)")
-                .arg(QRegularExpression::escape(key)));
-        if (script.contains(re))
-            script.replace(re, QStringLiteral("\\1\"%1\"\\3").arg(value));
+        replacePath(QStringLiteral(R"(\w+\s*\[\s*['"]%1['"]\s*\])").arg(QRegularExpression::escape(key)),
+                    guiPath, value);
     };
 
     if (m_simSettings.contains("GdsFile")) {
-        QString gdsPath = makeScriptPathForPython(m_simSettings.value("GdsFile").toString(), simKeyLower);
+        const QString gdsGui = m_simSettings.value("GdsFile").toString();
+        QString gdsPath = makeScriptPathForPython(gdsGui, simKeyLower);
 
-        QRegularExpression re("^gds_filename\\s*=.*$", QRegularExpression::MultilineOption);
-        script.replace(re, QStringLiteral("gds_filename = \"%1\"").arg(gdsPath));
+        replacePath(QStringLiteral("gds_filename"), gdsGui, gdsPath);
 
         // gds2palace / Elmer: settings['GdsFile'] (and model-specific key if different).
         QStringList gdsKeys{QStringLiteral("GdsFile")};
@@ -843,7 +920,7 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
             gdsKeys << m_modelGdsKey;
         gdsKeys.removeDuplicates();
         for (const QString &k : gdsKeys)
-            replaceDictStringAssign(k, gdsPath);
+            replaceDictStringAssign(k, gdsGui, gdsPath);
     }
 
     const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
@@ -851,18 +928,17 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
         applyTopCellToScript(script, topCell);
 
     if (m_simSettings.contains("SubstrateFile")) {
-        QString xmlPath = makeScriptPathForPython(m_simSettings.value("SubstrateFile").toString(), simKeyLower);
+        const QString xmlGui = m_simSettings.value("SubstrateFile").toString();
+        QString xmlPath = makeScriptPathForPython(xmlGui, simKeyLower);
 
-        QRegularExpression re("^XML_filename\\s*=.*$",
-                              QRegularExpression::MultilineOption);
-        script.replace(re, QStringLiteral("XML_filename = \"%1\"").arg(xmlPath));
+        replacePath(QStringLiteral("XML_filename"), xmlGui, xmlPath);
 
         QStringList xmlKeys{QStringLiteral("SubstrateFile")};
         if (!m_modelXmlKey.isEmpty())
             xmlKeys << m_modelXmlKey;
         xmlKeys.removeDuplicates();
         for (const QString &k : xmlKeys)
-            replaceDictStringAssign(k, xmlPath);
+            replaceDictStringAssign(k, xmlGui, xmlPath);
     }
 }
 
@@ -1267,9 +1343,18 @@ QVector<QPair<int,int>> MainWindow::findPortBlocks(const QString &script)
  * \param script   Python script text to be modified in-place.
  * \param portCode New ports section Python code.
  **********************************************************************************************************************/
-void MainWindow::replaceOrInsertPortSection(QString &script, const QString &portCode)
+void MainWindow::replaceOrInsertPortSection(QString &script, const QString &portCodeIn)
 {
     const auto blocks = findPortBlocks(script);
+    if (blocks.isEmpty() && portCodeIn.trimmed().isEmpty())
+        return;  // nothing to write, nothing to replace
+    // No ports: keep the (empty) port list defined, later code uses simulation_ports.
+    const QString portCode = portCodeIn.trimmed().isEmpty()
+            ? QStringLiteral("simulation_ports = simulation_setup.all_simulation_ports()\n") : portCodeIn;
+
+    // Same ports as in the script: leave the user's formatting, comments and layout alone.
+    if (blocks.size() == 1 && portsEqual(parsePortsFromScript(script), parsePortsFromScript(portCode)))
+        return;
 
     if (!blocks.isEmpty()) {
         // Delete from the end to keep indices valid
@@ -1279,10 +1364,35 @@ void MainWindow::replaceOrInsertPortSection(QString &script, const QString &port
             script.remove(s, e - s);
         }
 
-        // Replace the first block
+        // Replace the first block. It may be indented (e.g. inside a sweep loop): the new code
+        // gets the same indentation. Comment lines inside the block are kept; blank and comment
+        // lines after the last add_port(...) are not part of it.
         const int s0 = blocks[0].first;
-        const int e0 = blocks[0].second;
-        script.replace(s0, e0 - s0, portCode);
+        int e0 = blocks[0].second;
+        const QString indent = QRegularExpression(QStringLiteral(R"(^[ \t]*)"))
+                                   .match(script.mid(s0, e0 - s0)).captured(0);
+        QStringList blockLines = script.mid(s0, e0 - s0).split(QLatin1Char('\n'));
+        while (!blockLines.isEmpty()
+               && (blockLines.last().trimmed().isEmpty() || blockLines.last().trimmed().startsWith(QLatin1Char('#')))) {
+            e0 -= blockLines.last().size() + 1;
+            blockLines.removeLast();
+        }
+        e0 = qMax(s0, qMin(e0 + 1, blocks[0].second));  // keep the newline of the last statement
+        QStringList comments;
+        for (const QString &line : blockLines)
+            if (line.trimmed().startsWith(QLatin1Char('#')))
+                comments << line.trimmed();
+
+        QStringList newLines = portCode.split(QLatin1Char('\n'));
+        if (!newLines.isEmpty() && newLines.last().isEmpty())
+            newLines.removeLast();
+        if (!comments.isEmpty() && !newLines.isEmpty())
+            for (int i = comments.size() - 1; i >= 0; --i)
+                newLines.insert(1, comments.at(i));  // after "simulation_ports = ..."
+        for (QString &line : newLines)
+            if (!line.isEmpty())
+                line.prepend(indent);
+        script.replace(s0, e0 - s0, newLines.join(QLatin1Char('\n')) + QLatin1Char('\n'));
     } else {
         // No section found -> insert before "simulation ===" marker if present, else append
         QRegularExpression simMarker(
@@ -1336,6 +1446,29 @@ void MainWindow::replaceOrInsertPortSection(QString &script, const QString &port
 }
 
 /*!*******************************************************************************************************************
+ * \brief True if two port lists describe the same ports (same order, same values).
+ *
+ * \param a First list.
+ * \param b Second list.
+ * \return Equality of number, voltage, Z0, source, from / to (target) layer and direction.
+ **********************************************************************************************************************/
+bool MainWindow::portsEqual(const QVector<PortInfo> &a, const QVector<PortInfo> &b)
+{
+    if (a.size() != b.size())
+        return false;
+    for (int i = 0; i < a.size(); ++i) {
+        const PortInfo &x = a.at(i);
+        const PortInfo &y = b.at(i);
+        if (x.portnumber != y.portnumber || !qFuzzyCompare(x.voltage + 1.0, y.voltage + 1.0)
+            || !qFuzzyCompare(x.z0, y.z0) || x.sourceLayer.trimmed() != y.sourceLayer.trimmed()
+            || x.fromLayer.trimmed() != y.fromLayer.trimmed() || x.toLayer.trimmed() != y.toLayer.trimmed()
+            || x.direction.trimmed().compare(y.direction.trimmed(), Qt::CaseInsensitive) != 0)
+            return false;
+    }
+    return true;
+}
+
+/*!*******************************************************************************************************************
  * \brief Writes the modified script to the editor while preserving cursor selection and scroll position.
  *
  * Captures current cursor/selection and scrollbar values, sets the editor text with undo support,
@@ -1378,4 +1511,210 @@ void MainWindow::setEditorScriptPreservingState(const QString &script)
         vScroll->setValue(qMin(oldV, vScroll->maximum()));
     if (hScroll)
         hScroll->setValue(qMin(oldH, hScroll->maximum()));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Name of the settings dict the model assigns at top level (\c X['key'] = ... at column 0).
+ *
+ * \param script Script text.
+ * A model with only \c settings = {} (no entries yet) counts as well.
+ *
+ * \return Dict name, or empty for models that use loose variables only (Add setting is disabled).
+ **********************************************************************************************************************/
+QString MainWindow::settingsDictName(const QString &script) const
+{
+    static const QRegularExpression re(QStringLiteral(R"((?m)^([A-Za-z_]\w*)\[\s*['"]\w+['"]\s*\]\s*=(?!=))"));
+    const QString name = re.match(script).captured(1);
+    if (!name.isEmpty())
+        return name;
+    static const QRegularExpression reEmpty(QStringLiteral(R"((?m)^settings\s*=\s*\{\s*\})"));
+    return reEmpty.match(script).hasMatch() ? QStringLiteral("settings") : QString();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Top-level \c dict['key'] = ... statements (column 0), in script order.
+ *
+ * \param script Script text.
+ * \param dict   Settings dict name.
+ * \return One entry per statement: key and the statement's [start, end) offsets.
+ **********************************************************************************************************************/
+QVector<MainWindow::SettingStatement> MainWindow::topLevelSettingStatements(const QString &script,
+                                                                           const QString &dict) const
+{
+    QVector<SettingStatement> out;
+    if (dict.isEmpty())
+        return out;
+    const QRegularExpression re(QStringLiteral(R"((?m)^%1\[\s*(['"])(\w+)\1\s*\]\s*=(?!=))")
+                                    .arg(QRegularExpression::escape(dict)));
+    QRegularExpressionMatchIterator it = re.globalMatch(script);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        out.push_back({m.captured(2), m.capturedStart(), PythonParser::statementEnd(script, m.capturedStart())});
+    }
+    return out;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sort key of a setting in the grid: (topic index, row in the keyword file).
+ *
+ * \param key Setting key (loose variables are mapped through settingKeyword()).
+ * \return Sort key; unknown keys sort last.
+ **********************************************************************************************************************/
+QPair<int, int> MainWindow::settingSortKey(const QString &key) const
+{
+    const QString keyword = settingKeyword(key);
+    QStringList topics;
+    for (int i = 0; i < m_keywordTable.size(); ++i) {
+        const KeywordEntry &e = m_keywordTable.at(i);
+        const QString topic = e.topic.isEmpty() ? QStringLiteral("Other") : e.topic;
+        if (!topics.contains(topic))
+            topics << topic;
+        if (e.keyword == keyword && !e.topic.isEmpty())
+            return qMakePair(int(topics.indexOf(topic)), i);
+    }
+    return qMakePair(INT_MAX, INT_MAX);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Inserts \c dict['key'] = value where it fits by topic.
+ *
+ * After the present key that comes last before it in keyword-file order (topic, then row), else
+ * before the first present key, else after \c dict = {}. Keys the keyword file doesn't know go
+ * after the last top-level settings line. Only column-0 statements are anchors.
+ *
+ * \param script  Script text, changed in place.
+ * \param key     New key (not yet in the script).
+ * \param pyValue Python literal.
+ * \return False when the model has no settings dict.
+ **********************************************************************************************************************/
+bool MainWindow::insertSettingIntoScript(QString &script, const QString &key, const QString &pyValue) const
+{
+    const QString dict = settingsDictName(script);
+    if (dict.isEmpty())
+        return false;
+    const QVector<SettingStatement> stmts = topLevelSettingStatements(script, dict);
+    const QPair<int, int> newKey = settingSortKey(key);
+    const bool known = newKey.first != INT_MAX;
+
+    int pos = -1;
+    if (known) {
+        const SettingStatement *before = nullptr;  // largest sort key below the new one
+        const SettingStatement *after = nullptr;   // smallest sort key above the new one
+        for (const SettingStatement &s : stmts) {
+            const QPair<int, int> k = settingSortKey(s.key);
+            if (k.first == INT_MAX)
+                continue;
+            if (k < newKey) {
+                if (!before || !(k < settingSortKey(before->key)))
+                    before = &s;
+            } else if (!after || k < settingSortKey(after->key)) {
+                after = &s;
+            }
+        }
+        if (before)
+            pos = before->end;
+        else if (after)
+            pos = after->start;
+    }
+    if (pos < 0 && !known && !stmts.isEmpty())
+        pos = stmts.last().end;
+    if (pos < 0) {
+        const QRegularExpressionMatch init = QRegularExpression(
+            QStringLiteral(R"((?m)^%1\s*=\s*\{\s*\}[^\n]*$)").arg(QRegularExpression::escape(dict))).match(script);
+        if (init.hasMatch())
+            pos = PythonParser::statementEnd(script, init.capturedStart());
+        else if (!stmts.isEmpty())
+            pos = stmts.last().end;
+        else
+            return false;
+    }
+
+    QString line = QStringLiteral("%1['%2'] = %3\n").arg(dict, key, pyValue);
+    if (pos > 0 && script.at(pos - 1) != QLatin1Char('\n'))
+        line.prepend(QLatin1Char('\n'));
+    script.insert(pos, line);
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Whether a setting can be removed from the script, and why not.
+ *
+ * Only a key assigned exactly once, at top level, that the workflow doesn't require.
+ *
+ * \param script Script text.
+ * \param key    Setting key.
+ * \param why    Optional reason when it can't.
+ * \return True if removeSettingFromScript() would remove it.
+ **********************************************************************************************************************/
+bool MainWindow::canRemoveSetting(const QString &script, const QString &key, QString *why) const
+{
+    auto fail = [why](const QString &reason) {
+        if (why)
+            *why = reason;
+        return false;
+    };
+    const QString keyword = settingKeyword(key);
+    for (const KeywordEntry &e : m_keywordTable)
+        if (e.keyword == keyword && e.required)
+            return fail(tr("Required by the workflow."));
+    const QString dict = settingsDictName(script);
+    if (dict.isEmpty())
+        return fail(tr("The model has no settings dict."));
+    const QRegularExpression any(QStringLiteral(R"((?m)^[ \t]*\w+\[\s*['"]%1['"]\s*\]\s*=(?!=))")
+                                     .arg(QRegularExpression::escape(key)));
+    int count = 0;
+    QRegularExpressionMatchIterator it = any.globalMatch(script);
+    while (it.hasNext()) {
+        it.next();
+        ++count;
+    }
+    int topLevel = 0;
+    for (const SettingStatement &s : topLevelSettingStatements(script, dict))
+        if (s.key == key)
+            ++topLevel;
+    if (topLevel != 1 || count != 1)
+        return fail(tr("Assigned more than once or inside a block; edit it on the Python tab."));
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Removes the single top-level assignment of \a key (see canRemoveSetting()).
+ *
+ * \param script Script text, changed in place.
+ * \param key    Setting key.
+ * \return True if removed.
+ **********************************************************************************************************************/
+bool MainWindow::removeSettingFromScript(QString &script, const QString &key) const
+{
+    if (!canRemoveSetting(script, key, nullptr))
+        return false;
+    for (const SettingStatement &s : topLevelSettingStatements(script, settingsDictName(script))) {
+        if (s.key == key) {
+            script.remove(s.start, s.end - s.start);
+            return true;
+        }
+    }
+    return false;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Writes \a pyValue into the existing assignment of \a key (dict entry or top-level variable).
+ *
+ * \param script  Script text, changed in place.
+ * \param key     Setting key known to the last parse (writeMode).
+ * \param pyValue Python literal.
+ * \return False if the key has no known assignment.
+ **********************************************************************************************************************/
+bool MainWindow::writeSettingValueToScript(QString &script, const QString &key, const QString &pyValue) const
+{
+    switch (m_curPythonData.writeMode.value(key, PythonParser::SettingWriteMode::Unknown)) {
+    case PythonParser::SettingWriteMode::DictAssign:
+        replaceAnyDictVar(script, key, pyValue);
+        return true;
+    case PythonParser::SettingWriteMode::TopLevel:
+        replaceTopLevelVar(script, key, pyValue);
+        return true;
+    default:
+        return false;
+    }
 }

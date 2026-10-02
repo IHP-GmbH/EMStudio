@@ -16,6 +16,7 @@
 
 #include "mainwindow.h"
 #include "pythonparser.h"
+#include "addsettingdialog.h"
 #include "test_utils.h"
 
 
@@ -193,4 +194,27 @@ void TipsTest::bindWorkflowCalls_mapsLooseVariables()
     QVERIFY(rejected(QStringLiteral("cs_fine += 1\n"), "cs_fine"));                // augmented
     QVERIFY(rejected(QStringLiteral("x = simulation_setup.runSimulation(e, F, s, m, my_margin)\n"),
                      "my_margin"));  // passed as two different parameters
+}
+
+/*! statementEnd spans brackets and continuations; the Add dialog turns typed text into literals. */
+void TipsTest::statementEndAndValueLiterals()
+{
+    const QString s = QStringLiteral("a = [1,\n     2]  # c\nb = 1 + \\\n    2\nc = 'x#y'\n");
+    QCOMPARE(PythonParser::statementEnd(s, 0), s.indexOf(QStringLiteral("b =")));
+    QCOMPARE(PythonParser::statementEnd(s, s.indexOf(QStringLiteral("b ="))), s.indexOf(QStringLiteral("c =")));
+    QCOMPARE(PythonParser::statementEnd(s, s.indexOf(QStringLiteral("c ="))), s.size());
+
+    QString lit;
+    QVERIFY(AddSettingDialog::toPythonLiteral(QStringLiteral(" 1e-6 "), &lit));
+    QCOMPARE(lit, QStringLiteral("1e-6"));
+    QVERIFY(AddSettingDialog::toPythonLiteral(QStringLiteral("True"), &lit));
+    QCOMPARE(lit, QStringLiteral("True"));
+    QVERIFY(AddSettingDialog::toPythonLiteral(QStringLiteral("[['Metal3', 2.0]]"), &lit));
+    QCOMPARE(lit, QStringLiteral("[['Metal3', 2.0]]"));
+    QVERIFY(AddSettingDialog::toPythonLiteral(QStringLiteral("_fine"), &lit));
+    QCOMPARE(lit, QStringLiteral("'_fine'"));
+    QVERIFY(AddSettingDialog::toPythonLiteral(QStringLiteral("it's"), &lit));
+    QCOMPARE(lit, QStringLiteral("'it\\'s'"));
+    QVERIFY(!AddSettingDialog::toPythonLiteral(QStringLiteral("[1, 2"), &lit));
+    QVERIFY(!AddSettingDialog::toPythonLiteral(QStringLiteral("  "), &lit));
 }

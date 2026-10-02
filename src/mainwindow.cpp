@@ -41,6 +41,8 @@
 #include <QCloseEvent>
 #include <QSignalBlocker>
 #include <QPushButton>
+#include <QLineEdit>
+#include <QTreeWidget>
 #include <QStandardPaths>
 #include <QProcessEnvironment>
 #include <QApplication>
@@ -3396,7 +3398,30 @@ void MainWindow::setupSettingsPanel()
 
     QVBoxLayout *layout = new QVBoxLayout(m_ui->wdgSettings);
     layout->setContentsMargins(0, 0, 0, 0);
+
+    // Above the grid: add a setting (by topic, see AddSettingDialog) and filter the grid.
+    auto *strip = new QHBoxLayout;
+    strip->setContentsMargins(0, 0, 0, 2);
+    m_btnAddSetting = new QPushButton(tr("+ Add setting..."), m_ui->wdgSettings);
+    m_btnAddSetting->setObjectName(QStringLiteral("btnAddSetting"));
+    connect(m_btnAddSetting, &QPushButton::clicked, this, [this]() { openAddSettingDialog(QString()); });
+    strip->addWidget(m_btnAddSetting);
+    m_settingsFilter = new QLineEdit(m_ui->wdgSettings);
+    m_settingsFilter->setObjectName(QStringLiteral("txtSettingsFilter"));
+    m_settingsFilter->setPlaceholderText(tr("Filter settings..."));
+    m_settingsFilter->setClearButtonEnabled(true);
+    connect(m_settingsFilter, &QLineEdit::textChanged, this, [this]() { applySettingsFilter(); });
+    strip->addWidget(m_settingsFilter, 1);
+    layout->addLayout(strip);
     layout->addWidget(m_propertyBrowser);
+
+    // Right-click: add to this topic, reset or remove a setting.
+    if (auto *tree = m_propertyBrowser->findChild<QTreeWidget *>()) {
+        tree->setContextMenuPolicy(Qt::CustomContextMenu);
+        connect(tree, &QWidget::customContextMenuRequested, this, &MainWindow::showSettingsContextMenu);
+    }
+    connect(m_ui->editRunPythonScript, &QTextEdit::textChanged,
+            this, &MainWindow::updateAddSettingAvailability);
 
     QtVariantEditorFactory *factory = new VariantFactory();
     m_propertyBrowser->setFactoryForManager(m_variantManager, factory);
@@ -4482,9 +4507,12 @@ void MainWindow::onLayoutLayerClicked(const QString &name, const QString &kind, 
     if (!m_ui || !m_ui->tblPorts)
         return;
 
-    const bool looksPort = (kind.compare(QLatin1String("port"), Qt::CaseInsensitive) == 0)
+    // A stackup layer on 201–299 (e.g. a ground sheet) has its own kind and is no port marker.
+    const bool kindIsPort = kind.compare(QLatin1String("port"), Qt::CaseInsensitive) == 0;
+    const bool markerRange = (kindIsPort || kind.isEmpty()) && gdsLayer >= 201 && gdsLayer <= 299;
+    const bool looksPort = kindIsPort
             || name.startsWith(QLatin1Char('P'))
-            || (gdsLayer >= 201 && gdsLayer <= 299);
+            || markerRange;
     if (!looksPort)
         return;
 
@@ -4495,7 +4523,7 @@ void MainWindow::onLayoutLayerClicked(const QString &name, const QString &kind, 
         if (!ok)
             portNum = -1;
     }
-    if (portNum < 0 && gdsLayer >= 201 && gdsLayer <= 299)
+    if (portNum < 0 && markerRange)
         portNum = gdsLayer - 200;
 
     m_blockPortSelectSync = true;

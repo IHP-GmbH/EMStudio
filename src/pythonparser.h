@@ -126,6 +126,9 @@ public:
                                                       const QVector<WorkflowParam> &signatures);
 
     static QVector<CallSite>        findCalls(const QString &script, const QString &funcName);
+    /*! Offset just past the end of the statement that starts at \a pos (past its newline):
+     *  open brackets, strings and backslash continuations span lines. */
+    static int                      statementEnd(const QString &script, int pos);
     static QVector<CallArg>         splitCallArgs(const QString &script, const CallSite &call);
     static CallArgRef               callArgumentRef(const QString &script, const QString &funcName,
                                                     const QString &keyword);

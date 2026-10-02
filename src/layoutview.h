@@ -329,6 +329,7 @@ private:
     /*! Styling multiplier: layer fill opacity relative to \c defaultFillOpacity(). */
     qreal                       opacityFor(int gdsLayer) const;
     bool                        visibleFor(int gdsLayer) const;
+    bool                        isPortLayerNumber(int gdsLayer) const;
     /*!*******************************************************************************************************************
      * \brief Adds the Field heatmap pixmap under layout polygons (scene Y-down).
      **********************************************************************************************************************/

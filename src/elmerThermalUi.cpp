@@ -422,12 +422,25 @@ QVector<QPair<int, int>> MainWindow::findThermalBlocks(const QString &script)
 
         const int blockStart = m.capturedStart();
         int scan = m.capturedEnd();
+        int parenDepth = 0;  // add_heatsource(...) may span several lines
+        auto parenDelta = [](const QString &line) {
+            int d = 0;
+            for (const QChar c : line)
+                d += (c == QLatin1Char('(')) ? 1 : (c == QLatin1Char(')')) ? -1 : 0;
+            return d;
+        };
         while (scan < script.size()) {
             int lineEnd = script.indexOf('\n', scan);
             if (lineEnd < 0)
                 lineEnd = script.size();
-            const QString t = script.mid(scan, lineEnd - scan).trimmed();
-            if (t.isEmpty() || t.startsWith('#') || isAddLine(t)) {
+            const QString line = script.mid(scan, lineEnd - scan);
+            const QString t = line.trimmed();
+            if (parenDepth > 0 || isAddLine(t)) {
+                parenDepth = qMax(0, parenDepth + parenDelta(line));
+                scan = (lineEnd < script.size()) ? (lineEnd + 1) : lineEnd;
+                continue;
+            }
+            if (t.isEmpty() || t.startsWith('#')) {
                 scan = (lineEnd < script.size()) ? (lineEnd + 1) : lineEnd;
                 continue;
             }
@@ -450,9 +463,39 @@ void MainWindow::replaceOrInsertThermalSection(QString &script, const QString &t
         for (int i = blocks.size() - 1; i >= 1; --i)
             script.remove(blocks[i].first, blocks[i].second - blocks[i].first);
         blocks = findThermalBlocks(script);
-        script.replace(blocks.first().first,
-                       blocks.first().second - blocks.first().first,
-                       thermalCode.endsWith('\n') ? thermalCode : thermalCode + '\n');
+        const int s0 = blocks.first().first;
+        int len = blocks.first().second - s0;
+        // Blank and comment lines after the last add_* call stay in the script.
+        QStringList blockLines = script.mid(s0, len).split(QLatin1Char('\n'));
+        while (blockLines.size() > 1
+               && (blockLines.last().trimmed().isEmpty() || blockLines.last().trimmed().startsWith(QLatin1Char('#')))) {
+            len -= blockLines.last().size() + 1;
+            blockLines.removeLast();
+        }
+        len = qMin(len + 1, blocks.first().second - s0);  // keep the newline of the last statement
+        const QString existing = script.mid(s0, len);
+        // Same code as in the script (ignoring layout and comments): leave the user's formatting.
+        auto essence = [](const QString &code) {
+            QString out;
+            for (const QString &line : code.split(QLatin1Char('\n'))) {
+                const QString t = line.trimmed();
+                if (!t.isEmpty() && !t.startsWith(QLatin1Char('#')))
+                    out += t;
+            }
+            out.remove(QRegularExpression(QStringLiteral(R"(\s+)")));
+            return out;
+        };
+        if (essence(existing) == essence(thermalCode))
+            return;
+        // Rewrite with the block's indentation (e.g. inside a sweep loop).
+        const QString indent = QRegularExpression(QStringLiteral(R"(^[ \t]*)")).match(existing).captured(0);
+        QStringList lines = thermalCode.split(QLatin1Char('\n'));
+        if (!lines.isEmpty() && lines.last().isEmpty())
+            lines.removeLast();
+        for (QString &line : lines)
+            if (!line.isEmpty())
+                line.prepend(indent);
+        script.replace(s0, len, lines.join(QLatin1Char('\n')) + QLatin1Char('\n'));
         return;
     }
 

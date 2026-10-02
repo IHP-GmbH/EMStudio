@@ -45,29 +45,29 @@ os.chdir(modelDir)
 
 settings = {}
 
-settings['purpose'] = [0] # @brief Which GDSII data type is evaluated? Values in [] can be separated by comma
-settings['preprocess_gds'] = True  # @brief  Preprocess GDSII for safe handling of cutouts/holes?
-settings['merge_polygon_size'] = 0.5 #  @brief  Merge via polygons with distance less than .. microns, set to 0 to disable via merging.
+settings['purpose'] = [0] # Which GDSII data type is evaluated? Values in [] can be separated by comma
+settings['preprocess_gds'] = True  # Preprocess GDSII for safe handling of cutouts/holes?
+settings['merge_polygon_size'] = 0.5 # Merge via polygons with distance less than .. microns, set to 0 to disable via merging.
 
-settings['unit']   = 1e-6  # @brief Geometry units, 1E-6 is in microns
-settings['margin'] = 50    # @brief Distance from GDSII geometry boundary to stackup boundary, in project units
+settings['unit']   = 1e-6  # Geometry units, 1E-6 is in microns
+settings['margin'] = 50    # Distance from GDSII geometry boundary to stackup boundary, in project units
 
-settings['fstart']  = 0e9  # @brief start frequency [Hz]
-settings['fstop']   = 100e9 # @brief stop frequency [Hz]
-settings['fstep']   = 5e9 # @brief frequency step [Hz], adaptive frequency sweep is used 
+settings['fstart']  = 0e9  # start frequency [Hz]
+settings['fstop']   = 100e9 # stop frequency [Hz]
+settings['fstep']   = 5e9 # frequency step [Hz], adaptive frequency sweep is used 
 
-settings['fpoint']  = [] # @brief optional: list of discrete frequencies for S-param, in addition to sweep, default is []
-settings['fdump']   = [] # @brief Enable field dump (Elmer: any non-empty value dumps at every solved frequency). Example: [settings['fstop']]
+settings['fpoint']  = [] # optional: list of discrete frequencies for S-param, in addition to sweep, default is []
+settings['fdump']   = [] # Enable field dump (Elmer: any non-empty value dumps at every solved frequency). Example: [settings['fstop']]
 
 # optional: boundary condition ABC, PEC or PMC at X-,X+,Y-mY+,Z-,Z+ Default is absorbing boundary.
 settings['boundary']=['ABC','ABC','ABC','ABC','ABC','ABC']
 
-settings['refined_cellsize'] = 2  # @brief mesh cell size in conductor region, in project units, default is 2
-settings['cells_per_wavelength'] = 10   # @brief  how many mesh cells per wavelength, must be 10 or more
+settings['refined_cellsize'] = 2  # mesh cell size in conductor region, in project units, default is 2
+settings['cells_per_wavelength'] = 10   # how many mesh cells per wavelength, must be 10 or more
 
-settings['meshsize_max'] = 70  # @brief maximum absolute mesh size, in addition to cells_per_wavelength
+settings['meshsize_max'] = 70  # maximum absolute mesh size, in addition to cells_per_wavelength
 
-settings['ELMER_MPI_THREADS'] = 4 # @brief number of threads used for parallel simulation in Elmer solver
+settings['ELMER_MPI_THREADS'] = 4 # number of threads used for parallel simulation in Elmer solver
 
 # Ports from GDSII Data, polygon geometry from specified special layer
 # Excitations can be switched off by voltage=0, those S-parameter will be incomplete then

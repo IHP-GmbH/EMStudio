@@ -790,8 +790,7 @@ void LayoutView::rebuildScene2D(bool refit)
         }
         items.push_back({p, st});
 
-        const bool isPortLayer = (st.kind == QLatin1String("port"))
-                || (p.layer >= 201 && p.layer <= 299);
+        const bool isPortLayer = (st.kind == QLatin1String("port")) || isPortLayerNumber(p.layer);
         if (isPortLayer)
             continue;
         for (const QPointF &pt : p.pointsUm) {
@@ -1047,7 +1046,7 @@ void LayoutView::updateOrbitCenter()
 
     // Z range only from metals/vias that actually appear in the layout (not whole stackup).
     for (const GdsFlatPolygon &p : m_polys) {
-        if (p.layer >= 201 && p.layer <= 299)
+        if (isPortLayerNumber(p.layer))
             continue;
         if (!m_styles.contains(p.layer) || !m_styles.value(p.layer).hasZ)
             continue;
@@ -1136,7 +1135,7 @@ void LayoutView::rebuildScene3D(bool refit)
     double zHi = m_orbitCz + 0.5;
     bool anyZ = false;
     for (const GdsFlatPolygon &p : m_polys) {
-        if (p.layer >= 201 && p.layer <= 299)
+        if (isPortLayerNumber(p.layer))
             continue;
         if (!m_styles.contains(p.layer) || !m_styles.value(p.layer).hasZ)
             continue;
@@ -1185,8 +1184,7 @@ void LayoutView::rebuildScene3D(bool refit)
     extrudeItems.reserve(items.size());
 
     for (const Item &it : items) {
-        const bool isPort = (it.style.kind == QLatin1String("port"))
-                || (it.poly.layer >= 201 && it.poly.layer <= 299);
+        const bool isPort = (it.style.kind == QLatin1String("port")) || isPortLayerNumber(it.poly.layer);
         if (isPort)
             continue;
         const bool isVia = (it.style.kind.compare(QLatin1String("via"), Qt::CaseInsensitive) == 0);
@@ -1266,8 +1264,7 @@ void LayoutView::rebuildScene3D(bool refit)
 
         const qreal op = opacityFor(it.poly.layer);
         const bool vis = visibleFor(it.poly.layer);
-        const bool isPort = (it.style.kind == QLatin1String("port"))
-                || (it.poly.layer >= 201 && it.poly.layer <= 299);
+        const bool isPort = (it.style.kind == QLatin1String("port")) || isPortLayerNumber(it.poly.layer);
         if (!isPort)
             continue;
 
@@ -1863,17 +1860,14 @@ void LayoutView::setFieldProbeThermal(bool thermal)
 /*!*******************************************************************************************************************
  * \brief GDS µm Y-up bounding box of non-port layout polygons (for field crop).
  *
- * Skips port GDS layers (201–299) and styles with kind=port.
+ * Skips port marker layers (\c isPortLayerNumber).
  **********************************************************************************************************************/
 QRectF LayoutView::layoutContentBoundsUm() const
 {
     QRectF bb;
     bool any = false;
     for (const GdsFlatPolygon &p : m_polys) {
-        if (p.layer >= 201 && p.layer <= 299)
-            continue;
-        if (m_styles.contains(p.layer)
-            && m_styles.value(p.layer).kind.compare(QLatin1String("port"), Qt::CaseInsensitive) == 0)
+        if (isPortLayerNumber(p.layer))
             continue;
         for (const QPointF &pt : p.pointsUm) {
             if (!any) {
@@ -2404,10 +2398,7 @@ void LayoutView::fitPreferredContent()
         QRectF layoutUm;
         bool any = false;
         for (const GdsFlatPolygon &p : m_polys) {
-            if (p.layer >= 201 && p.layer <= 299)
-                continue;
-            if (m_styles.contains(p.layer)
-                && m_styles.value(p.layer).kind.compare(QLatin1String("port"), Qt::CaseInsensitive) == 0)
+            if (isPortLayerNumber(p.layer))
                 continue;
             if (!visibleFor(p.layer))
                 continue;
@@ -3454,6 +3445,23 @@ void LayoutView::emitMeasure()
 qreal LayoutView::opacityFor(int gdsLayer) const
 {
     return m_layerOpacity.value(gdsLayer, defaultFillOpacity()) / defaultFillOpacity();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Whether a GDS layer is a port marker layer rather than a stackup layer.
+ *
+ * A layer with a style is a port only when its kind is "port"; a stackup layer in 201–299
+ * (e.g. a ground sheet on 250) stays a layer. Layers without a style count as ports in 201–299.
+ *
+ * \param gdsLayer GDS layer number.
+ * \return True for port marker layers.
+ **********************************************************************************************************************/
+bool LayoutView::isPortLayerNumber(int gdsLayer) const
+{
+    const auto it = m_styles.constFind(gdsLayer);
+    if (it != m_styles.cend())
+        return it.value().kind.compare(QLatin1String("port"), Qt::CaseInsensitive) == 0;
+    return gdsLayer >= 201 && gdsLayer <= 299;
 }
 
 bool LayoutView::visibleFor(int gdsLayer) const

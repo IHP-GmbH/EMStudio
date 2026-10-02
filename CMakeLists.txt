@@ -105,6 +105,7 @@ set(SOURCES
     src/about.cpp
     src/tips.cpp
     src/keywordseditor.cpp
+    src/addsettingdialog.cpp
     src/keybindingsdialog.cpp
     src/navigationstyle.cpp
 
@@ -169,6 +170,7 @@ set(HEADERS
     src/toolautodetect.h
     src/about.h
     src/keywordseditor.h
+    src/addsettingdialog.h
     src/keybindingsdialog.h
     src/navigationstyle.h
 

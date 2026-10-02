@@ -3,6 +3,8 @@
 #include <QtTest/QtTest>
 #include <QDir>
 #include <QFile>
+#include <QProcess>
+#include <QPushButton>
 #include <QTableWidget>
 #include <QStandardPaths>
 #include <QTabWidget>
@@ -1133,4 +1135,375 @@ void MainWindowPortsTest::stackupDialog_startsInConfiguredFolder()
     QCOMPARE(QDir(w.testStackupDialogStartDir()), lastDir);
     w.testSetPreference(QStringLiteral("STACKUP_DIR_FEM"), xmlPath);  // a file, not a folder
     QCOMPARE(QDir(w.testStackupDialogStartDir()), lastDir);
+}
+
+namespace {
+/*! Line index of the first line starting with \a prefix (-1 if none). */
+int lineOf(const QString &script, const QString &prefix)
+{
+    const QStringList lines = script.split(QLatin1Char('\n'));
+    for (int i = 0; i < lines.size(); ++i)
+        if (lines.at(i).startsWith(prefix))
+            return i;
+    return -1;
+}
+
+const QByteArray kGridKeywords =
+    "preview_only\tPreview\tScript control and output files\tFalse\n"
+    "no_gui\tBatch\tScript control and output files\tFalse\n"
+    "unit\tUnit\tInput files\t1e-6\tyes\n"
+    "fstart\tStart\tFrequencies\t\tyes\n"
+    "fstep\tStep\tFrequencies\n"
+    "fpoint\tPoints\tFrequencies\t[]\n"
+    "fdump\tDumps\tFrequencies\t[]\n"
+    "refined_cellsize\tEdge mesh\tMesh size and accuracy\t\tyes\n"
+    "order\tFEM order\tMesh size and accuracy\t2\n"
+    "amr_tol\tAMR tolerance\tAdaptive mesh refinement\t1e-2\n";
+} // namespace
+
+/*!*******************************************************************************************************************
+ * \brief Add setting inserts the line where it fits by topic: after its topic neighbour, before the
+ *        first key, after a multi-line statement; custom keys at the end; then shows it in the grid.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::addSetting_insertsByTopic()
+{
+    KeywordFileBackup palace(QStringLiteral("palace.csv"));
+    QVERIFY(palace.write(kGridKeywords));
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    w.testRefreshKeywordTipsForCurrentTool();
+
+    const QString script = QStringLiteral(
+        "settings = {}\n"
+        "settings['no_gui'] = False\n"
+        "settings['unit'] = 1e-6\n"
+        "settings['fstart'] = 1e9\n"
+        "settings['fpoint'] = [1e9,\n"
+        "                      2e9]\n"
+        "settings['refined_cellsize'] = 2\n"
+        "settings['my_custom'] = 3\n"
+        "x = simulation_setup.create_palace(excite_ports, settings)\n");
+    w.testSetEditorText(script);
+    w.testRebuildSettingsGrid(script);
+
+    QVERIFY(w.testAddSetting(QStringLiteral("fstep"), QStringLiteral("1e8")));        // between neighbours
+    QVERIFY(w.testAddSetting(QStringLiteral("fdump"), QStringLiteral("[]")));         // after multi-line fpoint
+    QVERIFY(w.testAddSetting(QStringLiteral("amr_tol"), QStringLiteral("0.01")));     // next topic
+    QVERIFY(w.testAddSetting(QStringLiteral("preview_only"), QStringLiteral("False")));  // before the first
+    QVERIFY(w.testAddSetting(QStringLiteral("zz_custom"), QStringLiteral("'x'")));    // unknown: at the end
+
+    const QString s = w.testEditorText();
+    auto at = [&](const char *key) { return lineOf(s, QStringLiteral("settings['%1']").arg(QLatin1String(key))); };
+    QVERIFY2(at("fstart") < at("fstep") && at("fstep") < at("fpoint"), qPrintable(s));
+    QCOMPARE(at("fdump"), at("fpoint") + 2);            // after both lines of fpoint
+    QCOMPARE(at("amr_tol"), at("refined_cellsize") + 1);
+    QVERIFY(lineOf(s, QStringLiteral("settings = {}")) < at("preview_only"));
+    QCOMPARE(at("preview_only") + 1, at("no_gui"));
+    QCOMPARE(at("zz_custom"), at("my_custom") + 1);
+    // Unchanged numbers keep their spelling through the grid sync.
+    QVERIFY2(s.contains(QStringLiteral("settings['fstep'] = 1e8\n")), qPrintable(s));
+    QVERIFY(s.contains(QStringLiteral("settings['fstart'] = 1e9\n")));
+    QVERIFY(s.contains(QStringLiteral("settings['unit'] = 1e-6\n")));
+
+    // The grid shows the new keys in their topics (alphabetical under Other for unknown ones).
+    const QStringList layout = w.testSettingTopicLayout();
+    QVERIFY2(layout.contains(QStringLiteral("Script control and output files: preview_only, no_gui")),
+             qPrintable(layout.join(QStringLiteral(" / "))));
+    QVERIFY(layout.contains(QStringLiteral("Frequencies: fstart, fstep, fpoint, fdump")));
+    QVERIFY(layout.contains(QStringLiteral("Adaptive mesh refinement: amr_tol")));
+    QVERIFY(layout.contains(QStringLiteral("Other: my_custom, zz_custom")));
+
+    // Only settings{}: inserted right after it.
+    const QString empty = QStringLiteral("import os\nsettings = {}\nx = create_palace(p, settings)\n");
+    w.testSetEditorText(empty);
+    w.testRebuildSettingsGrid(empty);
+    QVERIFY(w.testAddSetting(QStringLiteral("order"), QStringLiteral("2")));
+    QVERIFY2(w.testEditorText().startsWith(QStringLiteral("import os\nsettings = {}\nsettings['order'] = 2\n")),
+             qPrintable(w.testEditorText()));
+}
+
+/*!*******************************************************************************************************************
+ * \brief An added setting survives Save and can be edited in the grid; Reset writes the default;
+ *        Remove deletes the line, refusing required keys and keys inside blocks.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::addSetting_saveEditResetRemove()
+{
+    KeywordFileBackup palace(QStringLiteral("palace.csv"));
+    QVERIFY(palace.write(kGridKeywords));
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    w.testRefreshKeywordTipsForCurrentTool();
+    QVERIFY(w.testInitDefaultPalaceModel());
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString savePath = dir.filePath(QStringLiteral("added.py"));
+    w.testSetRunPythonScriptLinePath(savePath);
+    w.testTriggerSave();
+    auto saved = [&]() {
+        QFile f(savePath);
+        return f.open(QIODevice::ReadOnly | QIODevice::Text) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+
+    QVERIFY(w.testAddSetting(QStringLiteral("order"), QStringLiteral("1")));
+    w.testTriggerSave();
+    QVERIFY2(saved().contains(QStringLiteral("settings['order'] = 1")), qPrintable(saved()));
+    QVERIFY(w.testSetGridSettingValue(QStringLiteral("order"), 3.0));
+    w.testTriggerSave();
+    QVERIFY(saved().contains(QRegularExpression(QStringLiteral(R"(settings\['order'\]\s*=\s*3\b)"))));
+
+    w.testResetSetting(QStringLiteral("order"));
+    w.testTriggerSave();
+    QVERIFY(saved().contains(QRegularExpression(QStringLiteral(R"(settings\['order'\]\s*=\s*2\b)"))));
+
+    // Context menu: required keys can't be removed, optional ones can.
+    QVERIFY(w.testSettingsContextActions(QStringLiteral("order")).contains(QStringLiteral("Remove from model|on")));
+    QVERIFY(w.testSettingsContextActions(QStringLiteral("order")).contains(QStringLiteral("Reset to default (2)|on")));
+    QVERIFY(w.testSettingsContextActions(QStringLiteral("unit")).contains(QStringLiteral("Remove from model|off")));
+    w.testRemoveSetting(QStringLiteral("order"));
+    w.testTriggerSave();
+    QVERIFY(!saved().contains(QStringLiteral("settings['order']")));
+    QVERIFY(!w.testSettingTopicLayout().join(QStringLiteral(" ")).contains(QStringLiteral("order")));
+    w.testRemoveSetting(QStringLiteral("unit"));  // refused
+    QVERIFY(saved().contains(QStringLiteral("settings['unit']")));
+
+    // A key also set inside a block isn't removable.
+    w.testSetEditorText(w.testEditorText() + QStringLiteral("if fine:\n    settings['fpoint'] = [1e9]\n"));
+    w.testTriggerSave();
+    QVERIFY(w.testSettingsContextActions(QStringLiteral("fpoint")).contains(QStringLiteral("Remove from model|off")));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Topic context menu, and Add disabled (with the reason) for models without a settings dict.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::addSetting_menuAndOldModels()
+{
+    KeywordFileBackup palace(QStringLiteral("palace.csv"));
+    QVERIFY(palace.write(kGridKeywords));
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    w.testRefreshKeywordTipsForCurrentTool();
+    const QString script = QStringLiteral("settings = {}\nsettings['fstart'] = 1e9\n");
+    w.testSetEditorText(script);
+    w.testRebuildSettingsGrid(script);
+
+    auto *btn = w.findChild<QPushButton *>(QStringLiteral("btnAddSetting"));
+    QVERIFY(btn);
+    QVERIFY(btn->isEnabled());
+    const QStringList topicActions = w.testSettingsContextActions(QStringLiteral("Frequencies"));
+    QVERIFY2(topicActions.contains(QStringLiteral("Add setting to Frequencies...|on")),
+             qPrintable(topicActions.join(QStringLiteral(" / "))));
+    QVERIFY(topicActions.contains(QStringLiteral("Collapse all topics|on")));
+
+    // Old openEMS style: loose variables passed to the workflow functions.
+    const QString loose = QStringLiteral("refined_cellsize = 1\nmargin = 50\n"
+                                         "FDTD = simulation_setup.setupSimulation(a, b, F, m, d, me, p, mx, refined_cellsize, margin, unit)\n");
+    w.testSetEditorText(loose);
+    w.testRebuildSettingsGrid(loose);
+    QVERIFY(!btn->isEnabled());
+    QVERIFY(btn->toolTip().contains(QStringLiteral("plain variables")));
+    QVERIFY(!w.testAddSetting(QStringLiteral("order"), QStringLiteral("2")));
+    QCOMPARE(w.testEditorText(), loose);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Grid tooltips: the model's # @brief text, else the keyword description, always with
+ *        "Required." and "Default: ..." from the keyword file.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::settingsGrid_tooltipsCombineModelAndKeywordFile()
+{
+    KeywordFileBackup palace(QStringLiteral("palace.csv"));
+    QVERIFY(palace.write(kGridKeywords));
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    w.testRefreshKeywordTipsForCurrentTool();
+    const QString script = QStringLiteral(
+        "settings = {}\n"
+        "settings['fstart'] = 1e9  # @brief my start text\n"
+        "settings['order'] = 2  # plain comment, not a tooltip\n"
+        "settings['unit'] = 1e-6\n");
+    w.testSetEditorText(script);
+    w.testRebuildSettingsGrid(script);
+
+    QCOMPARE(w.testSettingToolTip(QStringLiteral("fstart")), QStringLiteral("Required. my start text"));
+    QCOMPARE(w.testSettingToolTip(QStringLiteral("order")), QStringLiteral("FEM order\nDefault: 2"));
+    QCOMPARE(w.testSettingToolTip(QStringLiteral("unit")), QStringLiteral("Required. Unit\nDefault: 1e-6"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Save leaves unchanged numbers and booleans as written (1e9 stays 1e9); an edited value
+ *        changes only its own line.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::saveAction_keepsUnchangedNumberSpelling()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QVERIFY(w.testInitDefaultPalaceModel());
+    w.testSetEditorText(w.testEditorText()
+                        + QStringLiteral("\nsettings['my_freq'] = 1e9  # keep me\n"
+                                         "settings['my_unit'] = 1e-6\n"
+                                         "settings['my_half'] = .5\n"
+                                         "settings['my_flag'] = True\n"));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString savePath = dir.filePath(QStringLiteral("numbers.py"));
+    w.testSetRunPythonScriptLinePath(savePath);
+    auto saved = [&]() {
+        QFile f(savePath);
+        return f.open(QIODevice::ReadOnly | QIODevice::Text) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+    w.testTriggerSave();
+    const QString first = saved();
+    QVERIFY2(first.contains(QStringLiteral("settings['my_freq'] = 1e9  # keep me\n")), qPrintable(first));
+    QVERIFY(first.contains(QStringLiteral("settings['my_unit'] = 1e-6\n")));
+    QVERIFY(first.contains(QStringLiteral("settings['my_half'] = .5\n")));
+    QVERIFY(first.contains(QStringLiteral("settings['my_flag'] = True\n")));
+    w.testTriggerSave();
+    QCOMPARE(saved(), first);
+
+    // Editing one value rewrites only that line.
+    QVERIFY(w.testSetGridSettingValue(QStringLiteral("my_freq"), 2e9));
+    w.testTriggerSave();
+    const QString second = saved();
+    QVERIFY(!second.contains(QStringLiteral("settings['my_freq'] = 1e9")));
+    QVERIFY(second.contains(QStringLiteral("settings['my_unit'] = 1e-6\n")));
+    QStringList a = first.split(QLatin1Char('\n'));
+    QStringList b = second.split(QLatin1Char('\n'));
+    QCOMPARE(a.size(), b.size());
+    int changed = 0;
+    for (int i = 0; i < a.size(); ++i)
+        changed += (a.at(i) != b.at(i)) ? 1 : 0;
+    QCOMPARE(changed, 1);
+}
+
+/*!*******************************************************************************************************************
+ * \brief A sweep model (settings and ports inside loops, relative paths, comments; like
+ *        openEMS L6n2_sweep) survives Save: a plain Save changes nothing, a grid edit changes one
+ *        line, a changed port is rewritten with the block's indentation and its comments.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::saveAction_keepsIndentedSweepModel()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QFile::copy(QFINDTESTDATA("golden/line_simple_viaport.gds"), dir.filePath(QStringLiteral("line.gds"))));
+    QVERIFY(QFile::copy(QFINDTESTDATA("golden/SG13G2_200um.xml"), dir.filePath(QStringLiteral("stack.xml"))));
+    const QString model = dir.filePath(QStringLiteral("sweep.py"));
+    const QByteArray original =
+        "import os\n"
+        "from gds2openEMS import *\n"
+        "from openEMS import openEMS\n"
+        "import numpy as np\n"
+        "\n"
+        "settings = {}\n"
+        "settings['preview_only'] = False  # preview model/mesh only?\n"
+        "\n"
+        "gds_filename = \"line.gds\"   # geometries\n"
+        "XML_filename = \"stack.xml\"          # stackup\n"
+        "\n"
+        "settings['merge_polygon_size'] = 2\n"
+        "\n"
+        "for cellsize in [0.5, 1, 2]:\n"
+        "    for energylimit in [-40, -50]:\n"
+        "        settings['refined_cellsize'] = cellsize # mesh cell size in conductor region\n"
+        "        settings['unit']   = 1e-6  # geometry is in microns\n"
+        "        settings['margin'] = 250    # distance in microns\n"
+        "        settings['fstart']  = 0e9\n"
+        "        settings['fstop']   = 14e9\n"
+        "        settings['numfreq'] = 401\n"
+        "        # choices for boundary: 'PEC', 'PMC', 'MUR', 'PML_8'\n"
+        "        settings['Boundaries'] = ['PEC', 'PEC', 'PEC', 'PEC', 'PEC', 'PEC']  # all metal\n"
+        "        settings['energy_limit'] = energylimit          # end criteria\n"
+        "\n"
+        "        simulation_ports = simulation_setup.all_simulation_ports()\n"
+        "\n"
+        "        # via port is specified with from_layername= and to_layername= and direction z\n"
+        "        simulation_ports.add_port(simulation_setup.simulation_port(portnumber=1, \n"
+        "                                                                voltage=1, \n"
+        "                                                                port_Z0=50, \n"
+        "                                                                source_layernum=201, \n"
+        "                                                                from_layername='Metal1', \n"
+        "                                                                to_layername='TopMetal2', \n"
+        "                                                                direction='z'))\n"
+        "\n"
+        "        simulation_ports.add_port(simulation_setup.simulation_port(portnumber=2, \n"
+        "                                                                voltage=1, \n"
+        "                                                                port_Z0=50, \n"
+        "                                                                source_layernum=202, \n"
+        "                                                                from_layername='Metal1', \n"
+        "                                                                to_layername='TopMetal2', \n"
+        "                                                                direction='z'))\n"
+        "\n"
+        "        # ======================== simulation ================================\n"
+        "\n"
+        "        # get technology stackup data\n"
+        "        materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate (XML_filename)\n"
+        "        allpolygons = gds_reader.read_gds(gds_filename, [], purposelist=[0], metals_list=metals_list,\n"
+        "                                          merge_polygon_size=settings['merge_polygon_size'])\n"
+        "        FDTD = openEMS(EndCriteria=np.exp(settings['energy_limit']/10 * np.log(10)))\n"
+        "        FDTD.SetBoundaryCond( settings['Boundaries'] )\n";
+    {
+        QFile f(model);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(original);
+    }
+    auto saved = [&]() {
+        QFile f(model);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    };
+    auto compiles = [&](QString *err) {
+        const QString py = QStandardPaths::findExecutable(QStringLiteral("python3"));
+        if (py.isEmpty())
+            return true;
+        QProcess p;
+        p.start(py, {QStringLiteral("-m"), QStringLiteral("py_compile"), model});
+        p.waitForFinished(20000);
+        *err = QString::fromUtf8(p.readAllStandardError());
+        return p.exitCode() == 0;
+    };
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.loadPythonModel(model);
+    QCOMPARE(w.testCurrentSimToolKey(), QStringLiteral("openems"));
+
+    // Plain Save: the file is unchanged.
+    w.testTriggerSave();
+    QCOMPARE(QString::fromUtf8(saved()), QString::fromUtf8(original));
+
+    // A grid edit changes only its own line (indentation and comment kept).
+    QVERIFY(w.testSetGridSettingValue(QStringLiteral("margin"), 300.0));
+    w.testTriggerSave();
+    const QString edited = QString::fromUtf8(saved());
+    QVERIFY2(edited.contains(QStringLiteral("        settings['margin'] = 300    # distance in microns\n")),
+             qPrintable(edited));
+    QCOMPARE(QString(edited).replace(QStringLiteral("settings['margin'] = 300"), QStringLiteral("settings['margin'] = 250")),
+             QString::fromUtf8(original));
+
+    // A changed port: the block is rewritten, indented like before, with its comments kept.
+    auto *ports = w.findChild<QTableWidget *>(QStringLiteral("tblPorts"));
+    QVERIFY(ports);
+    QCOMPARE(ports->rowCount(), 2);
+    ports->item(1, 2)->setText(QStringLiteral("75"));
+    w.testTriggerSave();
+    const QString rewritten = QString::fromUtf8(saved());
+    QVERIFY2(rewritten.contains(QStringLiteral("\n        simulation_ports = simulation_setup.all_simulation_ports()\n"
+                                               "        # via port is specified with from_layername= and to_layername= and direction z\n"
+                                               "        simulation_ports.add_port(")), qPrintable(rewritten));
+    QVERIFY(rewritten.contains(QStringLiteral("port_Z0=75")));
+    QVERIFY(rewritten.contains(QStringLiteral("\n        # ======================== simulation ================================\n")));
+    QVERIFY(rewritten.contains(QStringLiteral("\n        # get technology stackup data\n")));
+    QVERIFY(rewritten.contains(QStringLiteral("gds_filename = \"line.gds\"   # geometries\n")));
+    QVERIFY(rewritten.contains(QStringLiteral(
+        "        settings['Boundaries'] = ['PEC', 'PEC', 'PEC', 'PEC', 'PEC', 'PEC']  # all metal\n")));
+    QString err;
+    QVERIFY2(compiles(&err), qPrintable(err + QLatin1Char('\n') + rewritten));
 }

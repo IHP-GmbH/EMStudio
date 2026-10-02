@@ -24,6 +24,7 @@
 
 #include "mainwindow.h"
 #include "layoutlayerpanel.h"
+#include "layoutview.h"
 #include "pythonparser.h"
 #include "test_utils.h"
 
@@ -794,6 +795,86 @@ void MainWindowPortsTest::collectSanityFindings_reportsMissingInputs()
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief The layout preview shows only the GDS datatypes the model's read_gds reads (purposelist), like
+ *        the workflows; a grid edit of the purpose setting updates it.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::layoutPreview_showsOnlyModelPurposes()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.resize(1200, 800);
+    w.show();
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QVERIFY(w.testInitDefaultPalaceModel());   // settings['purpose'] = [0], purposelist=settings['purpose']
+    QVERIFY(w.testEditorText().contains(QStringLiteral("purposelist=settings['purpose']")));
+
+    // Metal1 (GDS 8) on datatypes 0, 2 and 28.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString gds = dir.filePath(QStringLiteral("purposes.gds"));
+    const auto rect = [](int x) {
+        return QVector<QPoint>{QPoint(x, 0), QPoint(x + 5000, 0), QPoint(x + 5000, 5000), QPoint(x, 5000),
+                               QPoint(x, 0)};
+    };
+    QFile f(gds);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write(GdsTestWriter::library(QStringLiteral("TOP"),
+                                   {std::make_tuple(8, 0, rect(0)), std::make_tuple(8, 2, rect(10000)),
+                                    std::make_tuple(8, 28, rect(20000))}));
+    f.close();
+
+    const QString xml = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY(!xml.isEmpty());
+    w.setGdsFile(gds);
+    w.setTopCell(QStringLiteral("TOP"));
+    w.setSubstrateFile(xml);
+    w.testRefreshLayoutPreview();
+
+    auto *view = w.findChild<LayoutView *>();
+    QVERIFY(view);
+    auto datatypes = [view]() {
+        QList<int> d;
+        for (const GdsFlatPolygon &p : view->drawnPolygons())
+            d << p.datatype;
+        std::sort(d.begin(), d.end());
+        return d;
+    };
+    QCOMPARE(datatypes(), QList<int>({0}));
+
+    // The grid value wins over the script (as for merge_polygon_size).
+    w.testSetSimSetting(QStringLiteral("purpose"), QStringLiteral("[0, 28]"));
+    w.testRefreshLayoutPreview();
+    QCOMPARE(datatypes(), QList<int>({0, 28}));
+
+    // Unresolvable purposelist: datatype 0, as in the templates.
+    w.testSetSimSetting(QStringLiteral("purpose"), QStringLiteral("all_purposes"));
+    w.testSetEditorText(w.testEditorText().replace(QStringLiteral("purposelist=settings['purpose']"),
+                                                   QStringLiteral("purposelist=list(range(64))")));
+    w.testRefreshLayoutPreview();
+    QCOMPARE(datatypes(), QList<int>({0}));
+
+    // Loading models (openEMS loose-variable style, same GDS): the preview follows each model's
+    // purposelist, although the GDS path is set before the editor holds the new script.
+    auto writeModel = [&](const QString &name, const QString &purposes) {
+        const QString path = dir.filePath(name);
+        QFile m(path);
+        if (m.open(QIODevice::WriteOnly | QIODevice::Text))
+            m.write(QStringLiteral("from openEMS import openEMS\n"
+                                   "gds_filename = \"purposes.gds\"\n"
+                                   "XML_filename = \"%1\"\n"
+                                   "allpolygons = gds_reader.read_gds(gds_filename, layernumbers, "
+                                   "purposelist=%2, metals_list=metals_list)\n").arg(xml, purposes).toUtf8());
+        return path;
+    };
+    w.loadPythonModel(writeModel(QStringLiteral("model_a.py"), QStringLiteral("[0, 2]")));
+    QCOMPARE(datatypes(), QList<int>({0, 2}));
+    w.loadPythonModel(writeModel(QStringLiteral("model_b.py"), QStringLiteral("[0]")));
+    QCOMPARE(datatypes(), QList<int>({0}));
+}
+
 void MainWindowPortsTest::layoutPreview_withGoldenGds_populatesLayerPanel()
 {
     MainWindow w;
@@ -1025,6 +1106,7 @@ void MainWindowPortsTest::fileNew_createsTemplateForEachTool()
         w.setSubstrateFile(xmlPath);
         ports->setRowCount(1);
         w.testClickAddThermalObject();
+        w.testSetSimulationLogText(QStringLiteral("previous run output\n"));
         QVERIFY(topCell->count() > 0);
 
         auto *action = w.findChild<QAction *>(QStringLiteral("actionNew_%1").arg(c.first));
@@ -1043,6 +1125,7 @@ void MainWindowPortsTest::fileNew_createsTemplateForEachTool()
         QVERIFY(xmlEdit->text().isEmpty());
         QCOMPARE(topCell->count(), 0);
         QCOMPARE(ports->rowCount(), 0);
+        QVERIFY(w.testSimulationLogText().isEmpty());
         QVERIFY(!w.testEditorText().contains(QStringLiteral("line_simple_viaport")));
         QVERIFY(!w.testEditorText().contains(QStringLiteral("SG13G2_200um")));
     }

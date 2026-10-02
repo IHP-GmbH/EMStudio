@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include <QMenu>
+#include <algorithm>
 #include <QFile>
 #include <QDebug>
 #include <QAction>
@@ -161,6 +162,8 @@ bool MainWindow::applyPythonScriptFromEditor()
     setLineEditPalette(m_ui->txtRunPythonScript, filePath);
 
     updateSimulationSettings();
+    // The script may now read other GDS datatypes (purposelist).
+    refreshLayoutPreviewIfPurposesChanged();
 
     return true;
 }
@@ -324,6 +327,48 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
     updateAddSettingAvailability();
 
     updateBoundaryTooltipsForCurrentTool();
+}
+
+/*!*******************************************************************************************************************
+ * \brief The GDS datatypes (purposes) the model's read_gds call reads, for the layout preview.
+ *
+ * The workflows ignore shapes on other datatypes, so the preview hides them too. The purposelist
+ * argument is resolved from the script (PythonParser::readGdsPurposes); when it names a setting or a
+ * loose variable, the grid's current value wins. When it can't be determined (no read_gds call, a
+ * computed list), datatype 0 is assumed, as in the templates.
+ *
+ * \return The datatypes.
+ **********************************************************************************************************************/
+QSet<int> MainWindow::currentGdsPurposes() const
+{
+    const PythonParser::GdsPurposes ref =
+            PythonParser::readGdsPurposes(m_ui->editRunPythonScript->toPlainText());
+    const QString key = !ref.settingsKey.isEmpty() ? ref.settingsKey : ref.variable;
+    if (!key.isEmpty() && m_simSettings.contains(key)) {
+        QSet<int> fromGrid;
+        if (PythonParser::parseIntList(m_simSettings.value(key).toString(), &fromGrid))
+            return fromGrid;
+    }
+    return ref.known ? ref.purposes : QSet<int>({0});
+}
+
+/*!*******************************************************************************************************************
+ * \brief currentGdsPurposes() as text ("0,2"), to see whether the preview is stale.
+ **********************************************************************************************************************/
+QString MainWindow::currentGdsPurposesKey() const
+{
+    QList<int> sorted = currentGdsPurposes().values();
+    std::sort(sorted.begin(), sorted.end());
+    QStringList parts;
+    for (int p : sorted)
+        parts << QString::number(p);
+    return parts.join(QLatin1Char(','));
+}
+
+void MainWindow::refreshLayoutPreviewIfPurposesChanged()
+{
+    if (!m_layoutPreviewKey.isEmpty() && currentGdsPurposesKey() != m_layoutPreviewPurposes)
+        refreshLayoutPreview();
 }
 
 /*!*******************************************************************************************************************

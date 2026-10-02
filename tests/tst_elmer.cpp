@@ -786,6 +786,49 @@ void ElmerTest::loadModel_selectsSettingsCellnameAndKeepsItOnSave()
     QCOMPARE(cbx->currentText(), QStringLiteral("HeatSpreader01B_M"));
 }
 
+/*!*******************************************************************************************************************
+ * \brief The purposelist of read_gds is resolved from a literal, a settings key or a variable, as keyword
+ *        or third positional argument; anything else stays unknown (the preview then shows all).
+ **********************************************************************************************************************/
+void ElmerTest::readGdsPurposes_resolvesPurposelist()
+{
+    using P = PythonParser::GdsPurposes;
+    P p = PythonParser::readGdsPurposes(QStringLiteral(
+        "allpolygons = gds_reader.read_gds(gds_filename, layernumbers, purposelist=[0], metals_list=m)\n"));
+    QVERIFY(p.known);
+    QCOMPARE(p.purposes, QSet<int>({0}));
+
+    // Template style: settings['purpose'] with a trailing comment; multi-line call.
+    p = PythonParser::readGdsPurposes(QStringLiteral(
+        "settings['purpose'] = [0, 2] # Which GDSII data type is evaluated?\n"
+        "allpolygons = gds_reader.read_gds(settings['GdsFile'],\n"
+        "    layernumbers,\n"
+        "    purposelist=settings['purpose'])\n"));
+    QVERIFY(p.known);
+    QCOMPARE(p.settingsKey, QStringLiteral("purpose"));
+    QCOMPARE(p.purposes, QSet<int>({0, 2}));
+
+    // Positional (third argument) variable.
+    p = PythonParser::readGdsPurposes(QStringLiteral(
+        "purpose = [28]\nallpolygons = gds_reader.read_gds(f, layers, purpose, metals_list=m)\n"));
+    QVERIFY(p.known);
+    QCOMPARE(p.variable, QStringLiteral("purpose"));
+    QCOMPARE(p.purposes, QSet<int>({28}));
+
+    // Not resolvable: reassigned variable, computed list, no argument, no call.
+    QVERIFY(!PythonParser::readGdsPurposes(QStringLiteral(
+        "purpose = [0]\npurpose = [2]\nx = read_gds(f, l, purposelist=purpose)\n")).known);
+    QVERIFY(!PythonParser::readGdsPurposes(QStringLiteral(
+        "x = read_gds(f, l, purposelist=list(range(3)))\n")).known);
+    QVERIFY(!PythonParser::readGdsPurposes(QStringLiteral("x = read_gds(f, l)\n")).known);
+    QVERIFY(!PythonParser::readGdsPurposes(QStringLiteral("settings['purpose'] = [0]\n")).known);
+
+    QSet<int> list;
+    QVERIFY(PythonParser::parseIntList(QStringLiteral(" [ 0 , 2, ] "), &list));
+    QCOMPARE(list, QSet<int>({0, 2}));
+    QVERIFY(!PythonParser::parseIntList(QStringLiteral("[0.5]"), &list));
+}
+
 void ElmerTest::readGdsCellRef_findsTheCellArgument()
 {
     using Ref = PythonParser::ReadGdsCellRef;

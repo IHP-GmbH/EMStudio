@@ -28,6 +28,7 @@
 #include <QStringList>
 #include <QtGlobal>
 #include <QtTest/QtTest>
+#include <cmath>
 
 namespace GoldenTestUtils
 {
@@ -269,3 +270,71 @@ QString palacePythonStub()
     return stub;
 #endif
 }
+
+namespace GdsTestWriter
+{
+
+/*! One GDSII record: size, record type, data type, payload (strings padded to even length). */
+QByteArray record(quint8 type, quint8 dataType, QByteArray payload)
+{
+    if (payload.size() % 2)
+        payload.append('\0');
+    QByteArray rec;
+    const int size = 4 + payload.size();
+    rec.append(char(size >> 8)).append(char(size & 0xff)).append(char(type)).append(char(dataType));
+    return rec + payload;
+}
+
+QByteArray int16(int v) { QByteArray b; b.append(char((v >> 8) & 0xff)).append(char(v & 0xff)); return b; }
+
+QByteArray int32(qint32 v)
+{
+    QByteArray b;
+    for (int i = 3; i >= 0; --i)
+        b.append(char((quint32(v) >> (8 * i)) & 0xff));
+    return b;
+}
+
+QByteArray xy(const QVector<QPoint> &pts)
+{
+    QByteArray b;
+    for (const QPoint &p : pts)
+        b += int32(p.x()) + int32(p.y());
+    return record(0x10, 0x03, b);
+}
+
+/*! GDSII REAL8: excess-64 base-16 exponent, 56-bit mantissa. */
+QByteArray real8(double v)
+{
+    QByteArray b(8, '\0');
+    if (v == 0.0)
+        return b;
+    const bool neg = v < 0;
+    v = std::fabs(v);
+    int e = 0;
+    while (v >= 1.0) { v /= 16.0; ++e; }
+    while (v < 1.0 / 16.0) { v *= 16.0; --e; }
+    const quint64 m = quint64(v * 72057594037927936.0);
+    b[0] = char((neg ? 0x80 : 0) | (e + 64));
+    for (int i = 1; i < 8; ++i)
+        b[i] = char((m >> (8 * (7 - i))) & 0xff);
+    return b;
+}
+
+QByteArray library(const QString &cell, const QVector<std::tuple<int, int, QVector<QPoint>>> &boundaries)
+{
+    QByteArray g;
+    g += record(0x00, 0x02, int16(600));                 // HEADER
+    g += record(0x01, 0x02, QByteArray(24, '\0'));       // BGNLIB
+    g += record(0x02, 0x06, "LIB");                      // LIBNAME
+    g += record(0x05, 0x02, QByteArray(24, '\0'));       // BGNSTR
+    g += record(0x06, 0x06, cell.toLatin1());            // STRNAME
+    for (const auto &b : boundaries)
+        g += record(0x08, 0x00) + record(0x0D, 0x02, int16(std::get<0>(b)))
+             + record(0x0E, 0x02, int16(std::get<1>(b))) + xy(std::get<2>(b)) + record(0x11, 0x00);
+    g += record(0x07, 0x00);                             // ENDSTR
+    g += record(0x04, 0x00);                             // ENDLIB
+    return g;
+}
+
+} // namespace GdsTestWriter

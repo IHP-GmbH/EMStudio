@@ -3606,6 +3606,9 @@ void MainWindow::onSimulationSettingChanged(QtProperty* property, const QVariant
         // The preview shows vias merged like the workflow does.
         if (settingKeyword(name) == QLatin1String("merge_polygon_size") && m_ui->layoutView)
             m_ui->layoutView->setViaMergeSize(currentViaMergeSize());
+        // ... and only the GDS datatypes it reads.
+        if (settingKeyword(name) == QLatin1String("purpose"))
+            refreshLayoutPreview();
     }
 
     updateBoundaryTooltipsForCurrentTool();
@@ -4673,6 +4676,13 @@ void MainWindow::refreshLayoutPreview()
         return;
     }
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+
+    // The workflows read only the datatypes in read_gds(purposelist=...); hide the others.
+    const QSet<int> purposes = currentGdsPurposes();
+    m_layoutPreviewPurposes = currentGdsPurposesKey();
+    polys.erase(std::remove_if(polys.begin(), polys.end(),
+                               [&purposes](const GdsFlatPolygon &p) { return !purposes.contains(p.datatype); }),
+                polys.end());
 
     // Model load always uses Top2D first — Iso3D is slow on via-dense GDS; user can switch after.
     if (m_ui->layoutView->isView3d())
@@ -6422,8 +6432,9 @@ void MainWindow::newModel(const QString &simKey)
     // No file yet: Save asks for a location instead of overwriting the previous model.
     m_ui->txtRunPythonScript->clear();
     m_simSettings.remove(QStringLiteral("RunPythonScript"));
-    // A new model starts without the previous model's GDS, stackup and ports.
+    // A new model starts without the previous model's GDS, stackup, ports and simulation log.
     clearModelInputs();
+    clearSimulationLog(false);
 
     if (!generateDefaultModelScript(false))
         return;
@@ -7052,6 +7063,8 @@ void MainWindow::loadPythonModel(const QString &fileName)
     m_ui->tblPorts->setRowCount(0);
     importPortsFromEditor();
     updateSubLayerNamesAutoCheck();
+    // The GDS was set before the editor held this script: rebuild with its datatypes (purposelist).
+    refreshLayoutPreviewIfPurposesChanged();
 
     if (!res.simPath.isEmpty())
     {

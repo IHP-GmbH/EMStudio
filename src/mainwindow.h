@@ -589,6 +589,11 @@ private:
     QMap<QString, QString>          loadKeywordTipsCsv(const QString& simKeyLower) const;
     QString                         settingKeyword(const QString &key) const;
     qreal                           currentViaMergeSize() const;
+    /*! GDS datatypes the model's read_gds reads (purposelist); {0} when unknown. */
+    QSet<int>                       currentGdsPurposes() const;
+    QString                         currentGdsPurposesKey() const;
+    /*! Rebuilds the layout preview if the model now reads other GDS datatypes than it was built with. */
+    void                            refreshLayoutPreviewIfPurposesChanged();
     void                            applyLayoutPreviewPreferences();
     /*! File → New (one entry per tool) and the default-template helper behind it. */
     void                            setupNewModelMenu();
@@ -813,6 +818,7 @@ private:
     qreal                           m_fieldLastVolumeClipZUm = 0.0;
     bool                            m_fieldLastVolumeLog = false;
     QString                         m_layoutPreviewKey;
+    QString                         m_layoutPreviewPurposes; //!< Datatypes the preview was built with ("0,2")
     QString                         m_fieldDumpSearchDir;
     QVector<FieldChoice>            m_fieldChoices;
     int                             m_fieldChoiceIndex = 0;

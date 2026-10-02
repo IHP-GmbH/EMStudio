@@ -133,6 +133,17 @@ public:
     static CallArgRef               callArgumentRef(const QString &script, const QString &funcName,
                                                     const QString &keyword);
     static ReadGdsCellRef           readGdsCellRef(const QString &script);
+    /*! GDS datatypes (purposes) that the model's read_gds call passes as \c purposelist. */
+    struct GdsPurposes
+    {
+        bool                        known = false;    //!< The list was resolved to integers
+        QSet<int>                   purposes;
+        QString                     settingsKey;      //!< purposelist=<dict>['<key>']
+        QString                     variable;         //!< purposelist=<variable>
+    };
+    static GdsPurposes              readGdsPurposes(const QString &script);
+    /*! Integers of a flat list literal such as "[0, 2]"; false for anything else. */
+    static bool                     parseIntList(const QString &text, QSet<int> *out);
 
     static Result parseSettings(const QString &filePath);
     static Result parseSettingsFromText(const QString &content,

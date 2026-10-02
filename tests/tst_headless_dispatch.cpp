@@ -11,6 +11,7 @@
  ************************************************************************/
 
 #include "tst_headless_dispatch.h"
+#include "test_utils.h"
 
 #include <QtTest/QtTest>
 #include <QFile>
@@ -124,11 +125,7 @@ static void preparePalace(MainWindow& w)
     w.testSetPreference("PALACE_RUN_MODE", 1);
     w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
     // Never the real gds2palace (it opens gmsh): a stub stands in for the Palace Python.
-#ifdef Q_OS_WIN
-    w.testSetPreference("PALACE_PYTHON", QFINDTESTDATA("tools/palace_python_stub.cmd"));
-#else
-    w.testSetPreference("PALACE_PYTHON", QFINDTESTDATA("tools/palace_python_stub.sh"));
-#endif
+    w.testSetPreference("PALACE_PYTHON", palacePythonStub());
     w.testSetPreference("PALACE_INSTALL_PATH", QString());
     w.refreshSimToolOptionsForTests();
 

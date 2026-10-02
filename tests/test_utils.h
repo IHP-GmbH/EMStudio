@@ -40,4 +40,7 @@ private:
     bool m_existed = false;
 };
 
+/*! Path of the Palace Python stub (tools/palace_python_stub.{sh,cmd}), made executable on Unix. */
+QString palacePythonStub();
+
 #endif // TEST_UTILS_H

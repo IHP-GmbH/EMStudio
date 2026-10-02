@@ -156,11 +156,7 @@ void PalaceGolden::runPalace_headless_startsProcess_and_logsOutput()
     w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
     w.testSetPreference("PALACE_INSTALL_PATH", QString());
     // Never the real gds2palace (it opens gmsh): a stub writes the config.json it would.
-#ifdef Q_OS_WIN
-    w.testSetPreference("PALACE_PYTHON", QFINDTESTDATA("tools/palace_python_stub.cmd"));
-#else
-    w.testSetPreference("PALACE_PYTHON", QFINDTESTDATA("tools/palace_python_stub.sh"));
-#endif
+    w.testSetPreference("PALACE_PYTHON", palacePythonStub());
 
     w.refreshSimToolOptionsForTests();
 

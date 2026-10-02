@@ -27,6 +27,7 @@
 #include <QRegularExpression>
 #include <QStringList>
 #include <QtGlobal>
+#include <QtTest/QtTest>
 
 namespace GoldenTestUtils
 {
@@ -247,4 +248,24 @@ bool KeywordFileBackup::write(const QByteArray &text) const
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
     return f.write(text) == text.size();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Locates the Palace Python stub that stands in for gds2palace in run tests.
+ *
+ * Git stores the stub without the executable bit, so it is set here on Unix.
+ *
+ * \return Absolute path of the stub, or an empty string if it is missing.
+ **********************************************************************************************************************/
+QString palacePythonStub()
+{
+#ifdef Q_OS_WIN
+    return QFINDTESTDATA("tools/palace_python_stub.cmd");
+#else
+    const QString stub = QFINDTESTDATA("tools/palace_python_stub.sh");
+    if (!stub.isEmpty())
+        QFile::setPermissions(stub, QFile::permissions(stub) | QFileDevice::ExeUser
+                                        | QFileDevice::ExeGroup | QFileDevice::ExeOther);
+    return stub;
+#endif
 }

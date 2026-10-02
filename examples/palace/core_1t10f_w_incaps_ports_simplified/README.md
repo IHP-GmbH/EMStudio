@@ -11,7 +11,7 @@ Via array merging was already done upstream.
 | `core_1t10f_w_incaps_ports_simplified.gds` | Layout + ports |
 | `SG13G2_200um.xml` | Stackup |
 
-Top cell: `core_1t10f_w_incaps`.
+Top cell: `core_1t10f_w_incaps_merged_by_layer`.
 
 Ports: 1–4 via (Metal3→TopMetal2), 5–6 in-plane Metal2 (±X).
 

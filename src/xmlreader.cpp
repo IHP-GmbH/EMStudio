@@ -39,6 +39,7 @@
 QStringList MainWindow::readSubstrateLayers(const QString &xmlFilePath)
 {
     QStringList layerNames;
+    m_subLayerTypes.clear();
 
     QFile file(xmlFilePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -58,6 +59,7 @@ QStringList MainWindow::readSubstrateLayers(const QString &xmlFilePath)
             if (type.compare("dielectric", Qt::CaseInsensitive) != 0) {
                 layerNames.append(name);
             }
+            m_subLayerTypes.insert(name, type.toLower());
         }
     }
 

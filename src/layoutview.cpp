@@ -24,6 +24,7 @@
 #include <QMetaMethod>
 
 #include <algorithm>
+#include <limits>
 
 #include <QPen>
 #include <QBrush>
@@ -61,6 +62,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QGraphicsPixmapItem>
+#include <QGraphicsOpacityEffect>
 #include <QPixmap>
 #include <QClipboard>
 #include <QPainterPath>
@@ -807,6 +809,7 @@ void LayoutView::rebuildScene2D(bool refit)
                      });
 
     QRectF bounds;
+    QGraphicsItem *fillGroup = nullptr;
     for (const Item &it : items) {
         if (it.poly.pointsUm.size() < 2)
             continue;
@@ -841,7 +844,7 @@ void LayoutView::rebuildScene2D(bool refit)
             }
 
             QColor penColor = it.style.color;
-            penColor.setAlpha(qBound(40, int(255 * op + 0.5), 255));
+            penColor.setAlpha(qBound(40, int(255 * markerOpacityFor(it.poly.layer) + 0.5), 255));
             QPen pen(penColor);
             pen.setCosmetic(true);
             pen.setWidth(kPortPenWidth);
@@ -857,12 +860,16 @@ void LayoutView::rebuildScene2D(bool refit)
             lineItem->setZValue(double(it.style.order) + 0.25);
 
             const QPointF mid = line.pointAt(0.5);
+            const QString thermalTip = thermalMarkerToolTip(it.poly.layer, it.style.name);
+            lineItem->setToolTip(thermalTip);
 
             // Direction from Ports table: in-plane arrows; Z → inward tip on injection edge.
             QString dir = m_ports.value(it.poly.layer).direction.trimmed().toLower();
             if (dir.isEmpty())
                 dir = QStringLiteral("z");
-            if (dir.contains(QLatin1Char('z'))) {
+            if (!thermalTip.isEmpty()) {
+                // Thermal markers have no direction.
+            } else if (dir.contains(QLatin1Char('z'))) {
                 const QString zl = dir.startsWith(QLatin1Char('-'))
                         ? QStringLiteral("-z") : QStringLiteral("z");
                 addPortInwardArrow(mid, contentCenter, it.style.color, it.style.name,
@@ -915,12 +922,31 @@ void LayoutView::rebuildScene2D(bool refit)
         QColor fill = it.style.color;
         fill.setAlpha(qBound(0, int(kBaseFillAlpha * op + 0.5), 255));
         QPen outline(QColor(20, 20, 20), 0);
+        if (m_fieldOn && !isPort) {
+            // Field view: shapes as outlines in their layer color over the heatmap.
+            outline = QPen(it.style.color);
+            outline.setCosmetic(true);
+            outline.setWidthF(1.5);
+        }
         if (isPort) {
             outline.setColor(it.style.color);
             outline.setCosmetic(true);
             outline.setWidth(2);
         }
-        auto *item = m_scene->addPolygon(drawn, outline, QBrush(fill));
+        // The fill (layers and port / thermal marker areas) goes into the group that the layout
+        // opacity fades as one image; the outline, which also carries the name for clicks and the
+        // highlight, stays on top at full strength, so 0 % shows the outlines.
+        if (!fillGroup)
+            fillGroup = addFadeGroup(-1000.0);
+        auto *fillItem = new QGraphicsPolygonItem(drawn, fillGroup);
+        fillItem->setPen(Qt::NoPen);
+        fillItem->setBrush(QBrush(fill));
+        fillItem->setData(kRoleGds, it.poly.layer);
+        fillItem->setData(kRoleBrush, it.style.color);
+        fillItem->setVisible(vis);
+        fillItem->setZValue(double(it.style.order));
+        QAbstractGraphicsShapeItem *item = m_scene->addPolygon(drawn, outline, Qt::NoBrush);
+        item->setData(kRoleOutline, outline);
         item->setData(kRoleName, it.style.name);
         item->setData(kRoleKind, isPort ? QStringLiteral("port") : it.style.kind);
         item->setData(kRoleGds, it.poly.layer);
@@ -947,6 +973,14 @@ void LayoutView::rebuildScene2D(bool refit)
             label->setZValue(double(it.style.order) + 0.5);
             label->setPos(bb.center());
             setPixelOffset(label, 8, -16);
+
+            // Thermal markers (heat source / constant temperature) have no direction.
+            const QString thermalTip = thermalMarkerToolTip(it.poly.layer, it.style.name);
+            if (!thermalTip.isEmpty()) {
+                item->setToolTip(thermalTip);
+                label->setToolTip(thermalTip);
+                continue;
+            }
 
             QString dir = m_ports.value(it.poly.layer).direction.trimmed().toLower();
             if (dir.isEmpty())
@@ -1257,6 +1291,14 @@ void LayoutView::rebuildScene3D(bool refit)
     constexpr qreal kMinThickUm = 0.05;
     QRectF portBounds;
 
+    // Thermal marker surfaces are stacked between the layer faces by their height (sortZ), like
+    // the layers themselves; EM port surfaces stay on top.
+    struct SortedSheet {
+        QGraphicsItem *item = nullptr;
+        qreal sortZ = 0.0;
+    };
+    QVector<SortedSheet> sortedSheets;
+
     // Ports first (interactive items — few).
     for (const Item &it : items) {
         if (it.poly.pointsUm.size() < 2)
@@ -1281,8 +1323,13 @@ void LayoutView::rebuildScene3D(bool refit)
                 ? QStringLiteral("P%1").arg(it.poly.layer - 200)
                 : it.style.name;
 
-        // Translucent sheet (or a line when it has no area) under the arrow.
-        auto addPortSheet = [&](const QPolygonF &scenePoly) {
+        const QString thermalTip = thermalMarkerToolTip(it.poly.layer, pname);
+        const QString sheetTip = thermalTip.isEmpty() ? tr("%1 port surface").arg(pname) : thermalTip;
+        qreal sheetSortZ = std::numeric_limits<qreal>::quiet_NaN();  // NaN: on top of the layers
+
+        // Translucent sheet (or a line when it has no area) under the arrow; \a flatAsLine false
+        // skips surfaces seen edge-on (box walls).
+        auto addPortSheet = [&](const QPolygonF &scenePoly, bool flatAsLine = true) {
             QGraphicsItem *sheet = nullptr;
             QPen pen(col);
             pen.setCosmetic(true);
@@ -1295,6 +1342,8 @@ void LayoutView::rebuildScene3D(bool refit)
             const QRectF sb = scenePoly.boundingRect();
             if (std::abs(area2) < 1e-6 * std::max<qreal>(1e-12, sb.width() * sb.width() + sb.height() * sb.height())) {
                 // Zero-area surface (seen edge-on, or a zero-width line): a thick line.
+                if (!flatAsLine)
+                    return;
                 QPointF a = scenePoly.first(), b = scenePoly.first();
                 qreal best = -1.0;
                 for (const QPointF &p : scenePoly)
@@ -1316,16 +1365,58 @@ void LayoutView::rebuildScene3D(bool refit)
             sheet->setData(kRoleGds, it.poly.layer);
             sheet->setData(kRoleIsPort, true);
             sheet->setData(kRolePen, it.style.color);
-            sheet->setToolTip(tr("%1 port surface").arg(pname));
+            sheet->setToolTip(sheetTip);
             sheet->setVisible(vis);
-            sheet->setZValue(1e9 - 0.5);
+            if (std::isnan(sheetSortZ))
+                sheet->setZValue(1e9 - 0.5);
+            else
+                sortedSheets.push_back({sheet, sheetSortZ});
             portBounds |= scenePoly.boundingRect();
         };
 
         QPointF tipScene;
         QPointF labelPos;
 
-        if (dir.contains(QLatin1Char('z'))) {
+        if (!pi.thermalKind.isEmpty()) {
+            // Thermal marker as gds2palace builds it on the target layer: a heat source is a box
+            // over the bounding box from target zmin to zmax, a constant temperature the polygon
+            // at target zmin and zmax. Without a target in the stackup: at the bottom of the layout.
+            qreal z0 = pi.hasToRange ? pi.toZminUm : zLo;
+            qreal z1 = pi.hasToRange ? pi.toZmaxUm : zLo;
+            if (pi.thermalKind == QLatin1String("heatsource")) {
+                if (z1 - z0 < kMinThickUm)
+                    z1 = z0 + kMinThickUm;
+                sheetSortZ = 0.5 * (z0 + z1);
+                const QPointF c[4] = {bb.topLeft(), bb.topRight(), bb.bottomRight(), bb.bottomLeft()};
+                auto face = [&](qreal z) {
+                    return QPolygonF({project3D(c[0].x(), c[0].y(), z), project3D(c[1].x(), c[1].y(), z),
+                                      project3D(c[2].x(), c[2].y(), z), project3D(c[3].x(), c[3].y(), z)});
+                };
+                addPortSheet(face((m_pitchDeg < 0.0) ? z1 : z0), false);
+                for (int i = 0; i < 4; ++i) {
+                    const QPointF &a = c[i];
+                    const QPointF &b = c[(i + 1) % 4];
+                    addPortSheet(QPolygonF({project3D(a.x(), a.y(), z0), project3D(b.x(), b.y(), z0),
+                                            project3D(b.x(), b.y(), z1), project3D(a.x(), a.y(), z1)}),
+                                 false);
+                }
+                addPortSheet(face((m_pitchDeg < 0.0) ? z0 : z1));
+            } else {
+                auto flat = [&](qreal z) {
+                    QPolygonF poly;
+                    for (const QPointF &pt : it.poly.pointsUm)
+                        poly << project3D(pt.x(), pt.y(), z);
+                    return poly;
+                };
+                sheetSortZ = z0;
+                addPortSheet(flat(z0));
+                if (z1 > z0) {
+                    sheetSortZ = z1;
+                    addPortSheet(flat(z1));
+                }
+            }
+            labelPos = project3D(bb.center().x(), bb.center().y(), z1);
+        } else if (dir.contains(QLatin1Char('z'))) {
             // Via port: vertical sheet from the top of the lower metal to the bottom of the
             // upper one, on the xmin edge (polygon taller in y) or the ymin edge.
             // The arrow points from From to To; -z reverses it (so swapping From/To does too).
@@ -1441,6 +1532,7 @@ void LayoutView::rebuildScene3D(bool refit)
         label->setData(kRolePen, it.style.color);
         label->setVisible(vis);
         label->setZValue(1e9 + 0.1);
+        label->setToolTip(thermalTip);
         label->setPos(labelPos);
         setPixelOffset(label, 8, -16);
         portBounds |= QRectF(labelPos.x() - 2, labelPos.y() - 2, 4, 4);
@@ -1521,6 +1613,22 @@ void LayoutView::rebuildScene3D(bool refit)
                      });
     m_lastIso3dStats.faceCount = faces.size();
 
+    // Position of each thermal surface in the sorted faces: after every face of a layer whose
+    // mid-Z is not farther up (from above) / down (from below) than the surface. A heat source
+    // box (sortZ = its target's mid-Z) thus comes right after its own layer.
+    QVector<int> sheetIndex;
+    sheetIndex.reserve(sortedSheets.size());
+    for (const SortedSheet &s : sortedSheets) {
+        const qreal key = fromBelow ? -s.sortZ : s.sortZ;
+        int idx = 0;
+        while (idx < faces.size() && (fromBelow ? -faces.at(idx).zMid : faces.at(idx).zMid) <= key + 1e-4)
+            ++idx;
+        sheetIndex.push_back(idx);
+        // Faces keep z = their index (or the first index of their pixmap); the small step keeps
+        // the surfaces of one marker in the order they were added.
+        s.item->setZValue(double(idx) - 0.5 + 1e-4 * double(sheetIndex.size()));
+    }
+
     QRectF geomBounds;
     for (const Face &f : faces)
         geomBounds |= f.poly.boundingRect();
@@ -1532,36 +1640,66 @@ void LayoutView::rebuildScene3D(bool refit)
     const bool usePixmap = faces.size() >= kPixmapFaceThreshold;
     m_lastIso3dStats.usedPixmap = usePixmap;
 
-    if (usePixmap && !geomBounds.isNull() && geomBounds.width() > 1e-9 && geomBounds.height() > 1e-9) {
-        constexpr int kMaxPx = 2048;
-        const qreal scale = qBound(2.0,
-                                   qreal(kMaxPx) / qMax(geomBounds.width(), geomBounds.height()),
-                                   64.0);
-        const int pw = qMax(1, int(std::ceil(geomBounds.width() * scale)));
-        const int ph = qMax(1, int(std::ceil(geomBounds.height() * scale)));
-        QImage img(pw, ph, QImage::Format_ARGB32_Premultiplied);
-        img.fill(Qt::transparent);
-        QPainter painter(&img);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.translate(-geomBounds.left() * scale, -geomBounds.top() * scale);
-        painter.scale(scale, scale);
-        painter.setPen(QPen(QColor(40, 40, 40, 160), 0));
-        for (const Face &f : faces) {
-            painter.setBrush(f.fill);
-            painter.drawPolygon(f.poly);
-        }
-        painter.end();
+    // Runs of faces between thermal surfaces: each run is one pixmap or one faded group, so the
+    // surfaces stay in stack order and the layout opacity fades every run as one image.
+    QVector<int> cuts = {0};
+    for (int idx : sheetIndex)
+        if (idx > 0 && idx < faces.size())
+            cuts.push_back(idx);
+    std::sort(cuts.begin(), cuts.end());
+    cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
+    cuts.push_back(faces.size());
+    const int segments = cuts.size() - 1;
 
-        auto *pix = m_scene->addPixmap(QPixmap::fromImage(img));
-        pix->setPos(geomBounds.topLeft());
-        pix->setScale(1.0 / scale);
-        pix->setZValue(0);
-        pix->setAcceptedMouseButtons(Qt::NoButton);
+    if (usePixmap && !geomBounds.isNull() && geomBounds.width() > 1e-9 && geomBounds.height() > 1e-9) {
+        // Keep the total pixel count of several pixmaps near that of one.
+        const int maxPx = segments > 4 ? int(2048.0 * std::sqrt(4.0 / segments)) : 2048;
+        const qreal scale = qBound(2.0,
+                                   qreal(maxPx) / qMax(geomBounds.width(), geomBounds.height()),
+                                   64.0);
+        for (int seg = 0; seg < segments; ++seg) {
+            QRectF segBounds;
+            for (int i = cuts.at(seg); i < cuts.at(seg + 1); ++i)
+                segBounds |= faces.at(i).poly.boundingRect();
+            if (segBounds.isNull())
+                continue;
+            const int pw = qMax(1, int(std::ceil(segBounds.width() * scale)));
+            const int ph = qMax(1, int(std::ceil(segBounds.height() * scale)));
+            QImage img(pw, ph, QImage::Format_ARGB32_Premultiplied);
+            img.fill(Qt::transparent);
+            QPainter painter(&img);
+            painter.setRenderHint(QPainter::Antialiasing, true);
+            painter.translate(-segBounds.left() * scale, -segBounds.top() * scale);
+            painter.scale(scale, scale);
+            painter.setPen(QPen(QColor(40, 40, 40, 160), 0));
+            for (int i = cuts.at(seg); i < cuts.at(seg + 1); ++i) {
+                painter.setBrush(faces.at(i).fill);
+                painter.drawPolygon(faces.at(i).poly);
+            }
+            painter.end();
+
+            auto *pix = m_scene->addPixmap(QPixmap::fromImage(img));
+            pix->setPos(segBounds.topLeft());
+            pix->setScale(1.0 / scale);
+            pix->setZValue(double(cuts.at(seg)));
+            pix->setAcceptedMouseButtons(Qt::NoButton);
+            pix->setData(kRoleFade, true);
+            pix->setOpacity(layoutOpacity());
+        }
     } else {
         const QPen facePen(QColor(30, 30, 30), 0);
+        QGraphicsItem *group = nullptr;
+        int seg = 0;
         for (int i = 0; i < faces.size(); ++i) {
             const Face &f = faces.at(i);
-            auto *item = m_scene->addPolygon(f.poly, facePen, QBrush(f.fill));
+            if (!group || i >= cuts.at(seg + 1)) {
+                while (i >= cuts.at(seg + 1))
+                    ++seg;
+                group = addFadeGroup(double(cuts.at(seg)));
+            }
+            auto *item = new QGraphicsPolygonItem(f.poly, group);
+            item->setPen(facePen);
+            item->setBrush(QBrush(f.fill));
             item->setData(kRoleName, f.name);
             item->setData(kRoleKind, f.kind);
             item->setData(kRoleGds, f.gds);
@@ -2321,7 +2459,7 @@ void LayoutView::setLayerHighlightVisual(const QString &name, bool on)
                 QColor c = item->data(kRolePen).isValid()
                         ? item->data(kRolePen).value<QColor>()
                         : QColor(220, 40, 180);
-                c.setAlpha(qBound(40, int(255 * op + 0.5), 255));
+                c.setAlpha(qBound(40, int(255 * markerOpacityFor(gds) + 0.5), 255));
                 QPen p(c);
                 p.setCosmetic(true);
                 p.setWidth(kPortPenWidth);
@@ -2356,6 +2494,9 @@ void LayoutView::setLayerHighlightVisual(const QString &name, bool on)
                 shape->setPen(hiPen);
                 shape->setBrush(fill);
                 shape->setZValue(shape->zValue() + 0.5);
+            } else if (item->data(kRoleOutline).isValid()) {
+                shape->setPen(item->data(kRoleOutline).value<QPen>());
+                shape->setBrush(Qt::NoBrush);
             } else {
                 shape->setPen(normalPoly);
                 if (item->data(kRoleBrush).isValid()) {
@@ -3444,7 +3585,37 @@ void LayoutView::emitMeasure()
 
 qreal LayoutView::opacityFor(int gdsLayer) const
 {
-    return m_layerOpacity.value(gdsLayer, defaultFillOpacity()) / defaultFillOpacity();
+    return layerOpacity(gdsLayer) / defaultFillOpacity();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Opacity multiplier for port / thermal marker lines and labels: full strength in Field mode, so the
+ *        markers stay readable over the heatmap even when the layer fills are off.
+ * \param gdsLayer GDS layer.
+ * \return Multiplier relative to \c defaultFillOpacity().
+ **********************************************************************************************************************/
+qreal LayoutView::markerOpacityFor(int gdsLayer) const
+{
+    return m_fieldOn ? 1.0 : opacityFor(gdsLayer);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Tooltip of an Elmer Thermal marker (heat source / constant temperature).
+ *
+ * \param gdsLayer GDS marker layer.
+ * \param name     Marker name shown in the view (e.g. "Heat 0.4 W").
+ * \return Tooltip text, or an empty string for EM ports and other layers.
+ **********************************************************************************************************************/
+QString LayoutView::thermalMarkerToolTip(int gdsLayer, const QString &name) const
+{
+    const PortInfo pi = m_ports.value(gdsLayer);
+    if (pi.thermalKind.isEmpty())
+        return QString();
+    const QString target = pi.toLayer.isEmpty() ? tr("no target layer") : pi.toLayer;
+    const QString where = pi.hasToRange ? target : tr("%1, not in the stackup").arg(target);
+    if (pi.thermalKind == QLatin1String("heatsource"))
+        return tr("%1: heat source on GDS %2, volume in %3").arg(name).arg(gdsLayer).arg(where);
+    return tr("%1: constant temperature on GDS %2, faces of %3").arg(name).arg(gdsLayer).arg(where);
 }
 
 /*!*******************************************************************************************************************
@@ -3479,11 +3650,91 @@ qreal LayoutView::layerOpacity(int gdsLayer) const
     return m_layerOpacity.value(gdsLayer, defaultFillOpacity());
 }
 
+qreal LayoutView::layoutOpacity() const
+{
+    return m_fieldOn ? m_fieldLayoutOpacity : m_layoutOpacity;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the opacity of the layout fills as one image (layout view or Field view, whichever is on).
+ *
+ * The fills are composited first and then faded, so 50 % looks half transparent however many layers
+ * overlap (thermal stacks: 20+). Outlines, the highlight and port / thermal markers keep full strength.
+ *
+ * \param opacity 0..1; 0 leaves the outlines only.
+ **********************************************************************************************************************/
+void LayoutView::setLayoutOpacity(qreal opacity)
+{
+    (m_fieldOn ? m_fieldLayoutOpacity : m_layoutOpacity) = qBound(0.0, opacity, 1.0);
+    applyLayoutOpacity();
+}
+
+void LayoutView::applyLayoutOpacity()
+{
+    if (!m_scene)
+        return;
+    const qreal op = layoutOpacity();
+    for (QGraphicsItem *item : m_scene->items()) {
+        if (!item->data(kRoleFade).toBool())
+            continue;
+        if (auto *effect = qobject_cast<QGraphicsOpacityEffect *>(item->graphicsEffect()))
+            effect->setOpacity(op);
+        else
+            item->setOpacity(op);   // a single pixmap: its own opacity is exact
+    }
+    viewport()->update();
+}
+
+namespace {
+
+/*! Empty parent item: its children are faded together by a QGraphicsOpacityEffect. */
+class FadeGroupItem : public QGraphicsItem
+{
+public:
+    FadeGroupItem() { setFlag(QGraphicsItem::ItemHasNoContents, true); }
+    QRectF boundingRect() const override { return QRectF(); }
+    void paint(QPainter *, const QStyleOptionGraphicsItem *, QWidget *) override {}
+};
+
+} // namespace
+
+/*!*******************************************************************************************************************
+ * \brief Adds an empty parent item whose children are faded as one image by the layout opacity.
+ * \param z Z value of the group among the top-level items (children keep their own order inside).
+ * \return The group; add children with setParentItem().
+ **********************************************************************************************************************/
+QGraphicsItem *LayoutView::addFadeGroup(qreal z)
+{
+    auto *group = new FadeGroupItem;
+    auto *effect = new QGraphicsOpacityEffect;
+    effect->setOpacity(layoutOpacity());
+    group->setGraphicsEffect(effect);
+    group->setData(kRoleFade, true);
+    group->setZValue(z);
+    m_scene->addItem(group);
+    return group;
+}
+
 void LayoutView::setLayerVisible(int gdsLayer, bool visible)
 {
     m_layerVisible.insert(gdsLayer, visible);
     if (!rebuildIso3dForStyleChange())
         applyLayerVisual(gdsLayer);
+}
+
+void LayoutView::setLayersVisible(const QVector<int> &gdsLayers, bool visible)
+{
+    for (int gds : gdsLayers)
+        m_layerVisible.insert(gds, visible);
+    if (rebuildIso3dForStyleChange() || !m_scene)
+        return;
+    const QSet<int> layers(gdsLayers.cbegin(), gdsLayers.cend());
+    for (QGraphicsItem *item : m_scene->items()) {
+        const QVariant gds = item->data(kRoleGds);
+        if (gds.isValid() && layers.contains(gds.toInt()))
+            applyItemVisual(item);
+    }
+    viewport()->update();
 }
 
 void LayoutView::setLayerOpacity(int gdsLayer, qreal opacity)
@@ -3534,11 +3785,12 @@ bool LayoutView::rebuildIso3dForStyleChange()
 void LayoutView::setAllLayerOpacity(qreal opacity)
 {
     const qreal op = qBound(0.0, opacity, 1.0);
+    QHash<int, qreal> &map = m_layerOpacity;
     for (auto it = m_styles.constBegin(); it != m_styles.constEnd(); ++it)
-        m_layerOpacity.insert(it.key(), op);
+        map.insert(it.key(), op);
     for (const GdsFlatPolygon &p : m_polys)
-        m_layerOpacity.insert(p.layer, op);
-    for (auto it = m_layerOpacity.begin(); it != m_layerOpacity.end(); ++it)
+        map.insert(p.layer, op);
+    for (auto it = map.begin(); it != map.end(); ++it)
         it.value() = op;
     if (!m_scene || rebuildIso3dForStyleChange())
         return;
@@ -3579,7 +3831,7 @@ void LayoutView::applyItemVisual(QGraphicsItem *item)
                         : (item->data(kRolePen).isValid()
                            ? item->data(kRolePen).value<QColor>()
                            : QColor(220, 40, 180));
-        c.setAlpha(qBound(40, int(255 * op + 0.5), 255));
+        c.setAlpha(qBound(40, int(255 * markerOpacityFor(gdsLayer) + 0.5), 255));
         QPen p(c);
         p.setCosmetic(true);
         p.setWidth(isHi ? kPortPenWidth + 1 : kPortPenWidth);
@@ -3593,7 +3845,7 @@ void LayoutView::applyItemVisual(QGraphicsItem *item)
                         : (item->data(kRolePen).isValid()
                            ? item->data(kRolePen).value<QColor>()
                            : QColor(220, 40, 180));
-        c.setAlpha(qBound(40, int(255 * op + 0.5), 255));
+        c.setAlpha(qBound(40, int(255 * markerOpacityFor(gdsLayer) + 0.5), 255));
         text->setBrush(c);
         return;
     }
@@ -3608,6 +3860,8 @@ void LayoutView::applyItemVisual(QGraphicsItem *item)
                         qMin(255, int(0.35 * base.blue()  + 0.65 * 0)));
             fill.setAlpha(qBound(40, int(230 * op + 0.5), 255));
             shape->setBrush(fill);
+        } else if (item->data(kRoleOutline).isValid()) {
+            shape->setBrush(Qt::NoBrush);   // 2D outline: the fill is its twin in the fill group
         } else {
             QColor fill = shape->brush().color();
             if (item->data(kRoleBrush).isValid())

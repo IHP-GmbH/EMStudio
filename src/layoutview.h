@@ -107,6 +107,7 @@ public:
         double  toZmaxUm = 0.0;
         bool    hasFromRange = false;
         bool    hasToRange = false;
+        QString thermalKind;   //!< Elmer Thermal marker: "heatsource" / "consttemp"; empty for EM ports
     };
 
     /*! Top-down (2D) vs isometric extrusion (3D) preview. */
@@ -159,15 +160,27 @@ public:
     void                        clearHighlight();
 
     void                        setLayerVisible(int gdsLayer, bool visible);
+    /*! Shows or hides several layers with one redraw (Iso3D rebuilds once). */
+    void                        setLayersVisible(const QVector<int> &gdsLayers, bool visible);
     /*! Sets the 2D fill opacity (0..1) of one layer's shapes, as drawn. */
     void                        setLayerOpacity(int gdsLayer, qreal opacity);
     /*! Sets the 2D fill opacity (0..1) of all layers in one pass; the Field image is unaffected. */
     void                        setAllLayerOpacity(qreal opacity);
     bool                        isLayerVisible(int gdsLayer) const;
+    /*! Port / thermal marker layer: GDS 201–299 unless the stackup defines that number. */
+    bool                        isPortLayerNumber(int gdsLayer) const;
     /*! 2D fill opacity (0..1) actually used for the layer's shapes. */
     qreal                       layerOpacity(int gdsLayer) const;
     /*! Fill opacity of layers that were never changed (\c kBaseFillAlpha / 255). */
     static qreal                defaultFillOpacity() { return kBaseFillAlpha / 255.0; }
+    /*!
+     * \brief Opacity (0..1) of the layout fills as one image, however many layers overlap.
+     *
+     * Applied on top of the per-layer fill opacities; outlines, the highlight and port / thermal
+     * markers are not faded. The layout and the Field view keep their own value (Field: 0, outlines).
+     */
+    void                        setLayoutOpacity(qreal opacity);
+    qreal                       layoutOpacity() const;
 
     void                        clearMeasure();
     /*! Clears Field click-probe marker and readout. */
@@ -329,7 +342,12 @@ private:
     /*! Styling multiplier: layer fill opacity relative to \c defaultFillOpacity(). */
     qreal                       opacityFor(int gdsLayer) const;
     bool                        visibleFor(int gdsLayer) const;
-    bool                        isPortLayerNumber(int gdsLayer) const;
+    qreal                       markerOpacityFor(int gdsLayer) const;
+    /*! Applies layoutOpacity() to the faded items (kRoleFade) of the scene. */
+    void                        applyLayoutOpacity();
+    /*! New parent item faded by the layout opacity as one image (QGraphicsOpacityEffect). */
+    QGraphicsItem              *addFadeGroup(qreal z);
+    QString                     thermalMarkerToolTip(int gdsLayer, const QString &name) const;
     /*!*******************************************************************************************************************
      * \brief Adds the Field heatmap pixmap under layout polygons (scene Y-down).
      **********************************************************************************************************************/
@@ -454,6 +472,8 @@ private:
     QString                     m_highlightedName;
     QHash<int, bool>            m_layerVisible;  // missing => true
     QHash<int, qreal>           m_layerOpacity;  // 2D fill opacity; missing => defaultFillOpacity()
+    qreal                       m_layoutOpacity = 1.0;      //!< Whole-layout fill opacity, layout view
+    qreal                       m_fieldLayoutOpacity = 0.0; //!< Same in Field mode: outlines over the heatmap
 
     bool                        m_cursorValid = false;
     bool                        m_showCoordinates = true;
@@ -492,6 +512,8 @@ private:
     static constexpr int        kRoleGds = 3;
     static constexpr int        kRoleIsPort = 4;
     static constexpr int        kRolePen = 5;   // original QColor for port line pen
+    static constexpr int        kRoleOutline = 6; // 2D layer outline item: its normal QPen (no fill)
+    static constexpr int        kRoleFade = 7;  // item faded by the layout opacity (fill group, 3D pixmap)
     static constexpr int        kBaseFillAlpha = 150;
     static constexpr int        kPortPenWidth = 4;
 };

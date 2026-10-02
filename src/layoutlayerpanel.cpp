@@ -200,8 +200,20 @@ bool LayoutLayerPanel::isAllLayersItem(const QListWidgetItem *item) const
 }
 
 /*!*******************************************************************************************************************
- * \brief Shows the true fill opacity on the slider: the selected layer's, or the average of
- *        all layers in the layout (marked "mixed" when they differ).
+ * \brief Re-reads the opacity of every listed layer and updates the slider.
+ * \param opacityOf Opacity (0..1) of a GDS layer.
+ **********************************************************************************************************************/
+void LayoutLayerPanel::refreshOpacities(const std::function<qreal(int)> &opacityOf, qreal layoutOpacity)
+{
+    for (Entry &e : m_all)
+        e.opacity = opacityOf(e.gdsLayer);
+    m_layoutOpacity = qBound(0.0, layoutOpacity, 1.0);
+    updateOpacityControls();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Shows the opacity on the slider: the selected layer's fill opacity, or with "All layers" the
+ *        opacity of the whole layout.
  **********************************************************************************************************************/
 void LayoutLayerPanel::updateOpacityControls()
 {
@@ -213,25 +225,15 @@ void LayoutLayerPanel::updateOpacityControls()
     QString label = tr("Opacity");
     QString tip;
     if (allMode) {
-        int n = 0;
-        qreal sum = 0.0, lo = 1.0, hi = 0.0;
-        for (const Entry &e : m_all) {
-            if (!e.used)
-                continue;
-            ++n;
-            sum += e.opacity;
-            lo = qMin(lo, e.opacity);
-            hi = qMax(hi, e.opacity);
-        }
-        enabled = n > 0;
-        if (enabled) {
-            op = sum / n;
-            const int pct = int(op * 100.0 + 0.5);
-            label = (hi - lo > 0.005) ? tr("Opacity %1% · all layers (mixed)").arg(pct)
-                                      : tr("Opacity %1% · all layers").arg(pct);
-        }
-        tip = tr("Fill opacity of all layout shapes (not the Field image).\n"
-                 "Select a layer to change only that layer.");
+        for (const Entry &e : m_all)
+            enabled |= e.used;
+        op = m_layoutOpacity;
+        if (enabled)
+            label = tr("Opacity %1% · all layers").arg(int(op * 100.0 + 0.5));
+        tip = tr("Opacity of the whole layout: the layer fills are faded as one image, however many\n"
+                 "layers overlap. Outlines and port / thermal markers stay; 0 % shows outlines only.\n"
+                 "The Fields page has its own value and starts with outlines only.\n"
+                 "Select a layer to change only that layer's fill.");
     } else {
         const int gds = cur->data(kRoleGds).toInt();
         for (const Entry &e : m_all) {
@@ -265,6 +267,13 @@ bool LayoutLayerPanel::eventFilter(QObject *watched, QEvent *event)
         selectAllLayersMode(true);
         return true;
     }
+    if (watched == m_list->viewport()
+        && (event->type() == QEvent::MouseButtonPress || event->type() == QEvent::MouseButtonDblClick)
+        && static_cast<QMouseEvent *>(event)->button() == Qt::RightButton) {
+        // Right-click opens the context menu only: it must not move the selection, which would
+        // turn the opacity slider from "All layers" to the clicked layer.
+        return true;
+    }
     if (watched == m_list->viewport() && event->type() == QEvent::MouseButtonPress) {
         const auto *me = static_cast<QMouseEvent *>(event);
         if (!m_list->itemAt(me->pos())) {
@@ -293,9 +302,11 @@ void LayoutLayerPanel::rebuildList()
 
     if (!m_all.isEmpty()) {
         auto *all = new QListWidgetItem(tr("All layers"), m_list);
-        all->setFlags(Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+        all->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsSelectable | Qt::ItemIsEnabled);
+        all->setCheckState(Qt::Checked);
         all->setData(kRoleGds, kGdsAllLayers);
-        all->setToolTip(tr("Opacity slider acts on all layers (also: Esc, or click below the list)."));
+        all->setToolTip(tr("Check box: show or hide all listed layers.\n"
+                           "Opacity slider acts on all layers (also: Esc, or click below the list)."));
         QFont f = all->font();
         f.setBold(true);
         all->setFont(f);
@@ -329,6 +340,7 @@ void LayoutLayerPanel::rebuildList()
     }
 
     m_block = false;
+    updateAllLayersCheck();
 
     if (!keepName.isEmpty())
         setHighlightedName(keepName);
@@ -363,8 +375,13 @@ QIcon LayoutLayerPanel::swatchIcon(const QColor &c)
 
 void LayoutLayerPanel::onItemChanged(QListWidgetItem *item)
 {
-    if (m_block || !item || isAllLayersItem(item))
+    if (m_block || !item)
         return;
+    if (isAllLayersItem(item)) {
+        // Unchecked → show all; checked → hide all (a partly checked box becomes checked on click).
+        setAllVisible(item->checkState() == Qt::Checked);
+        return;
+    }
     const int gds = item->data(kRoleGds).toInt();
     const bool vis = item->checkState() == Qt::Checked;
     for (Entry &e : m_all) {
@@ -374,6 +391,32 @@ void LayoutLayerPanel::onItemChanged(QListWidgetItem *item)
         }
     }
     emit visibilityChanged(gds, vis);
+    updateAllLayersCheck();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Sets the check box of the "All layers" row from the listed layers: checked when all are shown,
+ *        unchecked when none is, partly checked otherwise.
+ **********************************************************************************************************************/
+void LayoutLayerPanel::updateAllLayersCheck()
+{
+    QListWidgetItem *all = m_list->count() > 0 && isAllLayersItem(m_list->item(0))
+            ? m_list->item(0) : nullptr;
+    if (!all)
+        return;
+    int shown = 0;
+    int listed = 0;
+    for (int i = 1; i < m_list->count(); ++i) {
+        ++listed;
+        if (m_list->item(i)->checkState() == Qt::Checked)
+            ++shown;
+    }
+    const Qt::CheckState state = (listed > 0 && shown == listed) ? Qt::Checked
+                               : (shown == 0 ? Qt::Unchecked : Qt::PartiallyChecked);
+    const bool wasBlocked = m_block;
+    m_block = true;
+    all->setCheckState(state);
+    m_block = wasBlocked;
 }
 
 void LayoutLayerPanel::onCurrentItemChanged(QListWidgetItem *current, QListWidgetItem *)
@@ -409,8 +452,7 @@ void LayoutLayerPanel::onOpacitySlider(int value)
     QListWidgetItem *cur = m_list->currentItem();
     int target = kGdsAllLayers;
     if (!cur || isAllLayersItem(cur)) {
-        for (Entry &e : m_all)
-            e.opacity = op;
+        m_layoutOpacity = op;
     } else {
         target = cur->data(kRoleGds).toInt();
         for (Entry &e : m_all) {
@@ -461,32 +503,64 @@ void LayoutLayerPanel::onListContextMenu(const QPoint &pos)
     QMenu menu(this);
     QAction *showAll = menu.addAction(tr("Show All"));
     QAction *hideAll = menu.addAction(tr("Hide All"));
+    QAction *hideUnmapped = menu.addAction(tr("Hide Unmapped"));
+    bool anyUnmapped = false;
+    for (const Entry &e : m_all)
+        anyUnmapped |= e.unmapped;
+    hideUnmapped->setEnabled(anyUnmapped);
+    hideUnmapped->setToolTip(tr("Hides the port / thermal marker layers listed as \"not mapped\"."));
     QAction *chosen = menu.exec(m_list->mapToGlobal(pos));
     if (chosen == showAll)
         setAllVisible(true);
     else if (chosen == hideAll)
         setAllVisible(false);
+    else if (chosen == hideUnmapped)
+        hideUnmappedLayers();
 }
 
 void LayoutLayerPanel::setAllVisible(bool visible)
 {
-    // Apply to layers currently shown in the list (respects "Used layers only").
+    setListedVisible(visible, [](const Entry &) { return true; });
+}
+
+/*!*******************************************************************************************************************
+ * \brief Hides the listed port / thermal marker layers that have no stackup layers ("not mapped").
+ **********************************************************************************************************************/
+void LayoutLayerPanel::hideUnmappedLayers()
+{
+    setListedVisible(false, [](const Entry &e) { return e.unmapped; });
+}
+
+/*!*******************************************************************************************************************
+ * \brief Shows or hides the listed layers (respects "Used layers only") that match \a which, with one
+ *        \c layersVisibilityChanged signal.
+ **********************************************************************************************************************/
+void LayoutLayerPanel::setListedVisible(bool visible, const std::function<bool(const Entry &)> &which)
+{
+    QVector<int> layers;
     m_block = true;
     for (int i = 0; i < m_list->count(); ++i) {
         auto *it = m_list->item(i);
         if (isAllLayersItem(it))
             continue;
         const int gds = it->data(kRoleGds).toInt();
-        it->setCheckState(visible ? Qt::Checked : Qt::Unchecked);
+        Entry *entry = nullptr;
         for (Entry &e : m_all) {
             if (e.gdsLayer == gds) {
-                e.visible = visible;
+                entry = &e;
                 break;
             }
         }
-        emit visibilityChanged(gds, visible);
+        if (!entry || !which(*entry))
+            continue;
+        it->setCheckState(visible ? Qt::Checked : Qt::Unchecked);
+        entry->visible = visible;
+        layers << gds;
     }
     m_block = false;
+    updateAllLayersCheck();
+    // Emitted after the list is consistent: a receiver may rebuild the list (setLayers).
+    emit layersVisibilityChanged(layers, visible);
 }
 
 #endif // QT_VERSION

@@ -15,11 +15,6 @@ numfreq	Number of frequency points created from the FFT (no effect on simulation
 refined_cellsize	Target mesh size at conductor edges, in project units	Mesh size and accuracy	1	yes
 cells_per_wavelength	Coarse mesh cells per wavelength, must be 10 or more	Mesh size and accuracy
 max_cellsize	Maximum mesh cell size in project units; only used when cells_per_wavelength is not set	Mesh size and accuracy
-easyMesh	True|False, use the easyMesh4openEMS mesher (Python module must be installed)	Mesh size and accuracy	False
-mesh_resolution	easyMesh only: 'low', 'medium', 'high' or 'very_high'	Mesh size and accuracy	'medium'
-use_circle_detection	easyMesh only: True|False, detect circular shapes	Mesh size and accuracy	False
-handle_closely_placed_edges	easyMesh only: True|False, merge closely placed edges	Mesh size and accuracy	True
-boundary_distance	easyMesh only: list of 6 distances, value, 'auto' or None	Mesh size and accuracy	[None, None, None, None, None, None]
 energy_limit	End criterion: residual energy (dB) at which the FDTD run is converged	Solver (openEMS)		yes
 numThreads	Force the openEMS thread count, 0 = automatic	Solver (openEMS)	0
 margin	Oversize of dielectric layers relative to the drawn geometry, in project units	Simulation boundary		yes

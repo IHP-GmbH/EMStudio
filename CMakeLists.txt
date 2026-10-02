@@ -106,6 +106,8 @@ set(SOURCES
     src/tips.cpp
     src/keywordseditor.cpp
     src/addsettingdialog.cpp
+    src/convertloosemodel.cpp
+    src/sidebysidediff.cpp
     src/keybindingsdialog.cpp
     src/navigationstyle.cpp
 
@@ -171,6 +173,7 @@ set(HEADERS
     src/about.h
     src/keywordseditor.h
     src/addsettingdialog.h
+    src/sidebysidediff.h
     src/keybindingsdialog.h
     src/navigationstyle.h
 

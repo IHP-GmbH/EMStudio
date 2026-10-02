@@ -169,8 +169,20 @@ public:
     void                            loadPythonModel(const QString &fileName);
     void                            runHeadless(const QString& simKeyLower);
 
+signals:
+    /*! File → Convert to settings dictionary finished; \a detail is the backup path or the reason. */
+    void                            looseConversionFinished(bool ok, const QString &detail);
+
+public:
 #ifdef EMSTUDIO_TESTING
     friend class OpenemsGolden;
+
+    /*! Conversion dialog answer in tests, and the gds2openEMS folder the converter checks. */
+    void                            testSetConvertAnswer(bool accept, bool switchImports,
+                                                         const QString &packageDir = QString());
+    void                            testStartLooseConversion();
+    bool                            testCanConvertLooseModel(QString *why = nullptr) const;
+    QJsonObject                     testLastConversionReport() const;
 
     bool                            testInitDefaultPalaceModel();
     void                            testSetSimSetting(const QString& key, const QVariant& val);
@@ -211,6 +223,7 @@ public:
     void                            testSetCurrentPortRow(int row);
     QString                         testCurrentSimToolKey() const;
     void                            testTriggerSave();
+    QStringList                     testRecentPythonModels() const { return recentPythonModels(); }
     void                            testSetRunPythonScriptLinePath(const QString& path);
     bool                            testBuildPalaceRunContext(QString* outError,
                                                               QString* outSimKeyLower = nullptr,
@@ -328,6 +341,7 @@ private slots:
 
     void                            onTopCellChanged(const QString &text);
     void                            on_actionExit_triggered();
+    void                            on_actionConvertToSettings_triggered();
     void                            on_actionSave_triggered();
     void                            on_actionSave_As_triggered();
     void                            on_btnGdsFile_clicked();
@@ -404,6 +418,7 @@ private:
 
     void                            info(const QString &msg, bool clear = false);
     void                            error(const QString &msg, bool clear = false);
+    void                            fieldLog(const QByteArray &text, bool isError = false);
 
     void                            updateBoundaryTooltipsForCurrentTool();
 
@@ -444,6 +459,11 @@ private:
     void                            updateExcitationUiForCurrentTool();
     void                            addThermalObjectRow();
     void                            removeSelectedThermalObjectRow();
+    QString                         thermalTargetOf(const QComboBox *box) const;
+    void                            fillThermalTargetCombo(QComboBox *box, const QString &type,
+                                                           const QString &current);
+    void                            markThermalTargetCombo(QComboBox *box);
+    void                            refreshThermalTargetCombos();
     void                            removeAllThermalObjectRows();
     void                            appendThermalObjectRow(const QString &type,
                                                            double value,
@@ -574,6 +594,15 @@ private:
     void                            setupNewModelMenu();
     void                            updateNewModelActions();
     void                            newModel(const QString &simKey);
+    /*! File → Convert to settings dictionary (convertloosemodel.cpp). */
+    bool                            canConvertLooseModel(QString *why = nullptr) const;
+    void                            updateConvertLooseModelAction();
+    void                            startLooseConversion();
+    void                            runLooseConverter(const QStringList &args,
+                                                      std::function<void(const QJsonObject &,
+                                                                         const QString &)> done);
+    bool                            showLooseConversionDialog(const QJsonObject &report, bool *switchImports);
+    void                            finishLooseConversion(const QString &model, bool switchImports);
 
     /*! A top-level settings statement: key and [start, end) in the script. */
     struct SettingStatement
@@ -720,6 +749,15 @@ private:
     QStringList                     m_tabTitles;
     QMap<QString, int>              m_tabMap;
     QString                         m_gdsTopCell;   //!< First top-level cell of the GDS (gdstk top_level()[0])
+    bool                            m_looseConversionRunning = false; //!< convert_loose_to_settings.py is running
+    QPointer<QProcess>              m_looseConverterProcess;   //!< The running converter, if any
+    QString                         m_testConverterPackageDir; //!< --package-dir for the converter (tests only)
+    QString                         m_lastConversionBackup;    //!< Backup written by the last conversion
+#ifdef EMSTUDIO_TESTING
+    bool                            m_testConvertAccept = true;
+    bool                            m_testConvertSwitchImports = false;
+    QJsonObject                     m_testLastConversionReport;
+#endif
     bool                            m_importingModelGds = false; //!< loadPythonModel is reading the model's GDS
 
     QString                         m_modelGdsKey;
@@ -729,6 +767,7 @@ private:
     QStringList                     m_cells;
     QSet<QPair<int, int>>           m_layers;
     QStringList                     m_subLayers;
+    QHash<QString, QString>         m_subLayerTypes;   //!< Stackup layer name -> type (conductor, sheet, via, ...)
 
     QHash<int, QString>             m_gdsToSubName;
     QHash<QString, int>             m_subNameToGds;

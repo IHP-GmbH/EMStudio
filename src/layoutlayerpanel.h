@@ -27,6 +27,8 @@
 #include <QString>
 #include <QHash>
 
+#include <functional>
+
 class QListWidget;
 class QListWidgetItem;
 class QCheckBox;
@@ -77,6 +79,11 @@ public:
      * or after the value settles for wheel / key changes; the label still follows the slider.
      */
     void                        setDeferOpacityUpdates(bool defer);
+    /*! Re-reads each layer's opacity from \a opacityOf and the whole-layout opacity (e.g. after the
+     *  view switched between the layout and the Field view, which keep separate layout opacities)
+     *  and updates the slider. */
+    void                        refreshOpacities(const std::function<qreal(int)> &opacityOf,
+                                                 qreal layoutOpacity);
     bool                        deferOpacityUpdates() const { return m_deferOpacity; }
 
 protected:
@@ -84,8 +91,10 @@ protected:
 
 signals:
     void                        visibilityChanged(int gdsLayer, bool visible);
+    /*! Show / Hide all: every listed layer at once (one redraw). */
+    void                        layersVisibilityChanged(const QVector<int> &gdsLayers, bool visible);
     void                        opacityChanged(int gdsLayer, qreal opacity);
-    /*! Slider moved with no single layer selected: every layer gets \a opacity. */
+    /*! Slider moved with "All layers" selected: the opacity of the whole layout (fills as one image). */
     void                        allOpacityChanged(qreal opacity);
     /*! The selection went back to "All layers" (Esc, empty-area click, "All layers" row). */
     void                        layerDeactivated();
@@ -102,12 +111,16 @@ private slots:
     void                        flushPendingOpacity();
     void                        onListContextMenu(const QPoint &pos);
     void                        setAllVisible(bool visible);
+    void                        hideUnmappedLayers();
 
 private:
     void                        rebuildList();
     void                        selectAllLayersMode(bool notify);
     void                        updateOpacityControls();
+    /*! Check box of the "All layers" row: checked / unchecked / partly, from the listed layers. */
+    void                        updateAllLayersCheck();
     bool                        isAllLayersItem(const QListWidgetItem *item) const;
+    void                        setListedVisible(bool visible, const std::function<bool(const Entry &)> &which);
     QListWidgetItem            *itemForGds(int gdsLayer) const;
     static QIcon                swatchIcon(const QColor &c);
 
@@ -120,6 +133,7 @@ private:
 
     QVector<Entry>              m_all;
     bool                        m_usedOnlyOn = true;
+    qreal                       m_layoutOpacity = 1.0; //!< Whole-layout opacity shown for "All layers"
     bool                        m_block = false;
     bool                        m_deferOpacity = false;
     bool                        m_opacityPending = false;

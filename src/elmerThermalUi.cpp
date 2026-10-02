@@ -5,6 +5,7 @@
 #include "mainwindow.h"
 #include "ui_mainwindow.h"
 
+#include <QColor>
 #include <QComboBox>
 #include <QDir>
 #include <QDirIterator>
@@ -15,6 +16,7 @@
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QProcess>
+#include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -54,6 +56,7 @@ void MainWindow::setupThermalObjectsUi()
         return;
 
     m_tblThermalObjects = new QTableWidget(m_ui->tab_2);
+    m_tblThermalObjects->setObjectName(QStringLiteral("tblThermalObjects"));
     m_tblThermalObjects->setColumnCount(4);
     m_tblThermalObjects->setHorizontalHeaderLabels(
         QStringList() << tr("Type") << tr("Value") << tr("Source Layer") << tr("Target Layer"));
@@ -65,9 +68,9 @@ void MainWindow::setupThermalObjectsUi()
     // Insert above the ports table so show/hide keeps button row shared.
     m_ui->verticalLayout_6->insertWidget(0, m_tblThermalObjects);
 
-    // A changed source layer maps a marker layer (layers list: "not mapped" note).
+    // Source layer and value change the preview markers (position, "not mapped" note, label).
     connect(m_tblThermalObjects, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
-        if (item && item->column() == 2)
+        if (item && (item->column() == 1 || item->column() == 2))
             refreshLayoutPreview();
     });
 }
@@ -196,13 +199,13 @@ void MainWindow::openThermalResultsInFieldView(const QString &runDir)
 
     const QString vtu = findThermalResultsVtu(dir);
     if (vtu.isEmpty()) {
-        appendToSimulationLog(
+        fieldLog(
             QStringLiteral("\n[Field] No thermal .vtu/.pvtu found under:\n  %1\n"
                            "  Expected thermal_results*.pvtu or thermal_results*.vtu after a successful Elmer Thermal run.\n")
                 .arg(dir.isEmpty() ? QStringLiteral("(empty)") : dir)
                 .toUtf8());
     } else {
-        appendToSimulationLog(
+        fieldLog(
             QStringLiteral("\n[Field] Opening thermal results on the Fields page:\n  %1\n")
                 .arg(vtu)
                 .toUtf8());
@@ -222,7 +225,7 @@ void MainWindow::openThermalResultsInFieldView(const QString &runDir)
     QString pyDetail;
     const QString python = resolveFieldViewerPython(&pyDetail);
     if (!vtu.isEmpty() && !python.isEmpty()) {
-        appendToSimulationLog(
+        fieldLog(
             QByteArray("\n[Field 3D] FIELD_VIEWER_PYTHON available — opening volume viewer after thermal run.\n"));
         QTimer::singleShot(500, this, [this]() {
             if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
@@ -252,32 +255,117 @@ void MainWindow::appendThermalObjectRow(const QString &type,
     const int typeIdx = typeBox->findText(type, Qt::MatchFixedString);
     typeBox->setCurrentIndex(typeIdx >= 0 ? typeIdx : 0);
     m_tblThermalObjects->setCellWidget(row, 0, typeBox);
+    connect(typeBox, &QComboBox::currentTextChanged, this, [this]() { refreshLayoutPreview(); });
 
     m_tblThermalObjects->setItem(row, 1, new QTableWidgetItem(QString::number(value, 'g', 12)));
     m_tblThermalObjects->setItem(row, 2, new QTableWidgetItem(QString::number(sourceLayer)));
 
     auto *targetBox = new QComboBox(m_tblThermalObjects);
-    targetBox->setEditable(true);
-    targetBox->addItem(QString());
-    QStringList names = m_subLayers;
-    names.removeDuplicates();
-    std::sort(names.begin(), names.end(),
-              [](const QString &a, const QString &b) {
-                  return QString::localeAwareCompare(a, b) < 0;
-              });
-    for (const QString &nm : names)
-        targetBox->addItem(nm);
-    if (!targetLayer.isEmpty()) {
-        int idx = targetBox->findText(targetLayer);
-        if (idx < 0) {
-            targetBox->addItem(targetLayer);
-            idx = targetBox->findText(targetLayer);
-        }
-        if (idx >= 0)
-            targetBox->setCurrentIndex(idx);
-    }
     m_tblThermalObjects->setCellWidget(row, 3, targetBox);
-    connect(targetBox, &QComboBox::currentTextChanged, this, [this]() { refreshLayoutPreview(); });
+    fillThermalTargetCombo(targetBox, typeBox->currentText(), targetLayer);
+    connect(targetBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, targetBox]() {
+        markThermalTargetCombo(targetBox);
+        refreshLayoutPreview();
+    });
+    // The type decides which layers can be the target.
+    connect(typeBox, &QComboBox::currentTextChanged, this, [this, targetBox](const QString &newType) {
+        fillThermalTargetCombo(targetBox, newType, thermalTargetOf(targetBox));
+    });
+}
+
+/*!*******************************************************************************************************************
+ * \brief Target layer of a thermal object row as written to the script (the layer name, without notes).
+ * \param box Target combo of the row.
+ * \return Layer name, empty when none is chosen.
+ **********************************************************************************************************************/
+QString MainWindow::thermalTargetOf(const QComboBox *box) const
+{
+    if (!box || box->currentIndex() < 0)
+        return QString();
+    const QVariant data = box->currentData();
+    return (data.isValid() ? data.toString() : box->currentText()).trimmed();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Fills a thermal target combo with the stackup layers the object type can use.
+ *
+ * Heat sources: conductor layers. Constant temperatures: sheet layers, then conductor layers (thermal
+ * stackups often model BACKSIDEGND as a conductor). A model value that isn't offered stays selected,
+ * marked "(not in stackup)" or "(not a ... layer)" in red, so loading and saving never changes it.
+ *
+ * \param box     Target combo (not editable).
+ * \param type    "heatsource" or "consttemp".
+ * \param current Layer to select; empty selects the first offered layer.
+ **********************************************************************************************************************/
+void MainWindow::fillThermalTargetCombo(QComboBox *box, const QString &type, const QString &current)
+{
+    if (!box)
+        return;
+    const bool constTemp = type.trimmed().compare(QLatin1String("consttemp"), Qt::CaseInsensitive) == 0;
+    auto layersOfType = [this](const QString &kind) {
+        QStringList names;
+        for (const QString &n : m_subLayers)
+            if (m_subLayerTypes.value(n).compare(kind, Qt::CaseInsensitive) == 0 && !names.contains(n))
+                names << n;
+        std::sort(names.begin(), names.end(), [](const QString &a, const QString &b) {
+            return QString::localeAwareCompare(a, b) < 0;
+        });
+        return names;
+    };
+    const QStringList offered = constTemp ? layersOfType(QStringLiteral("sheet")) + layersOfType(QStringLiteral("conductor"))
+                                          : layersOfType(QStringLiteral("conductor"));
+
+    QSignalBlocker block(box);
+    box->clear();
+    box->setEditable(false);
+    for (const QString &n : offered)
+        box->addItem(constTemp ? QStringLiteral("%1 (%2)").arg(n, m_subLayerTypes.value(n)) : n, n);
+
+    const QString want = current.trimmed();
+    if (!want.isEmpty() && !offered.contains(want)) {
+        const QString why = !m_subLayerTypes.contains(want)
+                ? tr("not in stackup")
+                : constTemp ? tr("not a sheet or conductor layer") : tr("not a conductor layer");
+        box->insertItem(0, QStringLiteral("%1 (%2)").arg(want, why), want);
+        box->setItemData(0, QColor(Qt::red), Qt::ForegroundRole);
+        box->setItemData(0, QStringLiteral("invalid"), Qt::UserRole + 1);
+    }
+    if (box->count() == 0)
+        box->addItem(QString(), QString());
+    const int idx = want.isEmpty() ? 0 : box->findData(want);
+    box->setCurrentIndex(qMax(0, idx));
+    box->setToolTip(constTemp ? tr("Layer whose bottom and top faces get the constant temperature "
+                                   "(sheet or conductor layers of the stackup)")
+                              : tr("Conductor layer that holds the heat source volume"));
+    markThermalTargetCombo(box);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Shows the selected target in red when it is not one of the offered stackup layers.
+ * \param box Target combo.
+ **********************************************************************************************************************/
+void MainWindow::markThermalTargetCombo(QComboBox *box)
+{
+    if (!box)
+        return;
+    const bool invalid = box->currentData(Qt::UserRole + 1).toString() == QLatin1String("invalid");
+    box->setStyleSheet(invalid ? QStringLiteral("QComboBox { color: #c00000; }") : QString());
+}
+
+/*!*******************************************************************************************************************
+ * \brief Refills every thermal target combo after the stackup changed, keeping the chosen layers.
+ **********************************************************************************************************************/
+void MainWindow::refreshThermalTargetCombos()
+{
+    if (!m_tblThermalObjects)
+        return;
+    for (int r = 0; r < m_tblThermalObjects->rowCount(); ++r) {
+        auto *typeBox = qobject_cast<QComboBox *>(m_tblThermalObjects->cellWidget(r, 0));
+        auto *tgtBox = qobject_cast<QComboBox *>(m_tblThermalObjects->cellWidget(r, 3));
+        if (typeBox && tgtBox)
+            fillThermalTargetCombo(tgtBox, typeBox->currentText(), thermalTargetOf(tgtBox));
+    }
+    refreshLayoutPreview();
 }
 
 void MainWindow::addThermalObjectRow()
@@ -330,7 +418,7 @@ QString MainWindow::buildThermalCodeFromGuiTable() const
                                      : QStringLiteral("heatsource");
         const QString val = valItem ? valItem->text().trimmed() : QStringLiteral("0");
         const QString src = srcItem ? srcItem->text().trimmed() : QString();
-        const QString tgt = tgtBox ? tgtBox->currentText().trimmed() : QString();
+        const QString tgt = thermalTargetOf(tgtBox);
 
         if (src.isEmpty() || tgt.isEmpty())
             continue;

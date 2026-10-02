@@ -26,6 +26,8 @@ private slots:
     void iso3d_viewFromBelow_reversesStackOrder();
     void iso3d_portsShowSurfaceAndFromToDirection();
     void iso3d_stackupLayerInPortRange_isNoPort();
+    void iso3d_thermalMarkersFollowStackOrder();
+    void layoutOpacity_fadesStackAsOneImage();
     void viaMerge_followsModelMergeSize();
     void viaLimit_showsMessageInsteadOfLayout();
     void modeSwitch_showsBothOptionsWithActiveHighlighted();

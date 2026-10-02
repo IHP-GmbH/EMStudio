@@ -223,6 +223,7 @@ public:
     void                            testSetCurrentPortRow(int row);
     QString                         testCurrentSimToolKey() const;
     void                            testTriggerSave();
+    QStringList                     testRecentPythonModels() const { return recentPythonModels(); }
     void                            testSetRunPythonScriptLinePath(const QString& path);
     bool                            testBuildPalaceRunContext(QString* outError,
                                                               QString* outSimKeyLower = nullptr,

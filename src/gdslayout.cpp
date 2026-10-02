@@ -81,14 +81,15 @@ Aff2 fromStrans(bool reflectX, double mag, double angleDeg, double tx, double ty
     const double rad = qDegreesToRadians(angleDeg);
     const double c = std::cos(rad);
     const double s = std::sin(rad);
-    const double r00 = reflectX ? -1.0 : 1.0;
+    // Reflection about the X axis negates y (not x).
+    const double r11 = reflectX ? -1.0 : 1.0;
 
-    // After reflect+scale: [r00*m, 0; 0, m], then rotate
+    // After reflect+scale: [m, 0; 0, r11*m], then rotate
     Aff2 t;
-    t.a00 =  c * r00 * m;
-    t.a01 = -s * m;
-    t.a10 =  s * r00 * m;
-    t.a11 =  c * m;
+    t.a00 =  c * m;
+    t.a01 = -s * r11 * m;
+    t.a10 =  s * m;
+    t.a11 =  c * r11 * m;
     t.tx = tx;
     t.ty = ty;
     return t;
@@ -223,9 +224,24 @@ bool parseLibrary(QFile &file, QHash<QString, RawCell> *cells, double *dbuMeters
     QString sname;
     QVector<QPointF> xy;
 
+    // Element state; reset after every element, also TEXT / NODE, whose STRANS / MAG / ANGLE
+    // (text size) must not leak into the next reference.
+    auto resetElement = [&]() {
+        elem = ElemKind::None;
+        layer = datatype = width = 0;
+        reflect = false;
+        mag = 1.0;
+        angle = 0.0;
+        cols = rows = 1;
+        sname.clear();
+        xy.clear();
+    };
+
     auto flushElement = [&]() {
-        if (!cur || elem == ElemKind::None || elem == ElemKind::Other)
+        if (!cur || elem == ElemKind::None || elem == ElemKind::Other) {
+            resetElement();
             return;
+        }
         if (elem == ElemKind::Boundary || elem == ElemKind::Box) {
             if (xy.size() >= 3) {
                 RawBoundary b;
@@ -294,14 +310,7 @@ bool parseLibrary(QFile &file, QHash<QString, RawCell> *cells, double *dbuMeters
             r.xRow = xy[2].x(); r.yRow = xy[2].y();
             cur->arefs.push_back(r);
         }
-        elem = ElemKind::None;
-        layer = datatype = width = 0;
-        reflect = false;
-        mag = 1.0;
-        angle = 0.0;
-        cols = rows = 1;
-        sname.clear();
-        xy.clear();
+        resetElement();
     };
 
     while (file.bytesAvailable() >= 4) {
@@ -583,10 +592,11 @@ void flattenCell(const QString &name,
         const Aff2 base = fromStrans(r.reflect, r.mag, r.angle, 0, 0);
         const int nc = qMax(1, r.cols);
         const int nr = qMax(1, r.rows);
-        const double dCx = (nc > 1) ? (r.xCol - r.x0) / double(nc - 1) : 0.0;
-        const double dCy = (nc > 1) ? (r.yCol - r.y0) / double(nc - 1) : 0.0;
-        const double dRx = (nr > 1) ? (r.xRow - r.x0) / double(nr - 1) : 0.0;
-        const double dRy = (nr > 1) ? (r.yRow - r.y0) / double(nr - 1) : 0.0;
+        // GDSII: the second / third XY point is the origin displaced by cols (rows) pitches.
+        const double dCx = (r.xCol - r.x0) / double(nc);
+        const double dCy = (r.yCol - r.y0) / double(nc);
+        const double dRx = (r.xRow - r.x0) / double(nr);
+        const double dRy = (r.yRow - r.y0) / double(nr);
         for (int row = 0; row < nr; ++row) {
             for (int col = 0; col < nc; ++col) {
                 Aff2 placed = base;

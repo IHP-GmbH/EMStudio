@@ -3725,6 +3725,8 @@ void MainWindow::on_actionSave_triggered()
     if (!applyPythonScriptFromEditor())
         return;
 
+    // Save As and the first Save of a new model create a file: list it under File > Recent.
+    addRecentPythonModel(QFileInfo(QDir::fromNativeSeparators(filePath)).absoluteFilePath());
     saveSettings();
     setStateSaved();
     info("All changes saved successfully.", true);

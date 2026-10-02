@@ -17,6 +17,7 @@ class GdsLayoutTest : public QObject
 private slots:
     void flattenTopCell_goldenGds_returnsPolygons();
     void flattenTopCell_missingFileOrCell_fails();
+    void flattenTopCell_mirrorArraysAndTextMag_matchGdsSpec();
 };
 
 #endif // TST_GDSLAYOUT_H

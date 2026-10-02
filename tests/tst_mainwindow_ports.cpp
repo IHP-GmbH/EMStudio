@@ -691,6 +691,8 @@ void MainWindowPortsTest::saveAction_keepsEditedTextSettings()
     const QString savePath = dir.filePath(QStringLiteral("text_settings_model.py"));
     w.testSetRunPythonScriptLinePath(savePath);
     w.testTriggerSave(); // parses the model into the grid
+    // A newly saved model (Save As / first Save) is listed first under File > Recent.
+    QCOMPARE(w.testRecentPythonModels().value(0), QFileInfo(savePath).absoluteFilePath());
 
     auto readSaved = [&]() {
         QFile f(savePath);

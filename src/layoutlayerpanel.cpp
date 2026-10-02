@@ -503,16 +503,40 @@ void LayoutLayerPanel::onListContextMenu(const QPoint &pos)
     QMenu menu(this);
     QAction *showAll = menu.addAction(tr("Show All"));
     QAction *hideAll = menu.addAction(tr("Hide All"));
+    QAction *hideUnmapped = menu.addAction(tr("Hide Unmapped"));
+    bool anyUnmapped = false;
+    for (const Entry &e : m_all)
+        anyUnmapped |= e.unmapped;
+    hideUnmapped->setEnabled(anyUnmapped);
+    hideUnmapped->setToolTip(tr("Hides the port / thermal marker layers listed as \"not mapped\"."));
     QAction *chosen = menu.exec(m_list->mapToGlobal(pos));
     if (chosen == showAll)
         setAllVisible(true);
     else if (chosen == hideAll)
         setAllVisible(false);
+    else if (chosen == hideUnmapped)
+        hideUnmappedLayers();
 }
 
 void LayoutLayerPanel::setAllVisible(bool visible)
 {
-    // Apply to layers currently shown in the list (respects "Used layers only").
+    setListedVisible(visible, [](const Entry &) { return true; });
+}
+
+/*!*******************************************************************************************************************
+ * \brief Hides the listed port / thermal marker layers that have no stackup layers ("not mapped").
+ **********************************************************************************************************************/
+void LayoutLayerPanel::hideUnmappedLayers()
+{
+    setListedVisible(false, [](const Entry &e) { return e.unmapped; });
+}
+
+/*!*******************************************************************************************************************
+ * \brief Shows or hides the listed layers (respects "Used layers only") that match \a which, with one
+ *        \c layersVisibilityChanged signal.
+ **********************************************************************************************************************/
+void LayoutLayerPanel::setListedVisible(bool visible, const std::function<bool(const Entry &)> &which)
+{
     QVector<int> layers;
     m_block = true;
     for (int i = 0; i < m_list->count(); ++i) {
@@ -520,13 +544,17 @@ void LayoutLayerPanel::setAllVisible(bool visible)
         if (isAllLayersItem(it))
             continue;
         const int gds = it->data(kRoleGds).toInt();
-        it->setCheckState(visible ? Qt::Checked : Qt::Unchecked);
+        Entry *entry = nullptr;
         for (Entry &e : m_all) {
             if (e.gdsLayer == gds) {
-                e.visible = visible;
+                entry = &e;
                 break;
             }
         }
+        if (!entry || !which(*entry))
+            continue;
+        it->setCheckState(visible ? Qt::Checked : Qt::Unchecked);
+        entry->visible = visible;
         layers << gds;
     }
     m_block = false;

@@ -111,6 +111,7 @@ private slots:
     void                        flushPendingOpacity();
     void                        onListContextMenu(const QPoint &pos);
     void                        setAllVisible(bool visible);
+    void                        hideUnmappedLayers();
 
 private:
     void                        rebuildList();
@@ -119,6 +120,7 @@ private:
     /*! Check box of the "All layers" row: checked / unchecked / partly, from the listed layers. */
     void                        updateAllLayersCheck();
     bool                        isAllLayersItem(const QListWidgetItem *item) const;
+    void                        setListedVisible(bool visible, const std::function<bool(const Entry &)> &which);
     QListWidgetItem            *itemForGds(int gdsLayer) const;
     static QIcon                swatchIcon(const QColor &c);
 

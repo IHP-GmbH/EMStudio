@@ -295,4 +295,14 @@ void LayoutLayerPanelTest::unmappedPort_isMarkedInList()
 
     panel.setHighlightedName(QStringLiteral("P2"));  // name lookup ignores the note
     QCOMPARE(list->currentItem(), p2);
+
+    // Context menu "Hide Unmapped": hides only the "not mapped" markers, in one batch.
+    QSignalSpy batchSpy(&panel, &LayoutLayerPanel::layersVisibilityChanged);
+    QVERIFY(QMetaObject::invokeMethod(&panel, "hideUnmappedLayers"));
+    QCOMPARE(p2->checkState(), Qt::Unchecked);
+    QCOMPARE(p1->checkState(), Qt::Checked);
+    QCOMPARE(batchSpy.count(), 1);
+    QCOMPARE(batchSpy.at(0).at(0).value<QVector<int>>().size(), 1);
+    QVERIFY(!batchSpy.at(0).at(1).toBool());
+    QCOMPARE(list->item(0)->checkState(), Qt::PartiallyChecked);
 }

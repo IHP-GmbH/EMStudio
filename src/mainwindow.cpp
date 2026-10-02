@@ -410,6 +410,12 @@ MainWindow::MainWindow(QWidget *parent)
  **********************************************************************************************************************/
 MainWindow::~MainWindow()
 {
+    // A running model converter must not call back into a window that is being destroyed.
+    if (m_looseConverterProcess) {
+        m_looseConverterProcess->disconnect();
+        m_looseConverterProcess->kill();
+        m_looseConverterProcess->waitForFinished(2000);
+    }
     delete m_ui;
 }
 
@@ -1765,6 +1771,21 @@ void MainWindow::info(const QString &msg, bool clear)
 }
 
 /*!*******************************************************************************************************************
+ * \brief Writes a Fields page / Field viewer message to the Log window (not the simulation log, which holds
+ *        solver output and is saved with the run).
+ * \param text    Message (leading / trailing blank lines are dropped).
+ * \param isError True for failures (shown as an error).
+ **********************************************************************************************************************/
+void MainWindow::fieldLog(const QByteArray &text, bool isError)
+{
+    const QString msg = QString::fromUtf8(text).trimmed();
+    if (isError)
+        error(msg, false);
+    else
+        info(msg, false);
+}
+
+/*!*******************************************************************************************************************
  * \brief Appends an error message to the log window. Optionally clears the log first.
  * \param msg The message to display.
  * \param clear If true, clears the log before displaying the message.
@@ -2185,12 +2206,12 @@ void MainWindow::refreshFieldChoices()
     if (!proc.waitForFinished(15000) || proc.exitCode() != 0
         || !parseFieldChoices(proc.readAllStandardOutput())) {
         proc.kill();
-        appendToSimulationLog(QByteArray("\n[Field] Listing field dumps failed:\n  ")
-                              + proc.readAllStandardError().trimmed().right(600) + "\n");
+        fieldLog(QByteArray("\n[Field] Listing field dumps failed:\n  ")
+                              + proc.readAllStandardError().trimmed().right(600) + "\n", true);
         parseFieldChoices(QByteArrayLiteral("{\"files\":[]}"));
         return;
     }
-    appendToSimulationLog(QStringLiteral("\n[Field] %1 result choice(s) for %2 under:\n  %3\n")
+    fieldLog(QStringLiteral("\n[Field] %1 result choice(s) for %2 under:\n  %3\n")
                               .arg(m_fieldChoices.size()).arg(source, runDir).toUtf8());
 #endif
 }
@@ -2368,7 +2389,7 @@ void MainWindow::openFieldVolumeExternalViewer()
     int cycle = 1;
     const QString dump = currentFieldDumpPath(&cycle);
     if (dump.isEmpty()) {
-        appendToSimulationLog(
+        fieldLog(
             QByteArray("\n[Field 3D] No field dump found. Enable fdump / field dumps and re-run.\n"));
         if (m_ui && m_ui->layoutView) {
             LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
@@ -2390,24 +2411,24 @@ void MainWindow::openFieldVolumeExternalViewer()
             msg.insert(QStringLiteral("files"), QJsonArray{dump});
         }
         m_fieldVolumeViewerProcess->write(QJsonDocument(msg).toJson(QJsonDocument::Compact) + '\n');
-        appendToSimulationLog(QByteArray("\n[Field 3D] Viewer already open — bringing it to the front.\n"));
+        fieldLog(QByteArray("\n[Field 3D] Viewer already open — bringing it to the front.\n"));
         return;
     }
 
     const QString script = resolveModelTemplatePath(QStringLiteral("field_viewer.py"));
     if (script.isEmpty() || !QFileInfo::exists(script)) {
-        appendToSimulationLog(
-            QByteArray("\n[Field 3D] Missing scripts/field_viewer.py next to EMStudio.\n"));
+        fieldLog(
+            QByteArray("\n[Field 3D] Missing scripts/field_viewer.py next to EMStudio.\n"), true);
         return;
     }
 
     QString pyDetail;
     const QString python = resolveFieldViewerPython(&pyDetail);
     if (python.isEmpty()) {
-        appendToSimulationLog(
+        fieldLog(
             QByteArray("\n[Field 3D] No Python for the 3D viewer.\n  ")
             + (pyDetail.isEmpty() ? QByteArray("Set FIELD_VIEWER_PYTHON.") : pyDetail.toUtf8())
-            + "\n  pip install pyvista pyvistaqt PySide6\n");
+            + "\n  pip install pyvista pyvistaqt PySide6\n", true);
         return;
     }
 
@@ -2515,10 +2536,10 @@ void MainWindow::openFieldVolumeExternalViewer()
     m_fieldVolumeViewerProcess->start(python, args);
     if (!m_fieldVolumeViewerProcess->waitForStarted(5000)) {
         closeFieldVolumeViewerSplash();
-        appendToSimulationLog(
+        fieldLog(
             QByteArray("\n[Field 3D] Failed to start:\n  ")
             + python.toUtf8() + "\n  " + script.toUtf8() + "\n  "
-            + m_fieldVolumeViewerProcess->errorString().toUtf8() + "\n");
+            + m_fieldVolumeViewerProcess->errorString().toUtf8() + "\n", true);
         if (m_ui && m_ui->layoutView) {
             LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
             ov.status = tr("Failed to start 3D viewer.");
@@ -2526,7 +2547,7 @@ void MainWindow::openFieldVolumeExternalViewer()
         }
         return;
     }
-    appendToSimulationLog(
+    fieldLog(
         QByteArray("\n[Field 3D] Starting the 3D field viewer "
                    "(first open can take several seconds)…\n  ")
         + python.toUtf8() + "\n  " + runDir.toUtf8() + "\n");
@@ -2577,11 +2598,11 @@ void MainWindow::onFieldVolumeViewerFinished(int exitCode, QProcess::ExitStatus 
     QByteArray msg = out.trimmed();
     if (msg.size() > 1200)
         msg = msg.right(1200);
-    appendToSimulationLog(
+    fieldLog(
         QByteArray("\n[Field 3D] Viewer exited with error (code ")
         + QByteArray::number(exitCode) + ").\n"
         + (msg.isEmpty() ? QByteArray("  (no output — check FIELD_VIEWER_PYTHON / pyvista)\n")
-                         : (msg + "\n")));
+                         : (msg + "\n")), true);
     if (m_ui && m_ui->layoutView) {
         LayoutView::FieldOverlay ov = m_ui->layoutView->fieldOverlay();
         ov.status = tr("3D viewer failed — see Simulation log");
@@ -2754,7 +2775,7 @@ void MainWindow::refreshFieldOverlay(bool force)
         if (m_fieldChoicesKey == m_fieldNoDumpLoggedKey)
             return;
         m_fieldNoDumpLoggedKey = m_fieldChoicesKey;
-        appendToSimulationLog(
+        fieldLog(
             QByteArray("\n[Field] No field dump found under the current results directory.\n"
                        "  Palace: set settings['fdump'] and re-run.\n"
                        "  OpenEMS: enable field_dumps in the model.\n"
@@ -2802,9 +2823,9 @@ void MainWindow::refreshFieldOverlay(bool force)
     if (script.isEmpty() || !QFileInfo::exists(script)) {
         pending.status = tr("field_slice_export.py not found next to EMStudio (scripts/).");
         m_ui->layoutView->setFieldOverlay(pending);
-        appendToSimulationLog(
+        fieldLog(
             QByteArray("\n[Field] Missing scripts/field_slice_export.py next to EMStudio.exe.\n"
-                       "  Rebuild/copy scripts, or run from a complete install.\n"));
+                       "  Rebuild/copy scripts, or run from a complete install.\n"), true);
         return;
     }
 
@@ -2815,11 +2836,11 @@ void MainWindow::refreshFieldOverlay(bool force)
                 ? tr("No Python interpreter for Field view.")
                 : pyDetail;
         m_ui->layoutView->setFieldOverlay(pending);
-        appendToSimulationLog(
+        fieldLog(
             QByteArray("\n[Field] No host Python found for Field view.\n"
                        "  Set Preferences → Layout Field → FIELD_VIEWER_PYTHON\n"
                        "  to a Windows python.exe, then:\n"
-                       "    pip install pyvista pillow\n"));
+                       "    pip install pyvista pillow\n"), true);
         return;
     }
 
@@ -2897,10 +2918,10 @@ void MainWindow::refreshFieldOverlay(bool force)
         pending = m_ui->layoutView->fieldOverlay();
         pending.status = tr("Failed to start Python:\n%1").arg(python);
         m_ui->layoutView->setFieldOverlay(pending);
-        appendToSimulationLog(
+        fieldLog(
             QByteArray("\n[Field] Failed to start Python:\n  ")
             + python.toUtf8() + "\n"
-            + "  Set FIELD_VIEWER_PYTHON in Preferences to a valid python.exe.\n");
+            + "  Set FIELD_VIEWER_PYTHON in Preferences to a valid python.exe.\n", true);
     }
 }
 
@@ -3137,16 +3158,16 @@ void MainWindow::onFieldExportFinished(int exitCode, QProcess::ExitStatus status
         if (missingPv) {
             pending.status = tr("Need: pip install pyvista pillow\n"
                                 "(set FIELD_VIEWER_PYTHON in Preferences)");
-            appendToSimulationLog(
+            fieldLog(
                 QByteArray("\n[Field] PyVista/Pillow not installed for Field view.\n"
                            "  Python used: see Preferences → FIELD_VIEWER_PYTHON\n"
-                           "  Fix: python -m pip install pyvista pillow\n"));
+                           "  Fix: python -m pip install pyvista pillow\n"), true);
         } else {
             if (msg.size() > 180)
                 msg = msg.right(180);
             pending.status = tr("Field export failed: %1")
                                  .arg(msg.isEmpty() ? tr("(no output)") : msg);
-            appendToSimulationLog(QByteArray("\n[Field] export failed\n") + out + '\n');
+            fieldLog(QByteArray("\n[Field] export failed\n") + out + '\n', true);
         }
         m_ui->layoutView->setFieldOverlay(pending);
         return;
@@ -4516,6 +4537,19 @@ void MainWindow::onLayoutLayerClicked(const QString &name, const QString &kind, 
     if (!looksPort)
         return;
 
+    // Elmer Thermal: select the Thermal table row of the marker's source layer.
+    if (isElmerThermalKey(currentSimToolKey()) && m_tblThermalObjects) {
+        for (int r = 0; r < m_tblThermalObjects->rowCount(); ++r) {
+            const QTableWidgetItem *src = m_tblThermalObjects->item(r, 2);
+            bool ok = false;
+            if (src && src->text().trimmed().toInt(&ok) == gdsLayer && ok) {
+                m_tblThermalObjects->selectRow(r);
+                break;
+            }
+        }
+        return;
+    }
+
     int portNum = -1;
     if (name.startsWith(QLatin1Char('P'))) {
         bool ok = false;
@@ -4723,7 +4757,44 @@ void MainWindow::refreshLayoutPreview()
             return false;
         };
 
-        for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
+        // Elmer Thermal: the markers are heat sources / constant temperatures from the Thermal
+        // table, drawn on the target layer as gds2palace builds them (Ports table not used).
+        const bool thermal = isElmerThermalKey(currentSimToolKey()) && m_tblThermalObjects;
+        for (int r = 0; thermal && r < m_tblThermalObjects->rowCount(); ++r) {
+            auto *typeBox = qobject_cast<QComboBox *>(m_tblThermalObjects->cellWidget(r, 0));
+            const QTableWidgetItem *valueItem = m_tblThermalObjects->item(r, 1);
+            const QTableWidgetItem *srcItem = m_tblThermalObjects->item(r, 2);
+            auto *tgtBox = qobject_cast<QComboBox *>(m_tblThermalObjects->cellWidget(r, 3));
+            bool ok = false;
+            const int gds = srcItem ? srcItem->text().trimmed().toInt(&ok) : -1;
+            if (!ok || gds < 0 || ports.contains(gds))
+                continue;  // gds2palace uses the first object of a source layer
+
+            LayoutView::PortInfo pi;
+            const bool heat = !typeBox || typeBox->currentText() != QLatin1String("consttemp");
+            pi.thermalKind = heat ? QStringLiteral("heatsource") : QStringLiteral("consttemp");
+            const QString value = valueItem ? valueItem->text().trimmed() : QString();
+            if (tgtBox)
+                pi.toLayer = tgtBox->currentText().trimmed();
+            double t0 = 0, t1 = 0;
+            if (!pi.toLayer.isEmpty() && layerZ(pi.toLayer, &t0, &t1)) {
+                pi.toZminUm = std::min(t0, t1);
+                pi.toZmaxUm = std::max(t0, t1);
+                pi.zToUm = 0.5 * (t0 + t1);
+                pi.hasToZ = true;
+                pi.hasToRange = true;
+            }
+            ports.insert(gds, pi);
+
+            LayoutView::LayerStyle tst;
+            tst.name = heat ? tr("Heat %1 W").arg(value) : tr("T %1 K").arg(value);
+            tst.kind = QStringLiteral("port");
+            tst.color = heat ? QColor(230, 60, 30) : QColor(30, 110, 230);
+            tst.order = 10000 + gds;
+            styles.insert(gds, tst);
+        }
+
+        for (int r = 0; !thermal && r < m_ui->tblPorts->rowCount(); ++r) {
             auto *srcBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 3));
             auto *fromBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 4));
             auto *toBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 5));
@@ -4819,16 +4890,6 @@ void MainWindow::refreshLayoutPreview()
             const bool via = pi.direction.contains(QLatin1Char('z'), Qt::CaseInsensitive);
             if (via ? (pi.hasFromRange && pi.hasToRange) : pi.hasToRange)
                 mappedMarkers.insert(it.key());
-        }
-        if (isElmerThermalKey(currentSimToolKey()) && m_tblThermalObjects) {
-            for (int r = 0; r < m_tblThermalObjects->rowCount(); ++r) {
-                const QTableWidgetItem *src = m_tblThermalObjects->item(r, 2);
-                auto *tgt = qobject_cast<QComboBox *>(m_tblThermalObjects->cellWidget(r, 3));
-                bool ok = false;
-                const int gds = src ? src->text().trimmed().toInt(&ok) : -1;
-                if (ok && tgt && !tgt->currentText().trimmed().isEmpty())
-                    mappedMarkers.insert(gds);
-            }
         }
 
         auto addEntry = [&](int gds, const LayoutView::LayerStyle &st, bool used) {
@@ -6197,6 +6258,8 @@ void MainWindow::setupNewModelMenu()
     }
     m_ui->menuFile->insertMenu(m_ui->actionOpen_Python_Model, m_newModelMenu);
     updateNewModelActions();
+    connect(m_ui->menuFile, &QMenu::aboutToShow, this, &MainWindow::updateConvertLooseModelAction);
+    updateConvertLooseModelAction();
 }
 
 /*!*******************************************************************************************************************

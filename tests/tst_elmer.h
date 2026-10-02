@@ -44,6 +44,7 @@ private slots:
     void stackupOverrides_followReadSubstrateArgument();
     void indentedThermalBlockAndCell_keepIndentation();
     void elmerSolverStage_runsSolverWithoutRunElmerScript();
+    void layoutPreview_drawsThermalObjectsNotPorts();
 };
 
 #endif // TST_ELMER_H

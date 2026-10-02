@@ -19,6 +19,8 @@
 #include <QListWidget>
 #include <QSlider>
 #include <QWheelEvent>
+#include <QSignalSpy>
+#include <QShortcut>
 
 #include "mainwindow.h"
 #include "layoutlayerpanel.h"
@@ -1506,4 +1508,134 @@ void MainWindowPortsTest::saveAction_keepsIndentedSweepModel()
         "        settings['Boundaries'] = ['PEC', 'PEC', 'PEC', 'PEC', 'PEC', 'PEC']  # all metal\n")));
     QString err;
     QVERIFY2(compiles(&err), qPrintable(err + QLatin1Char('\n') + rewritten));
+}
+
+namespace {
+/*! Copies the converter test fixture (loose openEMS model + stand-in modules) into \a dir. */
+QString copyLooseFixture(const QTemporaryDir &dir, const QByteArray &append = QByteArray())
+{
+    const QString fixture = QFINDTESTDATA("python/fixtures/convert_loose");
+    if (fixture.isEmpty())
+        return QString();
+    QDir().mkpath(dir.filePath(QStringLiteral("modules")));
+    const QDir mods(fixture + QStringLiteral("/modules"));
+    for (const QString &f : mods.entryList({QStringLiteral("*.py")}, QDir::Files))
+        QFile::copy(mods.filePath(f), dir.filePath(QStringLiteral("modules/") + f));
+    QFile in(fixture + QStringLiteral("/model_loose.py"));
+    if (!in.open(QIODevice::ReadOnly))
+        return QString();
+    const QString model = dir.filePath(QStringLiteral("model_loose.py"));
+    QFile out(model);
+    if (!out.open(QIODevice::WriteOnly))
+        return QString();
+    out.write(in.readAll() + append);
+    return model;
+}
+
+QString testPython()
+{
+    const QString py = QString::fromLocal8Bit(qgetenv("EMSTUDIO_TEST_PYTHON"));
+    return py.isEmpty() ? QStandardPaths::findExecutable(QStringLiteral("python3")) : py;
+}
+
+QByteArray fileBytes(const QString &path)
+{
+    QFile f(path);
+    return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+}
+} // namespace
+
+/*! File → Convert to settings dictionary: verified backup, converted model on disk, reloaded, and
+ *  Add setting works afterwards. */
+void MainWindowPortsTest::convertLooseModel_backsUpConvertsAndReloads()
+{
+    if (testPython().isEmpty())
+        QSKIP("no Python for the converter");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString model = copyLooseFixture(dir);
+    QVERIFY(!model.isEmpty());
+    const QByteArray original = fileBytes(model);
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.testSetPreference(QStringLiteral("Python Path"), testPython());
+    w.loadPythonModel(model);
+    QString why;
+    QVERIFY2(w.testCanConvertLooseModel(&why), qPrintable(why));
+
+    w.testSetConvertAnswer(true, false);
+    QSignalSpy spy(&w, &MainWindow::looseConversionFinished);
+    w.testStartLooseConversion();
+    // Polls with processEvents: an earlier suite's runHeadless() called QCoreApplication::exit,
+    // after which QSignalSpy::wait()'s nested event loop returns at once.
+    QTRY_VERIFY_WITH_TIMEOUT(spy.count() > 0, 30000);
+    const QList<QVariant> args = spy.takeFirst();
+    QVERIFY2(args.at(0).toBool(), qPrintable(args.at(1).toString()));
+
+    const QString backup = args.at(1).toString();
+    QVERIFY(QFileInfo(backup).fileName().startsWith(QStringLiteral("model_loose_backup_")));
+    QCOMPARE(fileBytes(backup), original);
+
+    const QString converted = QString::fromUtf8(fileBytes(model));
+    QVERIFY(converted.contains(QStringLiteral("simulation_setup.setupSimulation(FDTD=FDTD, settings=settings)")));
+    QVERIFY(converted.contains(QStringLiteral("settings['margin'] = 50")));
+    QCOMPARE(w.testEditorText(), converted);
+    QCOMPARE(w.testLastConversionReport().value(QStringLiteral("ok")).toBool(), true);
+
+    // Now a settings[] model: no second conversion, and Add setting writes into the dict.
+    QVERIFY(!w.testCanConvertLooseModel(&why));
+    QVERIFY(why.contains(QStringLiteral("settings dictionary")));
+    QVERIFY(w.testAddSetting(QStringLiteral("numThreads"), QStringLiteral("4")));
+    QVERIFY(w.testEditorText().contains(QStringLiteral("settings['numThreads'] = 4")));
+}
+
+/*! A model the converter refuses stays byte-identical, without a backup. */
+void MainWindowPortsTest::convertLooseModel_refusalLeavesModelUntouched()
+{
+    if (testPython().isEmpty())
+        QSKIP("no Python for the converter");
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString model = copyLooseFixture(dir, "print(sorted(globals()))\n");
+    QVERIFY(!model.isEmpty());
+    const QByteArray original = fileBytes(model);
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.testSetPreference(QStringLiteral("Python Path"), testPython());
+    w.loadPythonModel(model);
+    w.testSetConvertAnswer(true, false);
+    QSignalSpy spy(&w, &MainWindow::looseConversionFinished);
+    w.testStartLooseConversion();
+    // Polls with processEvents: an earlier suite's runHeadless() called QCoreApplication::exit,
+    // after which QSignalSpy::wait()'s nested event loop returns at once.
+    QTRY_VERIFY_WITH_TIMEOUT(spy.count() > 0, 30000);
+    const QList<QVariant> args = spy.takeFirst();
+    QVERIFY(!args.at(0).toBool());
+    QVERIFY2(args.at(1).toString().contains(QStringLiteral("globals")), qPrintable(args.at(1).toString()));
+    QCOMPARE(fileBytes(model), original);
+    QCOMPARE(QDir(dir.path()).entryList({QStringLiteral("*_backup_*")}, QDir::Files).size(), 0);
+}
+
+/*! Fields page messages ("no field dump") go to the Log window, not into the simulation log that is
+ *  saved with the run. */
+void MainWindowPortsTest::fieldsPage_noDumpMessageGoesToLog()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString model = copyLooseFixture(dir);
+    QVERIFY(!model.isEmpty());
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.loadPythonModel(model);
+    QShortcut *fields = nullptr;
+    for (QShortcut *sc : w.findChildren<QShortcut *>())
+        if (sc->key() == QKeySequence(QStringLiteral("Ctrl+7")))
+            fields = sc;
+    QVERIFY(fields);
+    emit fields->activated();
+    QTRY_VERIFY_WITH_TIMEOUT(w.testMainLogText().contains(QStringLiteral("No field dump found")), 5000);
+    QVERIFY(!w.testSimulationLogText().contains(QStringLiteral("[Field]")));
 }

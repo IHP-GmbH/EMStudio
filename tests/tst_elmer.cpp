@@ -14,12 +14,15 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGraphicsItem>
+#include <QGraphicsScene>
 #include <QLineEdit>
 #include <QSignalBlocker>
 #include <QTemporaryDir>
 #include <QTextStream>
 
 #include "mainwindow.h"
+#include "layoutview.h"
 #include "substrate.h"
 #include "pythonparser.h"
 
@@ -1121,4 +1124,48 @@ void ElmerTest::indentedThermalBlockAndCell_keepIndentation()
         "    gds_cellname = \"Old\"\n"
         "    allpolygons = gds_reader.read_gds(f, l, cellname=gds_cellname)\n"), QStringLiteral("palace"));
     QVERIFY2(cellOut.contains(QStringLiteral("\n    gds_cellname = \"NewCell\"\n")), qPrintable(cellOut));
+}
+
+/*!*******************************************************************************************************************
+ * \brief The layout preview of an Elmer Thermal model draws the Thermal table objects (heat source
+ *        volume, constant-temperature faces on the target layers), not EM ports with directions.
+ **********************************************************************************************************************/
+void ElmerTest::layoutPreview_drawsThermalObjectsNotPorts()
+{
+    const QString examples = QDir(repoScriptsDir()).absoluteFilePath(QStringLiteral("../examples/elmer/thermal_simplest"));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const QString &name : {QStringLiteral("simplest_with_source.gds"),
+                                QStringLiteral("SG13_interposer_thermal_typicalvalues.xml"),
+                                QStringLiteral("elmer_thermal_simplest_typicalvalues.py")})
+        QVERIFY(QFile::copy(examples + QLatin1Char('/') + name, dir.filePath(name)));
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.loadPythonModel(dir.filePath(QStringLiteral("elmer_thermal_simplest_typicalvalues.py")));
+    auto *view = w.findChild<LayoutView *>();
+    QVERIFY(view && view->scene());
+    view->setViewMode(LayoutView::ViewMode::Iso3D);
+    // The view mode is persisted; later suites expect the 2D default.
+    struct Restore2d {
+        LayoutView *v;
+        ~Restore2d() { v->setViewMode(LayoutView::ViewMode::Top2D); }
+    } restore2d{view};
+
+    QMap<int, QStringList> tips;  // GDS marker layer -> tooltips of its items
+    for (QGraphicsItem *item : view->scene()->items()) {
+        const int gds = item->data(3).toInt();
+        if (gds == 201 || gds == 202)
+            tips[gds] << item->toolTip();
+    }
+    QVERIFY2(!tips.value(201).isEmpty() && !tips.value(202).isEmpty(), "thermal markers not drawn");
+    const QString heat = tips.value(201).join(QLatin1Char('\n'));
+    const QString temp = tips.value(202).join(QLatin1Char('\n'));
+    QVERIFY2(heat.contains(QStringLiteral("Heat 0.65 W: heat source on GDS 201, volume in TFR")), qPrintable(heat));
+    QVERIFY2(temp.contains(QStringLiteral("T 298 K: constant temperature on GDS 202, faces of BACKSIDEGND")),
+             qPrintable(temp));
+    // No port arrows or port surfaces.
+    QVERIFY2(!heat.contains(QStringLiteral("port")) && !temp.contains(QStringLiteral("port"))
+                 && !heat.contains(QStringLiteral("direction")) && !temp.contains(QStringLiteral("direction")),
+             qPrintable(heat + QLatin1Char('\n') + temp));
 }

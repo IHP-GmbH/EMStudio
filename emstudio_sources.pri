@@ -14,6 +14,7 @@ SOURCES += \
     $$TOP/src/about.cpp \
     $$TOP/src/tips.cpp \
     $$TOP/src/addsettingdialog.cpp \
+    $$TOP/src/convertloosemodel.cpp \
     $$TOP/src/keywordseditor.cpp \
     $$TOP/src/keybindingsdialog.cpp \
     $$TOP/src/navigationstyle.cpp \

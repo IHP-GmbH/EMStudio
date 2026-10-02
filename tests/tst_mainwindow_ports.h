@@ -34,6 +34,9 @@ private slots:
     void settingsGrid_tooltipsCombineModelAndKeywordFile();
     void collectSanityFindings_reportsMissingInputs();
     void layoutPreview_withGoldenGds_populatesLayerPanel();
+    void convertLooseModel_backsUpConvertsAndReloads();
+    void convertLooseModel_refusalLeavesModelUntouched();
+    void fieldsPage_noDumpMessageGoesToLog();
 };
 
 #endif // TST_MAINWINDOW_PORTS_H

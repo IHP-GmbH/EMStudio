@@ -999,5 +999,27 @@ QMap<QString, QString> MainWindow::testMergeTipsPreferModel(const QMap<QString, 
     return mergeTipsPreferModel(modelTips, fallbackTips);
 }
 
+void MainWindow::testSetConvertAnswer(bool accept, bool switchImports, const QString &packageDir)
+{
+    m_testConvertAccept = accept;
+    m_testConvertSwitchImports = switchImports;
+    m_testConverterPackageDir = packageDir;
+}
+
+void MainWindow::testStartLooseConversion()
+{
+    startLooseConversion();
+}
+
+bool MainWindow::testCanConvertLooseModel(QString *why) const
+{
+    return canConvertLooseModel(why);
+}
+
+QJsonObject MainWindow::testLastConversionReport() const
+{
+    return m_testLastConversionReport;
+}
+
 #endif
 

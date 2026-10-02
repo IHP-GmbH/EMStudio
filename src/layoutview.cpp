@@ -857,12 +857,16 @@ void LayoutView::rebuildScene2D(bool refit)
             lineItem->setZValue(double(it.style.order) + 0.25);
 
             const QPointF mid = line.pointAt(0.5);
+            const QString thermalTip = thermalMarkerToolTip(it.poly.layer, it.style.name);
+            lineItem->setToolTip(thermalTip);
 
             // Direction from Ports table: in-plane arrows; Z → inward tip on injection edge.
             QString dir = m_ports.value(it.poly.layer).direction.trimmed().toLower();
             if (dir.isEmpty())
                 dir = QStringLiteral("z");
-            if (dir.contains(QLatin1Char('z'))) {
+            if (!thermalTip.isEmpty()) {
+                // Thermal markers have no direction.
+            } else if (dir.contains(QLatin1Char('z'))) {
                 const QString zl = dir.startsWith(QLatin1Char('-'))
                         ? QStringLiteral("-z") : QStringLiteral("z");
                 addPortInwardArrow(mid, contentCenter, it.style.color, it.style.name,
@@ -947,6 +951,14 @@ void LayoutView::rebuildScene2D(bool refit)
             label->setZValue(double(it.style.order) + 0.5);
             label->setPos(bb.center());
             setPixelOffset(label, 8, -16);
+
+            // Thermal markers (heat source / constant temperature) have no direction.
+            const QString thermalTip = thermalMarkerToolTip(it.poly.layer, it.style.name);
+            if (!thermalTip.isEmpty()) {
+                item->setToolTip(thermalTip);
+                label->setToolTip(thermalTip);
+                continue;
+            }
 
             QString dir = m_ports.value(it.poly.layer).direction.trimmed().toLower();
             if (dir.isEmpty())
@@ -1281,8 +1293,12 @@ void LayoutView::rebuildScene3D(bool refit)
                 ? QStringLiteral("P%1").arg(it.poly.layer - 200)
                 : it.style.name;
 
-        // Translucent sheet (or a line when it has no area) under the arrow.
-        auto addPortSheet = [&](const QPolygonF &scenePoly) {
+        const QString thermalTip = thermalMarkerToolTip(it.poly.layer, pname);
+        const QString sheetTip = thermalTip.isEmpty() ? tr("%1 port surface").arg(pname) : thermalTip;
+
+        // Translucent sheet (or a line when it has no area) under the arrow; \a flatAsLine false
+        // skips surfaces seen edge-on (box walls).
+        auto addPortSheet = [&](const QPolygonF &scenePoly, bool flatAsLine = true) {
             QGraphicsItem *sheet = nullptr;
             QPen pen(col);
             pen.setCosmetic(true);
@@ -1295,6 +1311,8 @@ void LayoutView::rebuildScene3D(bool refit)
             const QRectF sb = scenePoly.boundingRect();
             if (std::abs(area2) < 1e-6 * std::max<qreal>(1e-12, sb.width() * sb.width() + sb.height() * sb.height())) {
                 // Zero-area surface (seen edge-on, or a zero-width line): a thick line.
+                if (!flatAsLine)
+                    return;
                 QPointF a = scenePoly.first(), b = scenePoly.first();
                 qreal best = -1.0;
                 for (const QPointF &p : scenePoly)
@@ -1316,7 +1334,7 @@ void LayoutView::rebuildScene3D(bool refit)
             sheet->setData(kRoleGds, it.poly.layer);
             sheet->setData(kRoleIsPort, true);
             sheet->setData(kRolePen, it.style.color);
-            sheet->setToolTip(tr("%1 port surface").arg(pname));
+            sheet->setToolTip(sheetTip);
             sheet->setVisible(vis);
             sheet->setZValue(1e9 - 0.5);
             portBounds |= scenePoly.boundingRect();
@@ -1325,7 +1343,42 @@ void LayoutView::rebuildScene3D(bool refit)
         QPointF tipScene;
         QPointF labelPos;
 
-        if (dir.contains(QLatin1Char('z'))) {
+        if (!pi.thermalKind.isEmpty()) {
+            // Thermal marker as gds2palace builds it on the target layer: a heat source is a box
+            // over the bounding box from target zmin to zmax, a constant temperature the polygon
+            // at target zmin and zmax. Without a target in the stackup: at the bottom of the layout.
+            qreal z0 = pi.hasToRange ? pi.toZminUm : zLo;
+            qreal z1 = pi.hasToRange ? pi.toZmaxUm : zLo;
+            if (pi.thermalKind == QLatin1String("heatsource")) {
+                if (z1 - z0 < kMinThickUm)
+                    z1 = z0 + kMinThickUm;
+                const QPointF c[4] = {bb.topLeft(), bb.topRight(), bb.bottomRight(), bb.bottomLeft()};
+                auto face = [&](qreal z) {
+                    return QPolygonF({project3D(c[0].x(), c[0].y(), z), project3D(c[1].x(), c[1].y(), z),
+                                      project3D(c[2].x(), c[2].y(), z), project3D(c[3].x(), c[3].y(), z)});
+                };
+                addPortSheet(face((m_pitchDeg < 0.0) ? z1 : z0), false);
+                for (int i = 0; i < 4; ++i) {
+                    const QPointF &a = c[i];
+                    const QPointF &b = c[(i + 1) % 4];
+                    addPortSheet(QPolygonF({project3D(a.x(), a.y(), z0), project3D(b.x(), b.y(), z0),
+                                            project3D(b.x(), b.y(), z1), project3D(a.x(), a.y(), z1)}),
+                                 false);
+                }
+                addPortSheet(face((m_pitchDeg < 0.0) ? z0 : z1));
+            } else {
+                auto flat = [&](qreal z) {
+                    QPolygonF poly;
+                    for (const QPointF &pt : it.poly.pointsUm)
+                        poly << project3D(pt.x(), pt.y(), z);
+                    return poly;
+                };
+                addPortSheet(flat(z0));
+                if (z1 > z0)
+                    addPortSheet(flat(z1));
+            }
+            labelPos = project3D(bb.center().x(), bb.center().y(), z1);
+        } else if (dir.contains(QLatin1Char('z'))) {
             // Via port: vertical sheet from the top of the lower metal to the bottom of the
             // upper one, on the xmin edge (polygon taller in y) or the ymin edge.
             // The arrow points from From to To; -z reverses it (so swapping From/To does too).
@@ -1441,6 +1494,7 @@ void LayoutView::rebuildScene3D(bool refit)
         label->setData(kRolePen, it.style.color);
         label->setVisible(vis);
         label->setZValue(1e9 + 0.1);
+        label->setToolTip(thermalTip);
         label->setPos(labelPos);
         setPixelOffset(label, 8, -16);
         portBounds |= QRectF(labelPos.x() - 2, labelPos.y() - 2, 4, 4);
@@ -3445,6 +3499,25 @@ void LayoutView::emitMeasure()
 qreal LayoutView::opacityFor(int gdsLayer) const
 {
     return m_layerOpacity.value(gdsLayer, defaultFillOpacity()) / defaultFillOpacity();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Tooltip of an Elmer Thermal marker (heat source / constant temperature).
+ *
+ * \param gdsLayer GDS marker layer.
+ * \param name     Marker name shown in the view (e.g. "Heat 0.4 W").
+ * \return Tooltip text, or an empty string for EM ports and other layers.
+ **********************************************************************************************************************/
+QString LayoutView::thermalMarkerToolTip(int gdsLayer, const QString &name) const
+{
+    const PortInfo pi = m_ports.value(gdsLayer);
+    if (pi.thermalKind.isEmpty())
+        return QString();
+    const QString target = pi.toLayer.isEmpty() ? tr("no target layer") : pi.toLayer;
+    const QString where = pi.hasToRange ? target : tr("%1, not in the stackup").arg(target);
+    if (pi.thermalKind == QLatin1String("heatsource"))
+        return tr("%1: heat source on GDS %2, volume in %3").arg(name).arg(gdsLayer).arg(where);
+    return tr("%1: constant temperature on GDS %2, faces of %3").arg(name).arg(gdsLayer).arg(where);
 }
 
 /*!*******************************************************************************************************************

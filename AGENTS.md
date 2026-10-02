@@ -80,6 +80,7 @@ several files by topic. Add a method to the file whose topic it belongs to:
 | runOpenEms.cpp | Run openEMS (one Python process) |
 | runPalace.cpp | Run Palace / Elmer: Python stage, then solver stage; WSL, launcher scripts, MPI cores, simulation log, CSV→Touchstone |
 | elmerThermalUi.cpp | Tool-key helpers, Ports↔Thermal tab switch, thermal objects table ↔ script, opening thermal results in Field view |
+| convertloosemodel.cpp | File → Convert to Settings Dictionary: runs `scripts/convert_loose_to_settings.py`, confirmation dialog, verified backup, replace, reload |
 | headless.cpp | `runHeadless()` for `-run -palace/-openems` |
 | gdsreader.cpp / xmlreader.cpp | GDS cell/layer lists; stackup layer names for the port combos |
 | tips.cpp | Load `keywords/<tool>.csv` (description, topic, default) and `workflow_signatures.csv`; merge with `# @brief` tips from the model |
@@ -222,6 +223,32 @@ Templates for "Generate Default" are `scripts/openems_model.py`,
 `<app>/scripts/`). Template edits change generated scripts and therefore the
 golden tests (§6).
 
+**Loose-variable → settings[] conversion** (File → Convert to Settings Dictionary, openEMS models
+without a settings dict, `canConvertLooseModel`). The work is done by
+`scripts/convert_loose_to_settings.py`, run asynchronously with preference `Python Path`
+(`runLooseConverter`; stdlib only, Python ≥ 3.8):
+- `--report model.py` prints a JSON plan; `--write model.py --out tmp.py [--switch-imports]` writes
+  only to `tmp.py`. EMStudio then copies the model to `<stem>_backup_<yyyyMMdd_HHmmss>.py`, compares
+  the bytes, replaces the model with `QSaveFile` and reloads it.
+- Nothing is guessed from names. A variable becomes `settings['key']` only when proven:
+  - passed to `setupSimulation` / `runSimulation` (the key is the parameter name of the parsed
+    signature) or to `read_gds` / `read_substrate` (keys from `workflow_signatures.csv`);
+  - or used in the workflow's own expressions: `openEMS(EndCriteria=exp(X/10*log(10)))`,
+    `SetGaussExcite((A+B)/2, (B-A)/2)`, `SetBoundaryCond(X)`, `linspace(fstart, fstop, X)`;
+  - `cells_per_wavelength`: the `max_cellsize` formula must equal the one in the workflow's
+    `setupSimulation`. The formula lines are dropped when only `setupSimulation` uses them.
+  - Each converted variable must have exactly one binding: a top-level literal assignment.
+- Workflow calls become `settings[param] = expr` lines plus `f(FDTD=FDTD, settings=settings)`.
+  `name.method(call)` (e.g. `data_paths.append(runSimulation(...))`) is supported.
+- The workflow the call actually uses is parsed (`modules/util_simulation_setup.py`, also via
+  direct `import util_X` through `sys.path`, or the installed `gds2openEMS`). Its settings branch
+  must read every written key, with equivalent defaults.
+- Old `modules/` without `settings=` need `--switch-imports`, which rewrites the imports to the
+  installed package. This is opt-in in the dialog, because the workflow version changes.
+- Proof: the edited text must parse to exactly the AST of the intended transformation (and
+  compile); otherwise the converter refuses and nothing is written. The converted model
+  re-simulates once (runSimulation hashes the script).
+
 ### 3.3 Running simulations
 
 `on_btnRun_clicked()` → sanity check dialog (`collectSanityFindings`,
@@ -255,9 +282,9 @@ sanitycheck.cpp) → `runOpenEMS()` or `runPalace()`. Both save first.
 | Stackup model | substrate, layer, material, dielectric, stackupexpr | Parses and writes the XML stackup. Schema 3.x: Variables with expressions, derived layers, thermal tables. `resolve(overrides)` evaluates expressions. |
 | Stackup cross-section | substrateview | 2.5D stack drawing; clicking a layer highlights it in the layout view |
 | Stackup editor | stackupeditor | Dialog that edits the XML; emits saved → reload |
-| Layout preview | gdslayout (flattening), layoutview, layoutlayerpanel | One `LayoutView` + Layers panel (`m_layoutPaneSplit`) shared by two pages: `placeLayoutPane()` (called from `showTab`) moves it to **Substrate** (top view / Iso3D, Field off) or **Fields** (Field mode on, 2D; 3D opens the Field viewer), keeps Substrate's 2D/3D choice and each page's manual zoom (`LayoutView::viewState`). The view's Field button is hidden; Shift+F emits `fieldPageRequested`. Field mode isn't persisted. The Layers panel lists port / thermal marker layers without stackup layers (no Ports row with From/To or target, no thermal object with a target) as "<name> (not mapped)" (`LayoutLayerPanel::Entry::unmapped`): the preview then draws them at a guessed position. Iso3D: dense scenes are one pre-rendered pixmap, so style changes rebuild the scene (`rebuildIso3dForStyleChange`); the sceneRect is a fixed square around the orbit center so orbiting doesn't move the scrollbars; pitch < 0 draws bottom caps and reverses the stack order. Port marker layers are GDS 201–299 unless the stackup defines that number (e.g. a `SUBGND` sheet on 250: `LayoutView::isPortLayerNumber`). Iso3D ports are drawn as the surface gds2palace builds (in-plane: bounding box at the target metal's bottom; via: vertical sheet on the xmin or ymin edge between the metals); via arrows point From → To, and `-z` reverses them. Via layers follow the model's `merge_polygon_size` (`MainWindow::currentViaMergeSize` → `LayoutView::setViaMergeSize`): > 0 merges them in 2D and 3D exactly like gds2palace's `merge_via_array` (grow spacing/2 + 0.01 µm, unite, shrink; `mergeViaArray`, QRegion on a 1 nm grid), so the preview shows the simulated geometry; 0 shows every via; not set: 2D every via, Iso3D its own display-only merge of dense via layers. A via layer with more drawn polygons than preference `LAYOUT_MAX_VIA_POLYGONS` (default 100, `setMaxViaPolygonsPerLayer`) replaces the 2D / 3D layout with a message label (`denseViaLayers`); a Field heatmap is still drawn. Mouse wheel / drag mapping depends on `NavStyle` (`LayoutView::setNavigationStyle`); keys in `LayoutView::handleViewKey`. |
+| Layout preview | gdslayout (flattening), layoutview, layoutlayerpanel | One `LayoutView` + Layers panel (`m_layoutPaneSplit`) shared by two pages: `placeLayoutPane()` (called from `showTab`) moves it to **Substrate** (top view / Iso3D, Field off) or **Fields** (Field mode on, 2D; 3D opens the Field viewer), keeps Substrate's 2D/3D choice and each page's manual zoom (`LayoutView::viewState`). The view's Field button is hidden; Shift+F emits `fieldPageRequested`. Field mode isn't persisted. The Layers panel lists port / thermal marker layers without stackup layers (no Ports row with From/To or target, no thermal object with a target) as "<name> (not mapped)" (`LayoutLayerPanel::Entry::unmapped`): the preview then draws them at a guessed position. Iso3D: dense scenes are one pre-rendered pixmap, so style changes rebuild the scene (`rebuildIso3dForStyleChange`); the sceneRect is a fixed square around the orbit center so orbiting doesn't move the scrollbars; pitch < 0 draws bottom caps and reverses the stack order. Port marker layers are GDS 201–299 unless the stackup defines that number (e.g. a `SUBGND` sheet on 250: `LayoutView::isPortLayerNumber`). Iso3D ports are drawn as the surface gds2palace builds (in-plane: bounding box at the target metal's bottom; via: vertical sheet on the xmin or ymin edge between the metals); via arrows point From → To, and `-z` reverses them. Elmer Thermal: the markers come from the Thermal table (`PortInfo::thermalKind`, named "Heat … W" / "T … K"), drawn without arrows; in Iso3D a heat source is the bounding box through the target layer and a constant temperature the polygon at the target's zmin and zmax, as gds2palace builds them; clicking one selects its Thermal row. Via layers follow the model's `merge_polygon_size` (`MainWindow::currentViaMergeSize` → `LayoutView::setViaMergeSize`): > 0 merges them in 2D and 3D exactly like gds2palace's `merge_via_array` (grow spacing/2 + 0.01 µm, unite, shrink; `mergeViaArray`, QRegion on a 1 nm grid), so the preview shows the simulated geometry; 0 shows every via; not set: 2D every via, Iso3D its own display-only merge of dense via layers. A via layer with more drawn polygons than preference `LAYOUT_MAX_VIA_POLYGONS` (default 100, `setMaxViaPolygonsPerLayer`) replaces the 2D / 3D layout with a message label (`denseViaLayers`); a Field heatmap is still drawn. Mouse wheel / drag mapping depends on `NavStyle` (`LayoutView::setNavigationStyle`); keys in `LayoutView::handleViewKey`. |
 | Navigation / key bindings | navigationstyle, keybindingsdialog | `NavStyle` EMStudio / setupEM, preference `VIEWER_NAV_STYLE` ("emstudio" / "setupem"). Setup → Key Bindings (`on_actionKeyBindings_triggered`) → `applyNavigationStyle()` sets the Layout preview and sends `{"nav_style": …}` to an open Field 3D viewer; new viewers get `--nav-style`. `NavigationStyle::bindingTable` is the one list of all bindings (dialog and tooltips): **change it together with LayoutView and `scripts/field_viewer.py`**. Window-wide shortcuts: menu actions in mainwindow.ui, F5 / Ctrl+1…7 in `setupGlobalShortcuts()`. |
-| Layout Field | layoutview + mainwindow.cpp `*Field*` methods | All Python, run with host Python `FIELD_VIEWER_PYTHON`. `scripts/field_io.py` is the shared reader: discovery per source (`palace`, `elmer_em`, `elmer_thermal`, `openems` FD `_abs`/`_arg.vtr`), cycle-aware `.pvd` reading, frequency labels, units → µm, derived \|E\| magnitudes, grouped field list. EMStudio lists the run's files with `field_io.py --list` (`refreshFieldChoices` → the Field panel's file/cycle combo). The 2D slice is `field_slice_export.py --source --cycle` (Z-slice PNG plus meta JSON, no arrows; color limits in `_slice_clim`: `--log` spans the slice max down to the slice min, at most 40 dB). Field→3D starts `field_viewer.py --run-path --source --select-file --cycle --stdin-control`, a PySide6/pyvistaqt window ported from setupEM. A second 3D click sends JSON on the viewer's stdin, so the open window reloads / comes to the front. The viewer remaps mouse presses and swallows VTK's own letter keys in `FieldViewerWindow.eventFilter` (`--nav-style`, stdin `nav_style`). Spec: FIELD_VIEWER_SPEC.md (setupEM). |
+| Layout Field | layoutview + mainwindow.cpp `*Field*` methods | All Python, run with host Python `FIELD_VIEWER_PYTHON`. `scripts/field_io.py` is the shared reader: discovery per source (`palace`, `elmer_em`, `elmer_thermal`, `openems` FD `_abs`/`_arg.vtr`), cycle-aware `.pvd` reading, frequency labels, units → µm, derived \|E\| magnitudes, grouped field list. EMStudio lists the run's files with `field_io.py --list` (`refreshFieldChoices` → the Field panel's file/cycle combo). The 2D slice is `field_slice_export.py --source --cycle` (Z-slice PNG plus meta JSON, no arrows; color limits in `_slice_clim`: `--log` spans the slice max down to the slice min, at most 40 dB). Field→3D starts `field_viewer.py --run-path --source --select-file --cycle --stdin-control`, a PySide6/pyvistaqt window ported from setupEM. A second 3D click sends JSON on the viewer's stdin, so the open window reloads / comes to the front. The viewer remaps mouse presses and swallows VTK's own letter keys in `FieldViewerWindow.eventFilter` (`--nav-style`, stdin `nav_style`). Status and error messages of the Fields page and viewers go to the Log window (`fieldLog`), not the simulation log, which holds solver output and is saved with the run. Spec: FIELD_VIEWER_SPEC.md (setupEM). |
 | Results | resultsviewer, touchstone, smithchartwidget, resultscalculator, exprparser | Scans the run folder for `.sNp`; dB/phase/Smith; Compare; RF calculator (`cser($1)`, `ydiff_cser($1,$2)`, …); Model Fit via `snp2le` |
 | Python editor | pythoneditor, pythonsyntaxhighlighter, finddialog | `editRunPythonScript` on the Python tab |
 | Preferences | preferences (+ preferences.ui) | Property-browser dialog over `m_preferences` |
@@ -339,6 +366,13 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   tests/main.cpp points it at a temporary folder, so local test runs never touch
   the user's preferences. Tests that read or write settings must use
   `emstudioSettings()` too.
+- Python tests for the model converter: `python -m pytest tests/python/test_convert_loose.py`
+  (numpy only). `tests/python/fixtures/convert_loose` has a loose model, stand-in workflow
+  `modules/` (same signatures and settings branch as gds2openEMS, recording what they receive)
+  and a fake `openEMS`. Each test runs the original and the converted model and compares the
+  recordings. The Qt tests `MainWindowPortsTest::convertLooseModel_*` use the same fixture. In the
+  test binary, wait with `QTRY_*`, not `QSignalSpy::wait()`: `HeadlessDispatchTest` calls
+  `QCoreApplication::exit`, after which nested event loops return at once.
 - Python tests for the field scripts: `python -m pytest tests/python` (needs
   pyvista; the viewer tests also need PySide6 + pyvistaqt, run with
   `QT_QPA_PLATFORM=offscreen`). They build small synthetic dumps; they are not

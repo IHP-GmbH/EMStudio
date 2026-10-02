@@ -106,6 +106,7 @@ set(SOURCES
     src/tips.cpp
     src/keywordseditor.cpp
     src/addsettingdialog.cpp
+    src/convertloosemodel.cpp
     src/keybindingsdialog.cpp
     src/navigationstyle.cpp
 

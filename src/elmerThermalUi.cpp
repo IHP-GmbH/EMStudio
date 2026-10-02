@@ -65,9 +65,9 @@ void MainWindow::setupThermalObjectsUi()
     // Insert above the ports table so show/hide keeps button row shared.
     m_ui->verticalLayout_6->insertWidget(0, m_tblThermalObjects);
 
-    // A changed source layer maps a marker layer (layers list: "not mapped" note).
+    // Source layer and value change the preview markers (position, "not mapped" note, label).
     connect(m_tblThermalObjects, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
-        if (item && item->column() == 2)
+        if (item && (item->column() == 1 || item->column() == 2))
             refreshLayoutPreview();
     });
 }
@@ -196,13 +196,13 @@ void MainWindow::openThermalResultsInFieldView(const QString &runDir)
 
     const QString vtu = findThermalResultsVtu(dir);
     if (vtu.isEmpty()) {
-        appendToSimulationLog(
+        fieldLog(
             QStringLiteral("\n[Field] No thermal .vtu/.pvtu found under:\n  %1\n"
                            "  Expected thermal_results*.pvtu or thermal_results*.vtu after a successful Elmer Thermal run.\n")
                 .arg(dir.isEmpty() ? QStringLiteral("(empty)") : dir)
                 .toUtf8());
     } else {
-        appendToSimulationLog(
+        fieldLog(
             QStringLiteral("\n[Field] Opening thermal results on the Fields page:\n  %1\n")
                 .arg(vtu)
                 .toUtf8());
@@ -222,7 +222,7 @@ void MainWindow::openThermalResultsInFieldView(const QString &runDir)
     QString pyDetail;
     const QString python = resolveFieldViewerPython(&pyDetail);
     if (!vtu.isEmpty() && !python.isEmpty()) {
-        appendToSimulationLog(
+        fieldLog(
             QByteArray("\n[Field 3D] FIELD_VIEWER_PYTHON available — opening volume viewer after thermal run.\n"));
         QTimer::singleShot(500, this, [this]() {
             if (!m_ui || !m_ui->layoutView || !m_ui->layoutView->isFieldMode())
@@ -252,6 +252,7 @@ void MainWindow::appendThermalObjectRow(const QString &type,
     const int typeIdx = typeBox->findText(type, Qt::MatchFixedString);
     typeBox->setCurrentIndex(typeIdx >= 0 ? typeIdx : 0);
     m_tblThermalObjects->setCellWidget(row, 0, typeBox);
+    connect(typeBox, &QComboBox::currentTextChanged, this, [this]() { refreshLayoutPreview(); });
 
     m_tblThermalObjects->setItem(row, 1, new QTableWidgetItem(QString::number(value, 'g', 12)));
     m_tblThermalObjects->setItem(row, 2, new QTableWidgetItem(QString::number(sourceLayer)));

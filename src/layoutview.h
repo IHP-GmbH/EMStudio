@@ -107,6 +107,7 @@ public:
         double  toZmaxUm = 0.0;
         bool    hasFromRange = false;
         bool    hasToRange = false;
+        QString thermalKind;   //!< Elmer Thermal marker: "heatsource" / "consttemp"; empty for EM ports
     };
 
     /*! Top-down (2D) vs isometric extrusion (3D) preview. */
@@ -330,6 +331,7 @@ private:
     qreal                       opacityFor(int gdsLayer) const;
     bool                        visibleFor(int gdsLayer) const;
     bool                        isPortLayerNumber(int gdsLayer) const;
+    QString                     thermalMarkerToolTip(int gdsLayer, const QString &name) const;
     /*!*******************************************************************************************************************
      * \brief Adds the Field heatmap pixmap under layout polygons (scene Y-down).
      **********************************************************************************************************************/

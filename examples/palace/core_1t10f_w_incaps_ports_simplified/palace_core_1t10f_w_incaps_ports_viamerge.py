@@ -31,10 +31,8 @@ settings['meshsize_max'] = 70.0
 settings['adaptive_mesh_iterations'] = 0
 settings['boundary'] = ['ABC', 'ABC', 'ABC', 'ABC', 'ABC', 'ABC']
 settings['air_around'] = 30.0
-settings['merge_polygon_size'] = 0.0
-settings['order'] = 2
-settings['preview_only'] = False
-settings['no_preview'] = True
+settings['merge_polygon_size'] = 0.7
+
 
 # ===================== port definitions =======================
 simulation_ports = simulation_setup.all_simulation_ports()

@@ -1,7 +1,7 @@
 # Core 1T10F with in-caps / ports (simplified GDS)
 
-Palace model of a multi-port RF core with in-package caps. The GDS is a
-**simplified** layout (via merge / cleanup already applied upstream).
+Palace model of a multi-port RF core with in-package caps. 
+Via array merging was already done upstream.  
 
 ## Files
 

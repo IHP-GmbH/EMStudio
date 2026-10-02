@@ -1,7 +1,7 @@
 # Core 1T10F with in-caps / ports (simplified GDS)
 
-Palace model of a multi-port RF core with in-package caps. The GDS is a
-**simplified** layout (via merge / cleanup already applied upstream).
+Palace model of a multi-port RF core with in-package caps. 
+Via array merging was already done upstream.  
 
 ## Files
 
@@ -11,7 +11,7 @@ Palace model of a multi-port RF core with in-package caps. The GDS is a
 | `core_1t10f_w_incaps_ports_simplified.gds` | Layout + ports |
 | `SG13G2_200um.xml` | Stackup |
 
-Top cell: `core_1t10f_w_incaps`.
+Top cell: `core_1t10f_w_incaps_merged_by_layer`.
 
 Ports: 1–4 via (Metal3→TopMetal2), 5–6 in-plane Metal2 (±X).
 

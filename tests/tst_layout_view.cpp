@@ -9,6 +9,7 @@
 #include "appsettings.h"
 
 #include <QtTest/QtTest>
+#include <QGraphicsOpacityEffect>
 #include <QHash>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -203,10 +204,11 @@ void LayoutViewTest::visibilityOpacity_andClear()
     // Opacity is the true 2D fill opacity; untouched layers use the built-in default.
     QCOMPARE(view.layerOpacity(5), LayoutView::defaultFillOpacity());
 
-    auto fillAlpha = [&view]() {
+    auto fillAlpha = [&view]() {   // the fill (in the layout fill group), not the outline
         for (QGraphicsItem *it : view.scene()->items())
             if (auto *poly = qgraphicsitem_cast<QGraphicsPolygonItem *>(it))
-                return poly->brush().color().alpha();
+                if (poly->parentItem())
+                    return poly->brush().color().alpha();
         return -1;
     };
     QCOMPARE(fillAlpha(), int(LayoutView::defaultFillOpacity() * 255 + 0.5));
@@ -1059,6 +1061,136 @@ void LayoutViewTest::iso3d_stackupLayerInPortRange_isNoPort()
     QVERIFY(faces > 0);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Field view: layout shapes start as outlines in their layer color (fill 0), so stacked layers (thermal
+ *        stacks) don't hide the heatmap; its opacity is separate from the layout view's, and port markers stay
+ *        at full strength.
+ **********************************************************************************************************************/
+void LayoutViewTest::layoutOpacity_fadesStackAsOneImage()
+{
+    LayoutView view;
+    view.resize(400, 300);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+    view.setViewMode(LayoutView::ViewMode::Top2D);
+
+    // 21 stacked layers (like a thermal stack) and a port line.
+    QVector<GdsFlatPolygon> polys;
+    QHash<int, LayoutView::LayerStyle> styles;
+    for (int l = 1; l <= 21; ++l) {
+        polys << makeRect(l, 0, 0, 100, 100);
+        styles.insert(l, style(QStringLiteral("L%1").arg(l), QStringLiteral("conductor"),
+                               QColor::fromHsv((l * 37) % 360, 200, 200), l));
+    }
+    polys << makeRect(201, 20, 20, 20, 60);
+    view.setPolygons(polys, styles);
+    QTest::qWait(20);
+
+    // Fills are children of one faded group; outlines carry the names, have no fill, stay on top.
+    auto fillGroup = [&view]() -> QGraphicsItem * {
+        for (QGraphicsItem *it : view.scene()->items())
+            if (it->data(7).toBool())
+                return it;
+        return nullptr;
+    };
+    QVERIFY(fillGroup());
+    auto *effect = qobject_cast<QGraphicsOpacityEffect *>(fillGroup()->graphicsEffect());
+    QVERIFY(effect);
+    QCOMPARE(fillGroup()->childItems().size(), 21);
+    int outlines = 0;
+    for (QGraphicsItem *it : view.scene()->items())
+        if (auto *p = qgraphicsitem_cast<QGraphicsPolygonItem *>(it))
+            if (!p->parentItem() && p->data(3).toInt() <= 21) {
+                ++outlines;
+                QCOMPARE(p->brush().style(), Qt::NoBrush);
+                QVERIFY(!p->data(0).toString().isEmpty());
+            }
+    QCOMPARE(outlines, 21);
+
+    // The center pixel moves from the background to the stack color in proportion to the slider,
+    // however many layers overlap.
+    auto center = [&view]() {
+        const QImage img = view.viewport()->grab().toImage();
+        return QColor(img.pixel(view.mapFromScene(QPointF(70, -70))));
+    };
+    auto dist = [](const QColor &a, const QColor &b) {
+        return std::abs(a.red() - b.red()) + std::abs(a.green() - b.green()) + std::abs(a.blue() - b.blue());
+    };
+    view.setLayoutOpacity(0.0);
+    QCOMPARE(view.layoutOpacity(), 0.0);
+    const QColor bg = center();
+    view.setLayoutOpacity(1.0);
+    const QColor full = center();
+    const int span = dist(full, bg);
+    QVERIFY2(span > 60, qPrintable(QStringLiteral("span %1").arg(span)));
+    view.setLayoutOpacity(0.5);
+    const qreal half = dist(center(), bg) / qreal(span);
+    QVERIFY2(half > 0.35 && half < 0.65, qPrintable(QString::number(half)));
+    view.setLayoutOpacity(0.2);
+    const qreal fifth = dist(center(), bg) / qreal(span);
+    QVERIFY2(fifth > 0.1 && fifth < 0.3, qPrintable(QString::number(fifth)));
+    // Per-layer values are untouched by the layout opacity.
+    QCOMPARE(view.layerOpacity(3), LayoutView::defaultFillOpacity());
+
+    auto portLine = [&view]() -> QGraphicsLineItem * {
+        for (QGraphicsItem *it : view.scene()->items())
+            if (auto *l = qgraphicsitem_cast<QGraphicsLineItem *>(it))
+                if (l->data(3).toInt() == 201 && l->data(4).toBool())
+                    return l;
+        return nullptr;
+    };
+    auto outlineOf = [&view](int gds) -> QGraphicsPolygonItem * {
+        for (QGraphicsItem *it : view.scene()->items())
+            if (auto *p = qgraphicsitem_cast<QGraphicsPolygonItem *>(it))
+                if (!p->parentItem() && p->data(3).toInt() == gds)
+                    return p;
+        return nullptr;
+    };
+
+    // Field view: own value, starting at 0 (outlines in layer color over the heatmap).
+    view.setFieldMode(true);
+    QVERIFY(view.isFieldMode());
+    QCOMPARE(view.layoutOpacity(), 0.0);
+    QCOMPARE(qobject_cast<QGraphicsOpacityEffect *>(fillGroup()->graphicsEffect())->opacity(), 0.0);
+    QCOMPARE(outlineOf(2)->pen().color().rgb(), styles.value(2).color.rgb());
+    QVERIFY(portLine());
+    QCOMPARE(portLine()->pen().color().alpha(), 255);
+    view.setLayoutOpacity(0.6);
+    QCOMPARE(view.layoutOpacity(), 0.6);
+
+    // Back in the layout view: its own value again.
+    view.setFieldMode(false);
+    QCOMPARE(view.layoutOpacity(), 0.2);
+    QCOMPARE(qobject_cast<QGraphicsOpacityEffect *>(fillGroup()->graphicsEffect())->opacity(), 0.2);
+    QCOMPARE(outlineOf(1)->pen().color().rgb(), QColor(20, 20, 20).rgb());
+
+    // Highlight and restore keep the outline unfilled.
+    view.setHighlightedLayer(QStringLiteral("L5"));
+    QVERIFY(outlineOf(5)->brush().style() != Qt::NoBrush);
+    view.clearHighlight();
+    QCOMPARE(outlineOf(5)->brush().style(), Qt::NoBrush);
+    QCOMPARE(outlineOf(5)->pen().color().rgb(), QColor(20, 20, 20).rgb());
+
+    // Iso3D: the faces are faded by the same value.
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    bool faded = false;
+    for (QGraphicsItem *it : view.scene()->items())
+        if (it->data(7).toBool()) {
+            faded = true;
+            auto *e = qobject_cast<QGraphicsOpacityEffect *>(it->graphicsEffect());
+            QCOMPARE(e ? e->opacity() : it->opacity(), 0.2);
+        }
+    QVERIFY(faded);
+    view.setLayoutOpacity(0.7);
+    for (QGraphicsItem *it : view.scene()->items())
+        if (it->data(7).toBool()) {
+            auto *e = qobject_cast<QGraphicsOpacityEffect *>(it->graphicsEffect());
+            QCOMPARE(e ? e->opacity() : it->opacity(), 0.7);
+        }
+    view.setViewMode(LayoutView::ViewMode::Top2D);
+}
+
 /*! Signed shoelace area sum of one layer's drawn polygons [µm²]. */
 static qreal drawnArea(const LayoutView &view, int layer, int *count = nullptr)
 {
@@ -1225,4 +1357,125 @@ void LayoutViewTest::modeSwitch_showsBothOptionsWithActiveHighlighted()
     QApplication::sendEvent(&view, &key3);
     QVERIFY(b3->isChecked());
     view.setViewMode(LayoutView::ViewMode::Top2D);
+}
+
+void LayoutViewTest::iso3d_thermalMarkersFollowStackOrder()
+{
+    LayoutView view;
+    view.setAttribute(Qt::WA_DontShowOnScreen, true);
+    view.resize(500, 400);
+    view.show();
+    if (view.isFieldMode())
+        view.setFieldMode(false);
+
+    // M1 (z 0..2) and M2 (z 10..12); a constant temperature at z = -5 below the stack and a heat
+    // source in M1. dense = 10 x 10 M1 squares, so the faces are drawn as pixmaps.
+    auto build = [&view](bool dense) {
+        QVector<GdsFlatPolygon> polys;
+        if (dense) {
+            for (int i = 0; i < 10; ++i)
+                for (int j = 0; j < 10; ++j)
+                    polys << makeRect(1, i * 10.0, j * 10.0, i * 10.0 + 6.0, j * 10.0 + 6.0);
+        } else {
+            polys << makeRect(1, 0, 0, 100, 100);
+        }
+        polys << makeRect(2, 0, 0, 100, 100) << makeRect(201, 20, 20, 40, 40)
+              << makeRect(202, -10, -10, 110, 110);
+        QHash<int, LayoutView::LayerStyle> styles;
+        auto m1 = style(QStringLiteral("M1"), QStringLiteral("conductor"), QColor(200, 80, 40), 10);
+        m1.hasZ = true;
+        m1.zminUm = 0.0;
+        m1.zmaxUm = 2.0;
+        auto m2 = style(QStringLiteral("M2"), QStringLiteral("conductor"), QColor(40, 120, 200), 20);
+        m2.hasZ = true;
+        m2.zminUm = 10.0;
+        m2.zmaxUm = 12.0;
+        styles.insert(1, m1);
+        styles.insert(2, m2);
+        styles.insert(201, style(QStringLiteral("Heat 0.1 W"), QStringLiteral("port"), Qt::red, 100));
+        styles.insert(202, style(QStringLiteral("T 300 K"), QStringLiteral("port"), Qt::blue, 101));
+        QHash<int, LayoutView::PortInfo> ports;
+        LayoutView::PortInfo heat;
+        heat.thermalKind = QStringLiteral("heatsource");
+        heat.hasToRange = true;
+        heat.toZminUm = 0.0;
+        heat.toZmaxUm = 2.0;
+        ports.insert(201, heat);
+        LayoutView::PortInfo temp;
+        temp.thermalKind = QStringLiteral("consttemp");
+        temp.hasToRange = true;
+        temp.toZminUm = -5.0;
+        temp.toZmaxUm = -5.0;
+        ports.insert(202, temp);
+        view.setPolygons(polys, styles, ports);
+    };
+
+    // z-value range of the marker surfaces (polygons) of a GDS layer.
+    auto markerZ = [&view](int gds, qreal *lo, qreal *hi) {
+        *lo = 1e300;
+        *hi = -1e300;
+        for (QGraphicsItem *it : view.scene()->items())
+            if (qgraphicsitem_cast<QGraphicsPolygonItem *>(it) && it->data(3).toInt() == gds
+                && it->data(4).toBool()) {
+                *lo = qMin(*lo, it->zValue());
+                *hi = qMax(*hi, it->zValue());
+            }
+        return *lo <= *hi;
+    };
+    auto faceZ = [&view](int gds, qreal *lo, qreal *hi) {
+        *lo = 1e300;
+        *hi = -1e300;
+        for (QGraphicsItem *it : view.scene()->items())
+            if (qgraphicsitem_cast<QGraphicsPolygonItem *>(it) && it->data(3).toInt() == gds
+                && !it->data(4).toBool()) {
+                *lo = qMin(*lo, it->zValue());
+                *hi = qMax(*hi, it->zValue());
+            }
+        return *lo <= *hi;
+    };
+
+    // Individual faces, seen from above: T below M1, heat source over M1 and under M2.
+    build(false);
+    view.setViewMode(LayoutView::ViewMode::Iso3D);
+    QVERIFY(!view.lastIso3dRebuildStats().usedPixmap);
+    qreal tLo, tHi, hLo, hHi, m1Lo, m1Hi, m2Lo, m2Hi;
+    QVERIFY(markerZ(202, &tLo, &tHi));
+    QVERIFY(markerZ(201, &hLo, &hHi));
+    QVERIFY(faceZ(1, &m1Lo, &m1Hi));
+    QVERIFY(faceZ(2, &m2Lo, &m2Hi));
+    QVERIFY(tHi < m1Lo);
+    QVERIFY(hLo > m1Hi);
+    QVERIFY(hHi < m2Lo);
+
+    // From below the stack order reverses: M2 first, then the heat source after M1, T last.
+    sendDrag(view, Qt::LeftButton, Qt::ControlModifier, QPointF(200, 100), QPointF(200, 260));
+    QVERIFY(view.orbitPitchDeg() < 0.0);
+    QVERIFY(markerZ(202, &tLo, &tHi));
+    QVERIFY(markerZ(201, &hLo, &hHi));
+    QVERIFY(faceZ(1, &m1Lo, &m1Hi));
+    QVERIFY(faceZ(2, &m2Lo, &m2Hi));
+    QVERIFY(m2Hi < m1Lo);
+    QVERIFY(hLo > m1Hi);
+    QVERIFY(tLo > hHi);
+
+    // Pixmaps: split at the heat source, so it is drawn between the M1 and M2 pixmaps.
+    sendKey(view, Qt::Key_I);
+    QVERIFY(view.orbitPitchDeg() > 0.0);
+    build(true);
+    QVERIFY(view.lastIso3dRebuildStats().usedPixmap);
+    QVector<qreal> pixZ;
+    for (QGraphicsItem *it : view.scene()->items())
+        if (qgraphicsitem_cast<QGraphicsPixmapItem *>(it))
+            pixZ << it->zValue();
+    std::sort(pixZ.begin(), pixZ.end());
+    QCOMPARE(pixZ.size(), 2);
+    QVERIFY(markerZ(202, &tLo, &tHi));
+    QVERIFY(markerZ(201, &hLo, &hHi));
+    QVERIFY(tHi < pixZ.at(0));
+    QVERIFY(hLo > pixZ.at(0) && hHi < pixZ.at(1));
+
+    // Labels stay on top.
+    for (QGraphicsItem *it : view.scene()->items())
+        if (qgraphicsitem_cast<QGraphicsSimpleTextItem *>(it) && it->data(4).toBool())
+            QVERIFY(it->zValue() >= 1e9);
 }

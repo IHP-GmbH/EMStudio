@@ -458,6 +458,11 @@ private:
     void                            updateExcitationUiForCurrentTool();
     void                            addThermalObjectRow();
     void                            removeSelectedThermalObjectRow();
+    QString                         thermalTargetOf(const QComboBox *box) const;
+    void                            fillThermalTargetCombo(QComboBox *box, const QString &type,
+                                                           const QString &current);
+    void                            markThermalTargetCombo(QComboBox *box);
+    void                            refreshThermalTargetCombos();
     void                            removeAllThermalObjectRows();
     void                            appendThermalObjectRow(const QString &type,
                                                            double value,
@@ -761,6 +766,7 @@ private:
     QStringList                     m_cells;
     QSet<QPair<int, int>>           m_layers;
     QStringList                     m_subLayers;
+    QHash<QString, QString>         m_subLayerTypes;   //!< Stackup layer name -> type (conductor, sheet, via, ...)
 
     QHash<int, QString>             m_gdsToSubName;
     QHash<QString, int>             m_subNameToGds;

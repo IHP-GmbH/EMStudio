@@ -13,6 +13,10 @@
 #include <QListWidget>
 #include <QSignalSpy>
 #include <QSlider>
+#include <QTimer>
+#include <QContextMenuEvent>
+#include <QStyle>
+#include <QStyleOptionViewItem>
 
 #include "layoutlayerpanel.h"
 
@@ -88,22 +92,44 @@ void LayoutLayerPanelTest::layers_filterHighlightOpacityAndContextMenu()
     QVERIFY(actSpy.count() >= 1);
 
     QVERIFY(slider->isEnabled());
-    QCOMPARE(slider->value(), 40); // the layer's own value (set via "All layers")
+    QCOMPARE(slider->value(), 100); // the layer's own fill value; "All layers" is the whole layout
     slider->setValue(55);
     QCOMPARE(opSpy.count(), 1);
     QCOMPARE(opSpy.at(0).at(1).toReal(), 0.55);
     QCOMPARE(allSpy.count(), 0);
 
-    // Esc in the list returns to "All layers"; layers now differ → average, "mixed".
+    // Esc in the list returns to "All layers": the whole-layout opacity again.
     QSignalSpy deactSpy(&panel, &LayoutLayerPanel::layerDeactivated);
     QTest::keyClick(list, Qt::Key_Escape);
     QCOMPARE(deactSpy.count(), 1);
     QCOMPARE(list->currentItem(), list->item(0));
-    QCOMPARE(slider->value(), 48); // (0.55 + 0.40) / 2 over used layers
-    bool mixedShown = false;
-    for (QLabel *l : panel.findChildren<QLabel *>())
-        mixedShown |= l->text().contains(QStringLiteral("mixed"));
-    QVERIFY(mixedShown);
+    QCOMPARE(slider->value(), 40);
+
+    // A right-click (context menu) must not select the row under it: the slider stays on
+    // "All layers".
+    QTest::mousePress(list->viewport(), Qt::RightButton, Qt::NoModifier,
+                      list->visualItemRect(list->item(1)).center());
+    QTest::mouseRelease(list->viewport(), Qt::RightButton, Qt::NoModifier,
+                        list->visualItemRect(list->item(1)).center());
+    QCOMPARE(list->currentItem(), list->item(0));
+    QCOMPARE(slider->value(), 40);
+    // The context menu still opens (closed again by the timer).
+    QSignalSpy menuSpy(list, &QWidget::customContextMenuRequested);
+    QTimer::singleShot(100, []() {
+        if (QWidget *popup = QApplication::activePopupWidget())
+            popup->close();
+    });
+    const QPoint rowPos = list->visualItemRect(list->item(1)).center();
+    QContextMenuEvent menuEvent(QContextMenuEvent::Mouse, rowPos, list->viewport()->mapToGlobal(rowPos));
+    QApplication::sendEvent(list->viewport(), &menuEvent);
+    QCOMPARE(menuSpy.count(), 1);
+    QCOMPARE(list->currentItem(), list->item(0));
+
+    // refreshOpacities (e.g. switch to the Fields page) shows the view's layout opacity.
+    panel.refreshOpacities([](int) { return 0.55; }, 0.0);
+    QCOMPARE(slider->value(), 0);
+    panel.refreshOpacities([](int) { return 0.55; }, 0.4);
+    QCOMPARE(slider->value(), 40);
 
     // Unused layer: opacity slider must stay disabled (nothing to fade in the preview).
     panel.setHighlightedName(QStringLiteral("UnusedMetal"));
@@ -124,10 +150,45 @@ void LayoutLayerPanelTest::layers_filterHighlightOpacityAndContextMenu()
 
     // Context menu "Hide All" / "Show All" call setAllVisible(). (Driving QMenu::exec()
     // itself is unreliable on the offscreen platform: the popup may close at once.)
+    QSignalSpy batchSpy(&panel, &LayoutLayerPanel::layersVisibilityChanged);
     QVERIFY(QMetaObject::invokeMethod(&panel, "setAllVisible", Q_ARG(bool, false)));
+    QCOMPARE(batchSpy.count(), 1);   // one batch, so the view redraws once
+    QCOMPARE(batchSpy.at(0).at(0).value<QVector<int>>().size(), list->count() - 1);
     QCOMPARE(list->item(1)->checkState(), Qt::Unchecked);
-    QCOMPARE(list->item(0)->flags() & Qt::ItemIsUserCheckable, Qt::ItemFlags()); // "All layers" untouched
+    QCOMPARE(list->item(0)->checkState(), Qt::Unchecked); // "All layers" follows: none shown
     QVERIFY(QMetaObject::invokeMethod(&panel, "setAllVisible", Q_ARG(bool, true)));
+    QCOMPARE(list->item(1)->checkState(), Qt::Checked);
+    QCOMPARE(list->item(0)->checkState(), Qt::Checked);
+
+    // "All layers" check box: partly checked when some layers are hidden; checking it shows all,
+    // unchecking it hides all listed layers.
+    QVERIFY(list->item(0)->flags() & Qt::ItemIsUserCheckable);
+    QVERIFY(list->count() > 2);
+    list->item(1)->setCheckState(Qt::Unchecked);
+    QCOMPARE(list->item(0)->checkState(), Qt::PartiallyChecked);
+    batchSpy.clear();
+    list->item(0)->setCheckState(Qt::Checked);   // what a click on a partly checked box does
+    QCOMPARE(list->item(1)->checkState(), Qt::Checked);
+    QCOMPARE(batchSpy.count(), 1);
+    QVERIFY(batchSpy.at(0).at(1).toBool());
+    list->item(0)->setCheckState(Qt::Unchecked);
+    for (int i = 1; i < list->count(); ++i)
+        QCOMPARE(list->item(i)->checkState(), Qt::Unchecked);
+    list->item(0)->setCheckState(Qt::Checked);
+    for (int i = 1; i < list->count(); ++i)
+        QCOMPARE(list->item(i)->checkState(), Qt::Checked);
+
+    // A real click on the partly checked box shows all layers.
+    list->item(1)->setCheckState(Qt::Unchecked);
+    QCOMPARE(list->item(0)->checkState(), Qt::PartiallyChecked);
+    QStyleOptionViewItem opt;
+    opt.initFrom(list);
+    opt.rect = list->visualItemRect(list->item(0));
+    opt.features |= QStyleOptionViewItem::HasCheckIndicator | QStyleOptionViewItem::HasDisplay;
+    opt.text = list->item(0)->text();
+    const QRect box = list->style()->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &opt, list);
+    QTest::mouseClick(list->viewport(), Qt::LeftButton, Qt::NoModifier, box.center());
+    QCOMPARE(list->item(0)->checkState(), Qt::Checked);
     QCOMPARE(list->item(1)->checkState(), Qt::Checked);
 
     panel.clear();

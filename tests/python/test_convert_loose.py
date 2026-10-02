@@ -115,6 +115,15 @@ def test_plain_model_converts_like_recent_settings_models(tmp_path):
     assert "no settings key" in loose["gds_filename"]["reason"]
     assert r["dropped_formula_lines"]
 
+    # Side-by-side rows: every line of each side once, in order; 0 = filler row.
+    rows = r["rows"]
+    assert [x["l"] for x in rows if x["l"]] == list(range(1, len(r["original_lines"]) + 1))
+    assert [x["r"] for x in rows if x["r"]] == list(range(1, len(r["converted_lines"]) + 1))
+    margin = next(x for x in rows if x["r"] and
+                  r["converted_lines"][x["r"] - 1].startswith("settings['margin']"))
+    assert r["original_lines"][margin["l"] - 1].startswith("margin")
+    assert margin["rs"] == [[0, 10], [16, 18]] and margin["ls"] == []   # settings[' and ']
+
     r, out = write(model)
     assert r["ok"], r
     assert model.read_bytes() == before

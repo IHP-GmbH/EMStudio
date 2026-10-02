@@ -15,6 +15,7 @@ SOURCES += \
     $$TOP/src/tips.cpp \
     $$TOP/src/addsettingdialog.cpp \
     $$TOP/src/convertloosemodel.cpp \
+    $$TOP/src/sidebysidediff.cpp \
     $$TOP/src/keywordseditor.cpp \
     $$TOP/src/keybindingsdialog.cpp \
     $$TOP/src/navigationstyle.cpp \
@@ -73,6 +74,7 @@ HEADERS += \
     $$TOP/src/toolautodetect.h \
     $$TOP/src/about.h \
     $$TOP/src/addsettingdialog.h \
+    $$TOP/src/sidebysidediff.h \
     $$TOP/src/keywordseditor.h \
     $$TOP/src/keybindingsdialog.h \
     $$TOP/src/navigationstyle.h \

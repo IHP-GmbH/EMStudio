@@ -1280,6 +1280,33 @@ class Converter:
         compile(new_text, self.model_path, "exec")
 
 
+def side_by_side(old_lines, new_lines):
+    """Aligned rows for a side-by-side view: equal lines share a row, a changed block pads the
+    shorter side with empty rows (l or r = 0). Paired changed lines get the changed character
+    spans ("ls" / "rs", [start, end) in each line) only when most of the original line survives
+    (the conversion mostly wraps names: margin -> settings['margin']); others are marked whole."""
+    rows = []
+    sm = difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False)
+    for tag, i1, i2, j1, j2 in sm.get_opcodes():
+        if tag == "equal":
+            rows.extend({"l": i1 + k + 1, "r": j1 + k + 1} for k in range(i2 - i1))
+            continue
+        for k in range(max(i2 - i1, j2 - j1)):
+            l = i1 + k + 1 if i1 + k < i2 else 0
+            r = j1 + k + 1 if j1 + k < j2 else 0
+            row = {"l": l, "r": r, "c": True}
+            if l and r:
+                a, b = old_lines[l - 1], new_lines[r - 1]
+                chars = difflib.SequenceMatcher(None, a, b, autojunk=False)
+                kept = sum(size for _, _, size in chars.get_matching_blocks())
+                if a.strip() and kept >= 0.7 * len(a):
+                    ops = [op for op in chars.get_opcodes() if op[0] != "equal"]
+                    row["ls"] = [[o[1], o[2]] for o in ops if o[2] > o[1]]
+                    row["rs"] = [[o[3], o[4]] for o in ops if o[4] > o[3]]
+            rows.append(row)
+    return rows
+
+
 def run(args):
     if sys.version_info < (3, 8):
         raise Refused("Python 3.8 or newer is needed (this is %d.%d)" % sys.version_info[:2])
@@ -1303,6 +1330,9 @@ def run(args):
         "calls": conv.calls,
         "dropped_formula_lines": conv.dropped,
         "diff": diff,
+        "original_lines": conv.src.text.splitlines(),
+        "converted_lines": new_text.splitlines(),
+        "rows": side_by_side(conv.src.text.splitlines(), new_text.splitlines()),
     }
     return conv, new_text, report
 

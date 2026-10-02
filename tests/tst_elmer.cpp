@@ -1169,3 +1169,82 @@ void ElmerTest::layoutPreview_drawsThermalObjectsNotPorts()
                  && !heat.contains(QStringLiteral("direction")) && !temp.contains(QStringLiteral("direction")),
              qPrintable(heat + QLatin1Char('\n') + temp));
 }
+
+/*!*******************************************************************************************************************
+ * \brief Thermal target layers are a dropdown of stackup layers: heat sources offer conductors, constant
+ *        temperatures sheets then conductors. A model value that isn't offered stays selected (marked) and
+ *        is written back unchanged.
+ **********************************************************************************************************************/
+void ElmerTest::thermalTargets_offerStackupLayersByType()
+{
+    const QString examples = QDir(repoScriptsDir()).absoluteFilePath(QStringLiteral("../examples/elmer/thermal_simplest"));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    for (const QString &name : {QStringLiteral("simplest_with_source.gds"),
+                                QStringLiteral("SG13_interposer_thermal_typicalvalues.xml")})
+        QVERIFY(QFile::copy(examples + QLatin1Char('/') + name, dir.filePath(name)));
+    QFile in(examples + QStringLiteral("/elmer_thermal_simplest_typicalvalues.py"));
+    QVERIFY(in.open(QIODevice::ReadOnly | QIODevice::Text));
+    QString script = QString::fromUtf8(in.readAll());
+    // A third object whose target is not in the stackup.
+    script.replace(QStringLiteral("thermal_objects.add_consttemp("),
+                   QStringLiteral("thermal_objects.add_heatsource(simulation_setup.heatsource(power=0.1, "
+                                  "source_layernum=203, target_layername='NOPE'))\nthermal_objects.add_consttemp("));
+    const QString model = dir.filePath(QStringLiteral("thermal.py"));
+    {
+        QFile out(model);
+        QVERIFY(out.open(QIODevice::WriteOnly | QIODevice::Text));
+        out.write(script.toUtf8());
+    }
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.loadPythonModel(model);
+    auto *table = w.findChild<QTableWidget *>(QStringLiteral("tblThermalObjects"));
+    QVERIFY(table);
+    QCOMPARE(table->rowCount(), 3);
+    auto typeBox = [table](int r) { return qobject_cast<QComboBox *>(table->cellWidget(r, 0)); };
+    auto targetBox = [table](int r) { return qobject_cast<QComboBox *>(table->cellWidget(r, 3)); };
+    auto offered = [](QComboBox *b) {
+        QStringList names;
+        for (int i = 0; i < b->count(); ++i)
+            if (b->itemData(i, Qt::UserRole + 1).toString() != QLatin1String("invalid"))
+                names << b->itemData(i).toString();
+        return names;
+    };
+    QVERIFY(typeBox(0) && targetBox(0) && targetBox(1) && targetBox(2));
+    QVERIFY(!targetBox(0)->isEditable());
+
+    // Heat source on TFR: conductors only (no vias such as TopVia1, no LBE).
+    QCOMPARE(typeBox(0)->currentText(), QStringLiteral("heatsource"));
+    QCOMPARE(targetBox(0)->currentData().toString(), QStringLiteral("TFR"));
+    const QStringList heat = offered(targetBox(0));
+    QVERIFY(heat.contains(QStringLiteral("TFR")) && heat.contains(QStringLiteral("Metal5")));
+    QVERIFY(!heat.contains(QStringLiteral("TopVia1")) && !heat.contains(QStringLiteral("LBE")));
+
+    // Missing target: kept, marked, written back unchanged.
+    QCOMPARE(targetBox(1)->currentData().toString(), QStringLiteral("NOPE"));
+    QVERIFY(targetBox(1)->currentText().contains(QStringLiteral("not in stackup")));
+    QVERIFY(!targetBox(1)->styleSheet().isEmpty());
+
+    // Constant temperature on BACKSIDEGND (a conductor in this stackup): sheets then conductors.
+    QCOMPARE(typeBox(2)->currentText(), QStringLiteral("consttemp"));
+    QCOMPARE(targetBox(2)->currentData().toString(), QStringLiteral("BACKSIDEGND"));
+    QVERIFY(targetBox(2)->styleSheet().isEmpty());
+
+    const QString code = w.testBuildThermalCodeFromGui();
+    QVERIFY2(code.contains(QStringLiteral("target_layername='TFR'")), qPrintable(code));
+    QVERIFY2(code.contains(QStringLiteral("target_layername='NOPE'")), qPrintable(code));
+    QVERIFY2(code.contains(QStringLiteral("target_layername='BACKSIDEGND'")), qPrintable(code));
+    QVERIFY(!code.contains(QStringLiteral("not in stackup")));
+
+    // Switching the type refills the list and keeps the layer (TFR is a conductor: valid for both).
+    typeBox(0)->setCurrentText(QStringLiteral("consttemp"));
+    QCOMPARE(targetBox(0)->currentData().toString(), QStringLiteral("TFR"));
+    QVERIFY(targetBox(0)->styleSheet().isEmpty());
+
+    // A new row targets the first offered conductor.
+    w.testClickAddThermalObject();
+    QCOMPARE(table->rowCount(), 4);
+    QCOMPARE(targetBox(3)->currentData().toString(), offered(targetBox(3)).first());
+}

@@ -30,25 +30,25 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QFontDatabase>
 #include <QHeaderView>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
 #include <QMessageBox>
-#include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSplitter>
 #include <QTableWidget>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QVBoxLayout>
 
 #include <memory>
 
 #include "mainwindow.h"
+#include "sidebysidediff.h"
 #include "ui_mainwindow.h"
 
 namespace {
@@ -265,7 +265,7 @@ bool MainWindow::showLooseConversionDialog(const QJsonObject &report, bool *swit
 #else
     QDialog dlg(this);
     dlg.setWindowTitle(tr("Convert to settings dictionary"));
-    dlg.resize(980, 720);
+    dlg.resize(1400, 900);
     auto *layout = new QVBoxLayout(&dlg);
 
     auto *intro = new QLabel(&dlg);
@@ -309,14 +309,46 @@ bool MainWindow::showLooseConversionDialog(const QJsonObject &report, bool *swit
         addRow(o.value(QStringLiteral("name")).toString(), tr("stays a variable"),
                o.value(QStringLiteral("line")).toInt(), o.value(QStringLiteral("reason")).toString());
     }
-    auto *diff = new QPlainTextEdit(split);
-    diff->setReadOnly(true);
-    diff->setLineWrapMode(QPlainTextEdit::NoWrap);
-    diff->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    diff->setPlainText(report.value(QStringLiteral("diff")).toString());
+    auto toLines = [](const QJsonValue &v) {
+        QStringList out;
+        for (const QJsonValue &line : v.toArray())
+            out << line.toString();
+        return out;
+    };
+    auto *diff = new SideBySideDiff(split);
+    const QString name = QFileInfo(report.value(QStringLiteral("model")).toString()).fileName();
+    diff->setContent(toLines(report.value(QStringLiteral("original_lines"))),
+                     toLines(report.value(QStringLiteral("converted_lines"))),
+                     SideBySideDiff::rowsFromJson(report.value(QStringLiteral("rows")).toArray()),
+                     tr("Original: %1").arg(name), tr("Converted"));
     split->addWidget(table);
     split->addWidget(diff);
+    split->setStretchFactor(0, 1);
+    split->setStretchFactor(1, 3);
     layout->addWidget(split, 1);
+    // Previous / Next select the variables assigned in the shown change; a table row jumps to its line.
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    connect(diff, &SideBySideDiff::changeShown, table, [table](int, const QVector<int> &lines) {
+        table->clearSelection();
+        bool first = true;
+        for (int r = 0; r < table->rowCount(); ++r) {
+            const QTableWidgetItem *lineItem = table->item(r, 2);
+            if (!lineItem || !lines.contains(lineItem->text().toInt()))
+                continue;
+            table->selectionModel()->select(table->model()->index(r, 0),
+                                            QItemSelectionModel::Select | QItemSelectionModel::Rows);
+            if (first)
+                table->scrollToItem(table->item(r, 0));
+            first = false;
+        }
+    });
+    connect(table, &QTableWidget::cellClicked, diff, [table, diff](int row, int) {
+        if (const QTableWidgetItem *lineItem = table->item(row, 2))
+            diff->goToLeftLine(lineItem->text().toInt());
+    });
+    if (diff->changeCount() > 0)
+        QTimer::singleShot(0, diff, [diff]() { diff->goToChange(0); });
 
     QCheckBox *switchBox = nullptr;
     if (needsSwitch) {

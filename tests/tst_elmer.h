@@ -45,6 +45,7 @@ private slots:
     void indentedThermalBlockAndCell_keepIndentation();
     void elmerSolverStage_runsSolverWithoutRunElmerScript();
     void layoutPreview_drawsThermalObjectsNotPorts();
+    void thermalTargets_offerStackupLayersByType();
 };
 
 #endif // TST_ELMER_H

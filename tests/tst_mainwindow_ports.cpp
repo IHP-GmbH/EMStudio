@@ -840,6 +840,26 @@ void MainWindowPortsTest::layoutPreview_withGoldenGds_populatesLayerPanel()
              && portTexts.contains(QStringLiteral("P2 (not mapped)")),
              qPrintable(portTexts.join(QStringLiteral(" | "))));
 
+    // Order: stack layers from top to bottom, port markers last.
+    panel->setUsedLayersOnly(false);
+    QStringList texts;
+    for (int i = 1; i < panelList->count(); ++i)   // row 0 is "All layers"
+        texts << panelList->item(i)->text();
+    const QStringList topDown = {QStringLiteral("TopMetal2"), QStringLiteral("TopVia2"),
+                                 QStringLiteral("TopMetal1"), QStringLiteral("Metal5"),
+                                 QStringLiteral("Metal3"), QStringLiteral("Metal1")};
+    int prev = -1;
+    for (const QString &name : topDown) {
+        const int idx = texts.indexOf(name);
+        QVERIFY2(idx > prev, qPrintable(texts.join(QStringLiteral(" | "))));
+        prev = idx;
+    }
+    const int firstPort = texts.indexOf(QStringLiteral("P1 (not mapped)"));
+    QVERIFY(firstPort > prev);
+    for (int i = firstPort; i < texts.size(); ++i)
+        QVERIFY2(texts.at(i).startsWith(QLatin1Char('P')), qPrintable(texts.join(QStringLiteral(" | "))));
+    panel->setUsedLayersOnly(true);
+
     QListWidgetItem *item = layerList->item(0);
     layerList->setCurrentItem(item);
     item->setCheckState(Qt::Unchecked);

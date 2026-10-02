@@ -28,6 +28,7 @@ private slots:
     void openFindDialog_createsDialog();
     void zoomAndFontSize_updateEditorFont_and_emitSignal();
     void setPlainTextUndoable_restoresPreviousTextWithUndo();
+    void sideBySideDiff_alignsRowsAndSyncsScrolling();
 };
 
 #endif // TST_PYTHON_EDITOR_H

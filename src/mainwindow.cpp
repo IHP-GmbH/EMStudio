@@ -2360,6 +2360,12 @@ QString MainWindow::resolveFieldViewerPython(QString *detailOut) const
  **********************************************************************************************************************/
 void MainWindow::onLayoutFieldModeChanged(bool on)
 {
+    // Field and layout view keep separate layer opacities (Field: outlines first).
+    if (m_layoutLayerPanel && m_ui->layoutView) {
+        LayoutView *view = m_ui->layoutView;
+        m_layoutLayerPanel->refreshOpacities([view](int gds) { return view->layerOpacity(gds); },
+                                             view->layoutOpacity());
+    }
     if (!on) {
         m_fieldDumpSearchDir.clear();
         stopFieldVolumeServe();
@@ -3812,6 +3818,7 @@ void MainWindow::updateSimulationSettings()
     if(QFileInfo().exists(m_ui->txtSubstrate->text())) {
         m_subLayers = readSubstrateLayers(m_ui->txtSubstrate->text());
         drawSubstrate(m_ui->txtSubstrate->text());
+        refreshThermalTargetCombos();
     }
     updateEditStackupButtonState();
 
@@ -4351,6 +4358,7 @@ void MainWindow::on_txtSubstrate_textChanged(const QString &arg1)
         m_sysSettings["SubstrateDir"]  = fi.absolutePath();
 
         m_subLayers = readSubstrateLayers(arg1);
+        refreshThermalTargetCombos();
 
         drawSubstrate(arg1);
     }
@@ -4502,6 +4510,7 @@ void MainWindow::onStackupEditorSaved(const QString &path)
     m_simSettings[QStringLiteral("SubstrateFile")] = path;
     drawSubstrate(path);
     m_subLayers = readSubstrateLayers(path);
+    refreshThermalTargetCombos();
     setStateChanged();
 }
 
@@ -4774,8 +4783,7 @@ void MainWindow::refreshLayoutPreview()
             const bool heat = !typeBox || typeBox->currentText() != QLatin1String("consttemp");
             pi.thermalKind = heat ? QStringLiteral("heatsource") : QStringLiteral("consttemp");
             const QString value = valueItem ? valueItem->text().trimmed() : QString();
-            if (tgtBox)
-                pi.toLayer = tgtBox->currentText().trimmed();
+            pi.toLayer = thermalTargetOf(tgtBox);
             double t0 = 0, t1 = 0;
             if (!pi.toLayer.isEmpty() && layerZ(pi.toLayer, &t0, &t1)) {
                 pi.toZminUm = std::min(t0, t1);
@@ -4908,13 +4916,30 @@ void MainWindow::refreshLayoutPreview()
             entries.append(e);
         };
 
-        // Stable order: by draw order then name
+        // Stack layers from top to bottom (mid-Z, then top Z), layers without Z after them, port and
+        // thermal markers last in draw order; name breaks ties.
+        auto isMarker = [&](int gds) {
+            return styles.value(gds).kind == QLatin1String("port")
+                    || m_ui->layoutView->isPortLayerNumber(gds);
+        };
         QList<int> keys = styles.keys();
         std::sort(keys.begin(), keys.end(), [&](int a, int b) {
             const auto &sa = styles.value(a);
             const auto &sb = styles.value(b);
-            if (sa.order != sb.order)
+            const int ga = isMarker(a) ? 2 : (sa.hasZ ? 0 : 1);
+            const int gb = isMarker(b) ? 2 : (sb.hasZ ? 0 : 1);
+            if (ga != gb)
+                return ga < gb;
+            if (ga == 0) {
+                const double ma = 0.5 * (sa.zminUm + sa.zmaxUm);
+                const double mb = 0.5 * (sb.zminUm + sb.zmaxUm);
+                if (ma != mb)
+                    return ma > mb;
+                if (sa.zmaxUm != sb.zmaxUm)
+                    return sa.zmaxUm > sb.zmaxUm;
+            } else if (sa.order != sb.order) {
                 return sa.order < sb.order;
+            }
             return sa.name < sb.name;
         });
         for (int gds : keys)
@@ -4935,6 +4960,9 @@ void MainWindow::refreshLayoutPreview()
         }
 
         m_layoutLayerPanel->setLayers(entries);
+        LayoutView *view = m_ui->layoutView;
+        m_layoutLayerPanel->refreshOpacities([view](int gds) { return view->layerOpacity(gds); },
+                                             view->layoutOpacity());
     }
 
     QApplication::restoreOverrideCursor();
@@ -4994,6 +5022,11 @@ void MainWindow::setupLayoutLayerPanel()
                 if (m_ui->layoutView)
                     m_ui->layoutView->setLayerVisible(gds, vis);
             });
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::layersVisibilityChanged,
+            this, [this](const QVector<int> &layers, bool vis) {
+                if (m_ui->layoutView)
+                    m_ui->layoutView->setLayersVisible(layers, vis);
+            });
     connect(m_layoutLayerPanel, &LayoutLayerPanel::opacityChanged,
             this, [this](int gds, qreal op) {
                 if (m_ui->layoutView)
@@ -5008,7 +5041,7 @@ void MainWindow::setupLayoutLayerPanel()
     connect(m_layoutLayerPanel, &LayoutLayerPanel::allOpacityChanged,
             this, [this](qreal op) {
                 if (m_ui->layoutView)
-                    m_ui->layoutView->setAllLayerOpacity(op);
+                    m_ui->layoutView->setLayoutOpacity(op);
             });
     // "All layers" selected in the panel: drop the layer highlight everywhere
     // (LayoutView::highlightCleared also clears the substrate view).

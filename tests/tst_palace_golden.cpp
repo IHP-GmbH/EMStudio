@@ -429,6 +429,70 @@ void PalaceGolden::buildPalaceRunContext_scriptMode_succeeds()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Script mode: Palace appears in the tool combo with only PALACE_RUN_SCRIPT set.
+ *
+ * INSTALL_PATH may stay empty — the launcher owns how palace is invoked.
+ **********************************************************************************************************************/
+void PalaceGolden::refreshSimToolOptions_scriptMode_enablesPalaceWithoutInstallPath()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.show();
+
+    const QString launcherPath = ensureTestPalaceLauncher();
+    QVERIFY2(!launcherPath.isEmpty(), "Palace launcher stub not found via QFINDTESTDATA");
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(launcherPath,
+                          QFile::permissions(launcherPath) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.testSetPreference("PALACE_RUN_MODE", 1);
+    w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
+    w.testSetPreference("PALACE_INSTALL_PATH", QString());
+    w.refreshSimToolOptionsForTests();
+
+    QString terr;
+    QVERIFY2(w.testSetSimToolKey("palace", &terr),
+             qPrintable(QStringLiteral("Script mode shall enable Palace without INSTALL_PATH: %1")
+                            .arg(terr)));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Executable mode: a RUN_SCRIPT alone must not enable Palace when INSTALL_PATH is empty.
+ **********************************************************************************************************************/
+void PalaceGolden::refreshSimToolOptions_executableMode_ignoresRunScriptAlone()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.show();
+
+    const QString launcherPath = ensureTestPalaceLauncher();
+    QVERIFY2(!launcherPath.isEmpty(), "Palace launcher stub not found via QFINDTESTDATA");
+
+#ifndef Q_OS_WIN
+    QFile::setPermissions(launcherPath,
+                          QFile::permissions(launcherPath) |
+                              QFileDevice::ExeUser |
+                              QFileDevice::ExeGroup |
+                              QFileDevice::ExeOther);
+#endif
+
+    w.testSetPreference("PALACE_RUN_MODE", 0); // Executable
+    w.testSetPreference("PALACE_RUN_SCRIPT", launcherPath);
+    w.testSetPreference("PALACE_INSTALL_PATH", QString());
+    w.refreshSimToolOptionsForTests();
+
+    QString terr;
+    QVERIFY2(!w.testSetSimToolKey("palace", &terr),
+             "Executable mode with empty INSTALL_PATH must not enable Palace "
+             "just because RUN_SCRIPT is set");
+}
+
+/*!*******************************************************************************************************************
  * \brief Verifies that detectRunDirFromLog() parses the Palace simulation data directory.
  **********************************************************************************************************************/
 void PalaceGolden::detectRunDirFromLog_parsesSimulationDirectory()

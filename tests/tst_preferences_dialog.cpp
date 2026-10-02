@@ -18,6 +18,7 @@
 #include <QVariant>
 
 #include "preferences.h"
+#include "toolautodetect.h"
 #include "extension/variantmanager.h"
 #include "QtPropertyBrowser/qttreepropertybrowser.h"
 #include "QtPropertyBrowser/qtvariantproperty.h"
@@ -203,4 +204,37 @@ void PreferencesDialogTest::cancel_closes_dialog()
     QMetaObject::invokeMethod(&dlg, "on_btnCancel_clicked", Qt::DirectConnection);
 
     QVERIFY2(!dlg.isVisible(), "Preferences dialog shall be closed after Cancel");
+}
+
+/*!*******************************************************************************************************************
+ * \brief PATH autofill must not invent PALACE_INSTALL_PATH when RUN_MODE is Script.
+ **********************************************************************************************************************/
+void PreferencesDialogTest::fillEmptyPreferences_scriptMode_doesNotFillInstallPath()
+{
+    QMap<QString, QVariant> prefs;
+    prefs.insert(QStringLiteral("PALACE_RUN_MODE"), 1);
+    prefs.insert(QStringLiteral("PALACE_RUN_SCRIPT"),
+                 QStringLiteral("/home/user/run_palace.sh"));
+    QVERIFY(prefs.value(QStringLiteral("PALACE_INSTALL_PATH")).toString().isEmpty());
+
+    ToolAutoDetect::fillEmptyPreferences(prefs);
+
+    QVERIFY2(prefs.value(QStringLiteral("PALACE_INSTALL_PATH")).toString().trimmed().isEmpty(),
+             "Script mode: autofill must leave PALACE_INSTALL_PATH empty");
+}
+
+/*!*******************************************************************************************************************
+ * \brief If PALACE_RUN_SCRIPT is already set, do not autofill INSTALL_PATH (Script workflow).
+ **********************************************************************************************************************/
+void PreferencesDialogTest::fillEmptyPreferences_withRunScriptSet_doesNotFillInstallPath()
+{
+    QMap<QString, QVariant> prefs;
+    prefs.insert(QStringLiteral("PALACE_RUN_MODE"), 0); // Executable enum, but script path present
+    prefs.insert(QStringLiteral("PALACE_RUN_SCRIPT"),
+                 QStringLiteral("/home/user/run_palace.sh"));
+
+    ToolAutoDetect::fillEmptyPreferences(prefs);
+
+    QVERIFY2(prefs.value(QStringLiteral("PALACE_INSTALL_PATH")).toString().trimmed().isEmpty(),
+             "Existing RUN_SCRIPT: autofill must not invent PALACE_INSTALL_PATH");
 }

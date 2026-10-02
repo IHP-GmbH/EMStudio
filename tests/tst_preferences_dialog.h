@@ -23,6 +23,8 @@ private slots:
     void setupPreferencesPanel_initializesValues_and_runModeState();
     void apply_updates_preferences_map();
     void cancel_closes_dialog();
+    void fillEmptyPreferences_scriptMode_doesNotFillInstallPath();
+    void fillEmptyPreferences_withRunScriptSet_doesNotFillInstallPath();
 };
 
 #endif // TST_PREFERENCES_DIALOG_H

@@ -16,6 +16,8 @@ private slots:
     void buildPalaceRunContext_scriptMode_missingLauncherFile_fails();
     void buildPalaceRunContext_nativeMode_missingInstallPath_fails();
     void buildPalaceRunContext_scriptMode_succeeds();
+    void refreshSimToolOptions_scriptMode_enablesPalaceWithoutInstallPath();
+    void refreshSimToolOptions_executableMode_ignoresRunScriptAlone();
 
     void detectRunDirFromLog_parsesSimulationDirectory();
     void guessDefaultPalaceRunDir_returnsExistingPathOnly();

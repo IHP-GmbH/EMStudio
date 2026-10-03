@@ -461,7 +461,10 @@ You can overlay parameters (**S11**, **S21**, …), switch display mode (**dB**,
 zoomed Smith), use **Compare…** to overlay another `.sNp` or run folder, and launch **Model Fit…**
 (`snp2le`) when available. On dB/Phase charts: **click** a curve to select for the calculator;
 **Ctrl+drag** a rectangle, or use the **mouse wheel** / trackpad **pinch** (zoom toward the cursor);
-use **arrow keys** to pan; **Esc** clears curve selection; **F** resets the view. Selected S-parameters and calculator
+use **arrow keys** to pan; **Esc** clears curve selection; **F** resets the view. The Smith chart has a white
+chart area with labelled resistance / reactance circles; **click** near a trace for a marker that
+shows frequency, |Γ| with angle and the impedance Z (using the file's reference impedance), **←/→** step
+through the frequencies (**Shift**: 10 points), **Esc** clears it. Selected S-parameters and calculator
 panel visibility are remembered (QSettings); if a saved parameter is missing in the current run,
 the viewer falls back to **S11** without overwriting that preference.
 

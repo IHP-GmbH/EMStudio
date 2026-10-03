@@ -23,6 +23,7 @@
 
 #include <QColor>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 #include <QWidget>
 
@@ -46,16 +47,28 @@ public:
 
     void setChartTitle(const QString &title);
     void clearTraces();
+    /*! \a freqHz (same length as \a gamma) and \a z0 feed the marker readout (frequency, Z). */
     void addTrace(const QVector<std::complex<double>> &gamma,
                   const QColor &color,
                   Qt::PenStyle style,
-                  const QString &label);
+                  const QString &label,
+                  const QVector<double> &freqHz = {},
+                  double z0 = 50.0);
+
+    /*! Marker on point \a index of trace \a trace (-1: none). */
+    void setMarker(int trace, int index);
+    int markerTrace() const { return m_markerTrace; }
+    int markerIndex() const { return m_markerIndex; }
+    /*! Readout lines of the marker (trace, frequency, |Γ| and angle, Z); empty without a marker. */
+    QStringList markerReadout() const;
 
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
 
 protected:
     void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
 
 private:
     struct Trace {
@@ -63,15 +76,22 @@ private:
         QColor color;
         Qt::PenStyle style;
         QString label;
+        QVector<double> freqHz;
+        double z0 = 50.0;
     };
 
     QPointF toPixel(const QPointF &gamma, const QRectF &plotRect) const;
     void drawGrid(QPainter &p, const QRectF &plotRect) const;
     void drawTraces(QPainter &p, const QRectF &plotRect) const;
+    void drawGridLabels(QPainter &p, const QRectF &plotRect) const;
+    void drawMarker(QPainter &p, const QRectF &plotRect) const;
+    QRectF plotRectForSize() const;
 
     bool m_zoomed = false;
     QString m_title;
     QVector<Trace> m_traces;
+    int m_markerTrace = -1;
+    int m_markerIndex = -1;
 };
 
 #endif // SMITHCHARTWIDGET_H

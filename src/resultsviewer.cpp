@@ -1891,7 +1891,8 @@ void ResultsViewer::drawSmith(const QVector<PlottedTrace> &plotted,
         smith->setChartTitle(QStringLiteral("S%1%2").arg(pk.first).arg(pk.second));
         for (const PlottedTrace &t : plotted) {
             smith->addTrace(t.network->sParam(pk.first - 1, pk.second - 1),
-                            t.color, t.style, t.label);
+                            t.color, t.style, t.label,
+                            t.network->frequencyHz(), t.network->referenceImpedance());
         }
         rowLayout->addWidget(smith, 1);
     }

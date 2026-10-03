@@ -166,7 +166,11 @@ regular expressions. It never regenerates the whole script.
   required) deletes that statement; Reset writes the keyword-file default
   (`writeSettingValueToScript`). Models without a settings dict (loose variables) can't add.
   `inferPalacePropertyInfo()` picks the editor: numbers are always `Double` (for
-  `SciDoubleSpinBox`), plus `Bool` and `String`. Elmer EM `fdump` is a checkbox.
+  `SciDoubleSpinBox`), plus `Bool` and `String`. Elmer EM `fdump` is a checkbox; other tools show it as
+  a list. A tool switch re-types that row (`retypeToolDependentSettings`: grid → editor → grid), the writer
+  turns a checkbox value into a list for every tool (`[settings['fstop']]` / `[]`, nothing written when the
+  script's list already agrees), never writes a bool over a non-bool script value, and the Run check
+  (`collectSanityFindings`, code `fdump_bool`) flags `fdump = True/False` (gds2palace crashes on it).
   Text that looks like code (`foo.bar`, calls) and quoted strings containing `.`
   are hidden (`shouldSkipStringSelfReference`). Edits arrive in
   `onSimulationSettingChanged()` → `m_simSettings`.
@@ -444,7 +448,11 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
    ones too) stay as written (`MainWindowPortsTest::saveAction_keepsIndentedSweepModel`).
 3. **Tool-specific behaviour** (e.g. Elmer EM `fdump` is a checkbox, Palace `fdump`
    is a frequency list) is keyed on `currentSimToolKey()`. Check all four tools
-   when changing shared code.
+   when changing shared code. The tool can change while a model is open, so a grid
+   editor chosen for one tool must not reach the script of another (see `fdump`, §3.2).
+   A user's choice in the tool list (`QComboBox::activated`, not File > New / load) with a
+   model open calls `warnAboutToolSwitch` (Log + dialog): gds2palace tools ↔ each other get
+   their workflow calls patched on Save (`apply*WorkflowToScript`), openEMS is never converted.
 4. **Never start solvers from the script.** `forceStartSimulationOff` sets
    `start_simulation = False`; EMStudio launches solvers itself.
 5. **Tab titles are identifiers** (`m_tabMap`), and so are widget object names in

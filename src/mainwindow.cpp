@@ -345,6 +345,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_ui->cbxSimTool, &QComboBox::currentTextChanged,
             this, &MainWindow::updateBoundaryOptionsForCurrentTool);
+    // Only a choice by the user (not File > New or a model load) warns about switching an open model.
+    connect(m_ui->cbxSimTool, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int) { warnAboutToolSwitch(); });
 
     if (m_sysSettings.contains("PYTHON_EDITOR_FONT_SIZE")) {
         qreal size = m_sysSettings["PYTHON_EDITOR_FONT_SIZE"].toDouble();
@@ -5494,6 +5497,21 @@ QVector<SanityFinding> MainWindow::collectSanityFindings() const
     const QString simKey = currentSimToolKey().toLower();
     const bool thermal = isElmerThermalKey(simKey);
 
+    // --- fdump must be a list (gds2palace crashes on True / False, e.g. from an old Elmer EM checkbox) ---
+    if (simKey == QLatin1String("palace") || isElmerFamilyKey(simKey)) {
+        static const QRegularExpression reBoolFdump(
+            QStringLiteral(R"((?m)^[ \t]*(?:\w+\s*\[\s*['"]fdump['"]\s*\]|fdump)[ \t]*=[ \t]*(True|False)\b)"));
+        const QRegularExpressionMatch m = reBoolFdump.match(m_ui->editRunPythonScript->toPlainText());
+        if (m.hasMatch()) {
+            SanityFinding f;
+            f.severity = SanityFinding::Error;
+            f.code = QStringLiteral("fdump_bool");
+            f.message = tr("fdump is %1, but it must be a list of frequencies, e.g. [] (no field dump) "
+                           "or [settings['fstop']].").arg(m.captured(1));
+            out.append(f);
+        }
+    }
+
     // --- Top cell ---
     const QString top = bestTopCellName().trimmed();
     if (top.isEmpty()) {
@@ -6874,10 +6892,13 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
     if (key.isEmpty())
         return;
 
+    m_simToolBeforeSwitch = normalizeSimToolKey(m_preferences.value("SIMULATION_TOOL_KEY").toString());
     m_preferences["SIMULATION_TOOL_INDEX"] = index;
     m_preferences["SIMULATION_TOOL_KEY"]   = normalizeSimToolKey(key);
 
     refreshKeywordTipsForCurrentTool();
+    // fdump: checkbox for Elmer EM, list of frequencies otherwise.
+    retypeToolDependentSettings();
 
     updateBoundaryOptionsForCurrentTool();
     updateExcitationUiForCurrentTool();

@@ -214,6 +214,8 @@ public:
                                                            int timeoutMs) const;
     void                            testImportPortsFromEditor();
     QVector<SanityFinding>          testCollectSanityFindings() const { return collectSanityFindings(); }
+    /*! Editor type of a settings grid row (QVariant::Bool for a checkbox); Invalid if not in the grid. */
+    int                             testSettingPropertyType(const QString &key) const;
     void                            testRefreshLayoutPreview() { refreshLayoutPreview(); }
     QString                         testPortCellText(int row, int col) const;
     QString                         testPortComboText(int row, int col) const;
@@ -626,6 +628,10 @@ private:
                                                      QString *why) const;
     bool                            removeSettingFromScript(QString &script, const QString &key) const;
     void                            reparseEditorIntoGrid();
+    /*! After a tool switch: re-reads the grid if a tool-dependent row (fdump) has the wrong editor type. */
+    void                            retypeToolDependentSettings();
+    /*! The user picked another tool while a model is open: explain what Save will (not) adapt. */
+    void                            warnAboutToolSwitch();
     bool                            addSetting(const QString &key, const QString &pyValue);
     bool                            writeSettingValueToScript(QString &script, const QString &key,
                                                               const QString &pyValue) const;
@@ -818,6 +824,7 @@ private:
     qreal                           m_fieldLastVolumeClipZUm = 0.0;
     bool                            m_fieldLastVolumeLog = false;
     QString                         m_layoutPreviewKey;
+    QString                         m_simToolBeforeSwitch;   //!< Tool key before the last tool list change
     QString                         m_layoutPreviewPurposes; //!< Datatypes the preview was built with ("0,2")
     QString                         m_fieldDumpSearchDir;
     QVector<FieldChoice>            m_fieldChoices;

@@ -923,6 +923,73 @@ void MainWindow::reparseEditorIntoGrid()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Gives tool-dependent grid rows the editor of the current tool, after a tool switch.
+ *
+ * \c fdump is a checkbox for Elmer EM (any non-empty list dumps every solved frequency) and a list of
+ * frequencies otherwise. The grid isn't rebuilt on a tool switch, so the old editor (and a bool) would
+ * stay. When the row doesn't fit the tool, pending grid edits are written into the editor (the writer
+ * turns a checkbox into a list) and the editor is read back into the grid, like Add setting does.
+ **********************************************************************************************************************/
+void MainWindow::retypeToolDependentSettings()
+{
+    if (!m_variantManager)
+        return;
+    const bool wantCheckbox = isElmerEmKey(currentSimToolKey());
+    bool mismatch = false;
+    forEachSimSettingProperty([&](QtProperty *p) {
+        if (p->propertyName().compare(QLatin1String("fdump"), Qt::CaseInsensitive) != 0)
+            return;
+        QtVariantProperty *vp = m_variantManager->variantProperty(p);
+        if (vp && (vp->propertyType() == QVariant::Bool) != wantCheckbox)
+            mismatch = true;
+    });
+    if (!mismatch || m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty())
+        return;
+    syncGuiSettingsToPythonEditor();
+    reparseEditorIntoGrid();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Warns when the user switches the simulation tool while a model is open (README: switching a
+ *        customized script is not automatic).
+ *
+ * Between the gds2palace tools (Palace, Elmer EM, Elmer Thermal), Save adapts the script's workflow calls
+ * (applyPalaceWorkflowToScript / applyElmerWorkflowToScript / applyElmerThermalWorkflowToScript), but not
+ * the settings. To or from openEMS nothing is converted: the script won't run with the other solver.
+ * The message goes to the Log window and, outside tests, to a dialog.
+ **********************************************************************************************************************/
+void MainWindow::warnAboutToolSwitch()
+{
+    const QString from = m_simToolBeforeSwitch;
+    m_simToolBeforeSwitch.clear();   // picking the same tool again doesn't change it: warn once
+    const QString to = currentSimToolKey();
+    if (from.isEmpty() || from == to || m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty())
+        return;
+
+    auto toolName = [this](const QString &key) {
+        const int idx = m_ui->cbxSimTool->findData(key);
+        return idx >= 0 ? m_ui->cbxSimTool->itemText(idx) : key;
+    };
+    const bool sameWorkflow = (from == QLatin1String("palace") || isElmerFamilyKey(from))
+            && (to == QLatin1String("palace") || isElmerFamilyKey(to));
+    QString msg;
+    if (sameWorkflow) {
+        msg = tr("The open model was set up for %1. On Save, EMStudio adapts its workflow calls to %2, "
+                 "but not its settings: check them before running (for example fdump, solver and "
+                 "boundary settings). To start clean, use File > New > %2.")
+                  .arg(toolName(from), toolName(to));
+    } else {
+        msg = tr("The open model was written for %1 and will not run with %2: the workflows differ and "
+                 "the script is not converted. Use File > New > %2, or open a model written for %2.")
+                  .arg(toolName(from), toolName(to));
+    }
+    info(msg, false);
+#ifndef EMSTUDIO_TESTING
+    QMessageBox::warning(this, tr("Simulation tool changed"), msg);
+#endif
+}
+
+/*!*******************************************************************************************************************
  * \brief Adds \c dict['key'] = value to the model script where it fits by topic, then shows it in the grid.
  *
  * Pending grid edits are written into the editor first, so nothing is lost. Nothing is saved.

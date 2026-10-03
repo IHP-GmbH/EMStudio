@@ -505,6 +505,10 @@ Choose the solver with the **Simulation Tool** combo on the Main tab:
 **OpenEMS | Palace | Elmer EM | Elmer Thermal**.
 Generate a matching default model (or open an existing Python model) for that tool.
 Switching tools for an already customized script is not automatic — start from the matching template or open a model written for that solver.
+If you change the tool while a model is open, EMStudio warns you:
+
+- Between **Palace**, **Elmer EM** and **Elmer Thermal** (all gds2palace): on Save, the script's workflow calls are adapted to the new solver, but its settings are not. Check them before running. For example, `fdump` is a list of frequencies for Palace but an on/off checkbox for Elmer EM; the grid switches its editor, and EMStudio never writes `fdump = True/False` (the Run check reports such a script).
+- To or from **OpenEMS**: the script is not converted and won't run with the other solver. Use **File > New** or open a model written for it.
 
 ---
 

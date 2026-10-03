@@ -47,6 +47,8 @@ private slots:
     void elmerSolverStage_runsSolverWithoutRunElmerScript();
     void layoutPreview_drawsThermalObjectsNotPorts();
     void thermalTargets_offerStackupLayersByType();
+    void fdump_neverWrittenAsBoolAfterToolSwitch();
+    void toolSwitch_warnsOnlyForUserChoiceWithOpenModel();
 };
 
 #endif // TST_ELMER_H

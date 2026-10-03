@@ -1021,5 +1021,22 @@ QJsonObject MainWindow::testLastConversionReport() const
     return m_testLastConversionReport;
 }
 
-#endif
 
+
+/*!*******************************************************************************************************************
+ * \brief Editor type of a settings grid row, for tests.
+ * \param key Setting key.
+ * \return The QVariant type id of the row (QVariant::Bool for a checkbox), or QVariant::Invalid.
+ **********************************************************************************************************************/
+int MainWindow::testSettingPropertyType(const QString &key) const
+{
+    int type = QVariant::Invalid;
+    forEachSimSettingProperty([&](QtProperty *p) {
+        if (p->propertyName() == key)
+            if (QtVariantProperty *vp = m_variantManager->variantProperty(p))
+                type = vp->propertyType();
+    });
+    return type;
+}
+
+#endif

@@ -1316,6 +1316,102 @@ PythonParser::ReadGdsCellRef PythonParser::readGdsCellRef(const QString &script)
 }
 
 /*!*******************************************************************************************************************
+ * \brief Integers of a flat list literal ("[0]", "[0, 2]", "[]"), a Python comment allowed after it.
+ * \param text Literal text.
+ * \param out  Receives the integers.
+ * \return False when \a text isn't such a list.
+ **********************************************************************************************************************/
+bool PythonParser::parseIntList(const QString &text, QSet<int> *out)
+{
+    QString t = text.trimmed();
+    const int hash = t.indexOf(QLatin1Char('#'));
+    if (hash >= 0)
+        t = t.left(hash).trimmed();
+    static const QRegularExpression reList(QStringLiteral(R"(^\[\s*((?:[-+]?\d+\s*,\s*)*(?:[-+]?\d+)?)\s*,?\s*\]$)"));
+    const QRegularExpressionMatch m = reList.match(t);
+    if (!m.hasMatch())
+        return false;
+    QSet<int> values;
+    for (const QString &part : m.captured(1).split(QLatin1Char(','))) {
+        if (part.trimmed().isEmpty())
+            continue;   // trailing comma
+        bool ok = false;
+        const int v = part.trimmed().toInt(&ok);
+        if (!ok)
+            return false;
+        values.insert(v);
+    }
+    if (out)
+        *out = values;
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Finds the GDS datatypes (purposes) the model's first \c read_gds call reads.
+ *
+ * The workflows (gds2palace, gds2openEMS) read only shapes whose datatype is in \c purposelist, the
+ * keyword or third positional argument. Resolved forms: a list literal, a variable with one top-level
+ * list assignment, and \c settings['key'] with one top-level list assignment. Anything else leaves
+ * \c known false (the caller then assumes datatype 0).
+ *
+ * \param script Python script text.
+ * \return The purposes, and where they come from.
+ **********************************************************************************************************************/
+PythonParser::GdsPurposes PythonParser::readGdsPurposes(const QString &script)
+{
+    GdsPurposes res;
+    const QVector<CallSite> calls = findCalls(script, QStringLiteral("read_gds"));
+    if (calls.isEmpty())
+        return res;
+
+    QString text;
+    int positional = 0;
+    for (const CallArg &arg : splitCallArgs(script, calls.first())) {
+        if (arg.keyword == QLatin1String("purposelist") || (arg.keyword.isEmpty() && positional == 2)) {
+            text = arg.text;
+            break;
+        }
+        if (arg.keyword.isEmpty())
+            ++positional;
+    }
+    if (text.isEmpty())
+        return res;
+
+    // The one top-level assignment "<lhs> = <rhs>" of a name or a dict item; empty if not exactly one.
+    auto singleTopLevelRhs = [&script](const QString &lhsPattern) -> QString {
+        const QRegularExpression re(QStringLiteral(R"((?m)^([ \t]*)%1[ \t]*=(?!=)[ \t]*([^\n]*)$)").arg(lhsPattern));
+        QRegularExpressionMatchIterator it = re.globalMatch(script);
+        QString rhs;
+        int count = 0;
+        while (it.hasNext()) {
+            const QRegularExpressionMatch m = it.next();
+            ++count;
+            rhs = m.captured(1).isEmpty() ? m.captured(2) : QString();
+        }
+        return count == 1 ? rhs : QString();
+    };
+
+    static const QRegularExpression reDict(QStringLiteral(R"(^(\w+)\s*\[\s*(['"])(.*?)\2\s*\]$)"));
+    static const QRegularExpression reVar(QStringLiteral(R"(^[A-Za-z_]\w*$)"));
+    QRegularExpressionMatch m;
+    if (parseIntList(text, &res.purposes)) {
+        res.known = true;
+    } else if ((m = reDict.match(text)).hasMatch()) {
+        res.settingsKey = m.captured(3);
+        const QString lhs = QStringLiteral(R"(%1\s*\[\s*['"]%2['"]\s*\])")
+                .arg(QRegularExpression::escape(m.captured(1)), QRegularExpression::escape(res.settingsKey));
+        res.known = parseIntList(singleTopLevelRhs(lhs), &res.purposes);
+    } else if (reVar.match(text).hasMatch()) {
+        res.variable = text;
+        if (hasSingleLiteralAssignment(script, text))
+            res.known = parseIntList(singleTopLevelRhs(QRegularExpression::escape(text)), &res.purposes);
+    }
+    if (!res.known)
+        res.purposes.clear();
+    return res;
+}
+
+/*!*******************************************************************************************************************
  * \brief Try to parse "settings-like" key/value pairs from Palace Python model file.
  *
  * Looks for lines of the form

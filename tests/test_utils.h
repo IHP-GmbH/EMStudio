@@ -3,6 +3,9 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QPoint>
+#include <QVector>
+#include <tuple>
 
 class QRegularExpression;
 
@@ -39,6 +42,21 @@ private:
     QByteArray m_data;
     bool m_existed = false;
 };
+
+/*! Minimal GDSII writer for tests (records, integers, XY, REAL8). */
+namespace GdsTestWriter
+{
+/*! One record: size, record type, data type, payload (strings padded to even length). */
+QByteArray record(quint8 type, quint8 dataType, QByteArray payload = QByteArray());
+QByteArray int16(int v);
+QByteArray int32(qint32 v);
+/*! XY record of the points (database units). */
+QByteArray xy(const QVector<QPoint> &pts);
+/*! GDSII REAL8: excess-64 base-16 exponent, 56-bit mantissa. */
+QByteArray real8(double v);
+/*! A library with one structure \a cell holding \a boundaries (layer, datatype, points), 1 nm units. */
+QByteArray library(const QString &cell, const QVector<std::tuple<int, int, QVector<QPoint>>> &boundaries);
+}
 
 /*! Path of the Palace Python stub (tools/palace_python_stub.{sh,cmd}), made executable on Unix. */
 QString palacePythonStub();

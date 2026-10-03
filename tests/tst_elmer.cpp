@@ -20,6 +20,7 @@
 #include <QSignalBlocker>
 #include <QTemporaryDir>
 #include <QTextStream>
+#include <QTextEdit>
 
 #include "mainwindow.h"
 #include "layoutview.h"
@@ -786,6 +787,49 @@ void ElmerTest::loadModel_selectsSettingsCellnameAndKeepsItOnSave()
     QCOMPARE(cbx->currentText(), QStringLiteral("HeatSpreader01B_M"));
 }
 
+/*!*******************************************************************************************************************
+ * \brief The purposelist of read_gds is resolved from a literal, a settings key or a variable, as keyword
+ *        or third positional argument; anything else stays unknown (the preview then shows all).
+ **********************************************************************************************************************/
+void ElmerTest::readGdsPurposes_resolvesPurposelist()
+{
+    using P = PythonParser::GdsPurposes;
+    P p = PythonParser::readGdsPurposes(QStringLiteral(
+        "allpolygons = gds_reader.read_gds(gds_filename, layernumbers, purposelist=[0], metals_list=m)\n"));
+    QVERIFY(p.known);
+    QCOMPARE(p.purposes, QSet<int>({0}));
+
+    // Template style: settings['purpose'] with a trailing comment; multi-line call.
+    p = PythonParser::readGdsPurposes(QStringLiteral(
+        "settings['purpose'] = [0, 2] # Which GDSII data type is evaluated?\n"
+        "allpolygons = gds_reader.read_gds(settings['GdsFile'],\n"
+        "    layernumbers,\n"
+        "    purposelist=settings['purpose'])\n"));
+    QVERIFY(p.known);
+    QCOMPARE(p.settingsKey, QStringLiteral("purpose"));
+    QCOMPARE(p.purposes, QSet<int>({0, 2}));
+
+    // Positional (third argument) variable.
+    p = PythonParser::readGdsPurposes(QStringLiteral(
+        "purpose = [28]\nallpolygons = gds_reader.read_gds(f, layers, purpose, metals_list=m)\n"));
+    QVERIFY(p.known);
+    QCOMPARE(p.variable, QStringLiteral("purpose"));
+    QCOMPARE(p.purposes, QSet<int>({28}));
+
+    // Not resolvable: reassigned variable, computed list, no argument, no call.
+    QVERIFY(!PythonParser::readGdsPurposes(QStringLiteral(
+        "purpose = [0]\npurpose = [2]\nx = read_gds(f, l, purposelist=purpose)\n")).known);
+    QVERIFY(!PythonParser::readGdsPurposes(QStringLiteral(
+        "x = read_gds(f, l, purposelist=list(range(3)))\n")).known);
+    QVERIFY(!PythonParser::readGdsPurposes(QStringLiteral("x = read_gds(f, l)\n")).known);
+    QVERIFY(!PythonParser::readGdsPurposes(QStringLiteral("settings['purpose'] = [0]\n")).known);
+
+    QSet<int> list;
+    QVERIFY(PythonParser::parseIntList(QStringLiteral(" [ 0 , 2, ] "), &list));
+    QCOMPARE(list, QSet<int>({0, 2}));
+    QVERIFY(!PythonParser::parseIntList(QStringLiteral("[0.5]"), &list));
+}
+
 void ElmerTest::readGdsCellRef_findsTheCellArgument()
 {
     using Ref = PythonParser::ReadGdsCellRef;
@@ -1247,4 +1291,133 @@ void ElmerTest::thermalTargets_offerStackupLayersByType()
     w.testClickAddThermalObject();
     QCOMPARE(table->rowCount(), 4);
     QCOMPARE(targetBox(3)->currentData().toString(), offered(targetBox(3)).first());
+}
+
+/*!*******************************************************************************************************************
+ * \brief fdump is a checkbox for Elmer EM and a list otherwise. A tool switch re-types the grid row, and Save
+ *        never writes fdump = True / False (gds2palace crashed on it after Elmer EM → Palace).
+ **********************************************************************************************************************/
+void ElmerTest::fdump_neverWrittenAsBoolAfterToolSwitch()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QString err;
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("fdump_model.py"));
+
+    auto saved = [&path]() {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly | QIODevice::Text) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+    auto fdumpLine = [&saved]() {
+        const QRegularExpressionMatch m =
+            QRegularExpression(QStringLiteral(R"((?m)^settings\['fdump'\]\s*=\s*([^#\n]*))")).match(saved());
+        return m.hasMatch() ? m.captured(1).trimmed() : QString();
+    };
+
+    // Elmer EM template: fdump = [] is an unchecked checkbox.
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("elmer_em"), &err), qPrintable(err));
+    QVERIFY(w.testInitDefaultElmerEmModel());
+    w.testSetRunPythonScriptLinePath(path);
+    w.testTriggerSave();
+    QCOMPARE(fdumpLine(), QStringLiteral("[]"));
+    QCOMPARE(w.testSettingPropertyType(QStringLiteral("fdump")), int(QVariant::Bool));
+
+    // Switch to Palace: the row becomes a list, Save keeps [] (wrote False before).
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QCOMPARE(w.testSettingPropertyType(QStringLiteral("fdump")), int(QVariant::String));
+    w.testTriggerSave();
+    QCOMPARE(fdumpLine(), QStringLiteral("[]"));
+
+    // Checked under Elmer EM, then switched to Palace: a list, never True.
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("elmer_em"), &err), qPrintable(err));
+    QCOMPARE(w.testSettingPropertyType(QStringLiteral("fdump")), int(QVariant::Bool));
+    w.testSetSimSetting(QStringLiteral("fdump"), true);
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QCOMPARE(w.testSettingPropertyType(QStringLiteral("fdump")), int(QVariant::String));
+    w.testTriggerSave();
+    QCOMPARE(fdumpLine(), QStringLiteral("[settings['fstop']]"));
+
+    // Writer alone (a bool left in the settings under Palace): still a list.
+    w.testSetSimSetting(QStringLiteral("fdump"), false);
+    w.testTriggerSave();
+    QCOMPARE(fdumpLine(), QStringLiteral("[]"));
+    w.testSetSimSetting(QStringLiteral("fdump"), true);
+    w.testTriggerSave();
+    QCOMPARE(fdumpLine(), QStringLiteral("[settings['fstop']]"));
+
+    // Palace list → Elmer EM: a checked checkbox; an untouched checkbox keeps the list as written.
+    w.testSetSimSetting(QStringLiteral("fdump"), QStringLiteral("[2e9, 5e9]"));
+    w.testTriggerSave();
+    QCOMPARE(fdumpLine(), QStringLiteral("[2e9, 5e9]"));
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("elmer_em"), &err), qPrintable(err));
+    QCOMPARE(w.testSettingPropertyType(QStringLiteral("fdump")), int(QVariant::Bool));
+    w.testTriggerSave();
+    QCOMPARE(fdumpLine(), QStringLiteral("[2e9, 5e9]"));
+    w.testSetSimSetting(QStringLiteral("fdump"), false);
+    w.testTriggerSave();
+    QCOMPARE(fdumpLine(), QStringLiteral("[]"));
+
+    // A checkbox value never replaces a list of another setting.
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QVERIFY(saved().contains(QStringLiteral("settings['fpoint']")));
+    const QString fpointBefore =
+        QRegularExpression(QStringLiteral(R"((?m)^settings\['fpoint'\].*$)")).match(saved()).captured(0);
+    w.testSetSimSetting(QStringLiteral("fpoint"), true);
+    w.testTriggerSave();
+    QCOMPARE(QRegularExpression(QStringLiteral(R"((?m)^settings\['fpoint'\].*$)")).match(saved()).captured(0),
+             fpointBefore);
+
+    // Run check: a script that already has fdump = True is flagged.
+    w.testSetEditorText(w.testEditorText().replace(QRegularExpression(QStringLiteral(R"(settings\['fdump'\]\s*=\s*\[\])")),
+                                                   QStringLiteral("settings['fdump'] = True")));
+    QVERIFY(w.testEditorText().contains(QStringLiteral("settings['fdump'] = True")));
+    bool flagged = false;
+    for (const SanityFinding &f : w.testCollectSanityFindings())
+        flagged |= f.code == QLatin1String("fdump_bool") && f.severity == SanityFinding::Error;
+    QVERIFY(flagged);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Choosing another tool in the list with a model open warns in the Log: between the gds2palace tools
+ *        the workflow calls are adapted on Save (settings are not), to / from openEMS nothing is converted.
+ *        Programmatic switches (File > New, model load, tests) and an empty editor don't warn.
+ **********************************************************************************************************************/
+void ElmerTest::toolSwitch_warnsOnlyForUserChoiceWithOpenModel()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    auto *combo = w.findChild<QComboBox *>(QStringLiteral("cbxSimTool"));
+    auto *log = w.findChild<QTextEdit *>(QStringLiteral("txtLog"));
+    QVERIFY(combo && log);
+    QString err;
+
+    auto choose = [combo](const QString &key) {   // what a click in the list does
+        const int idx = combo->findData(key);
+        combo->setCurrentIndex(idx);
+        emit combo->activated(idx);
+    };
+    auto logCount = [log](const QString &text) { return log->toPlainText().count(text); };
+
+    // Empty editor: no warning.
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    w.testSetEditorText(QString());
+    choose(QStringLiteral("elmer_em"));
+    QCOMPARE(logCount(QStringLiteral("The open model")), 0);
+
+    // Palace model → Elmer EM: same workflow family, settings not adapted.
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QVERIFY(w.testInitDefaultPalaceModel());
+    choose(QStringLiteral("elmer_em"));
+    QCOMPARE(logCount(QStringLiteral("adapts its workflow calls")), 1);
+
+    // → openEMS: not converted at all.
+    choose(QStringLiteral("openems"));
+    QCOMPARE(logCount(QStringLiteral("will not run with")), 1);
+
+    // Picking the current tool again, or a programmatic switch: nothing new.
+    choose(QStringLiteral("openems"));
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QCOMPARE(logCount(QStringLiteral("The open model")), 2);
 }

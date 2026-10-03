@@ -345,6 +345,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_ui->cbxSimTool, &QComboBox::currentTextChanged,
             this, &MainWindow::updateBoundaryOptionsForCurrentTool);
+    // Only a choice by the user (not File > New or a model load) warns about switching an open model.
+    connect(m_ui->cbxSimTool, QOverload<int>::of(&QComboBox::activated),
+            this, [this](int) { warnAboutToolSwitch(); });
 
     if (m_sysSettings.contains("PYTHON_EDITOR_FONT_SIZE")) {
         qreal size = m_sysSettings["PYTHON_EDITOR_FONT_SIZE"].toDouble();
@@ -3606,6 +3609,9 @@ void MainWindow::onSimulationSettingChanged(QtProperty* property, const QVariant
         // The preview shows vias merged like the workflow does.
         if (settingKeyword(name) == QLatin1String("merge_polygon_size") && m_ui->layoutView)
             m_ui->layoutView->setViaMergeSize(currentViaMergeSize());
+        // ... and only the GDS datatypes it reads.
+        if (settingKeyword(name) == QLatin1String("purpose"))
+            refreshLayoutPreview();
     }
 
     updateBoundaryTooltipsForCurrentTool();
@@ -4674,6 +4680,13 @@ void MainWindow::refreshLayoutPreview()
     }
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
+    // The workflows read only the datatypes in read_gds(purposelist=...); hide the others.
+    const QSet<int> purposes = currentGdsPurposes();
+    m_layoutPreviewPurposes = currentGdsPurposesKey();
+    polys.erase(std::remove_if(polys.begin(), polys.end(),
+                               [&purposes](const GdsFlatPolygon &p) { return !purposes.contains(p.datatype); }),
+                polys.end());
+
     // Model load always uses Top2D first — Iso3D is slow on via-dense GDS; user can switch after.
     if (m_ui->layoutView->isView3d())
         m_ui->layoutView->setViewMode(LayoutView::ViewMode::Top2D);
@@ -5483,6 +5496,21 @@ QVector<SanityFinding> MainWindow::collectSanityFindings() const
 
     const QString simKey = currentSimToolKey().toLower();
     const bool thermal = isElmerThermalKey(simKey);
+
+    // --- fdump must be a list (gds2palace crashes on True / False, e.g. from an old Elmer EM checkbox) ---
+    if (simKey == QLatin1String("palace") || isElmerFamilyKey(simKey)) {
+        static const QRegularExpression reBoolFdump(
+            QStringLiteral(R"((?m)^[ \t]*(?:\w+\s*\[\s*['"]fdump['"]\s*\]|fdump)[ \t]*=[ \t]*(True|False)\b)"));
+        const QRegularExpressionMatch m = reBoolFdump.match(m_ui->editRunPythonScript->toPlainText());
+        if (m.hasMatch()) {
+            SanityFinding f;
+            f.severity = SanityFinding::Error;
+            f.code = QStringLiteral("fdump_bool");
+            f.message = tr("fdump is %1, but it must be a list of frequencies, e.g. [] (no field dump) "
+                           "or [settings['fstop']].").arg(m.captured(1));
+            out.append(f);
+        }
+    }
 
     // --- Top cell ---
     const QString top = bestTopCellName().trimmed();
@@ -6422,8 +6450,9 @@ void MainWindow::newModel(const QString &simKey)
     // No file yet: Save asks for a location instead of overwriting the previous model.
     m_ui->txtRunPythonScript->clear();
     m_simSettings.remove(QStringLiteral("RunPythonScript"));
-    // A new model starts without the previous model's GDS, stackup and ports.
+    // A new model starts without the previous model's GDS, stackup, ports and simulation log.
     clearModelInputs();
+    clearSimulationLog(false);
 
     if (!generateDefaultModelScript(false))
         return;
@@ -6863,10 +6892,13 @@ void MainWindow::on_cbxSimTool_currentIndexChanged(int index)
     if (key.isEmpty())
         return;
 
+    m_simToolBeforeSwitch = normalizeSimToolKey(m_preferences.value("SIMULATION_TOOL_KEY").toString());
     m_preferences["SIMULATION_TOOL_INDEX"] = index;
     m_preferences["SIMULATION_TOOL_KEY"]   = normalizeSimToolKey(key);
 
     refreshKeywordTipsForCurrentTool();
+    // fdump: checkbox for Elmer EM, list of frequencies otherwise.
+    retypeToolDependentSettings();
 
     updateBoundaryOptionsForCurrentTool();
     updateExcitationUiForCurrentTool();
@@ -7052,6 +7084,8 @@ void MainWindow::loadPythonModel(const QString &fileName)
     m_ui->tblPorts->setRowCount(0);
     importPortsFromEditor();
     updateSubLayerNamesAutoCheck();
+    // The GDS was set before the editor held this script: rebuild with its datatypes (purposelist).
+    refreshLayoutPreviewIfPurposesChanged();
 
     if (!res.simPath.isEmpty())
     {

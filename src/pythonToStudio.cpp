@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include <QMenu>
+#include <algorithm>
 #include <QFile>
 #include <QDebug>
 #include <QAction>
@@ -161,6 +162,8 @@ bool MainWindow::applyPythonScriptFromEditor()
     setLineEditPalette(m_ui->txtRunPythonScript, filePath);
 
     updateSimulationSettings();
+    // The script may now read other GDS datatypes (purposelist).
+    refreshLayoutPreviewIfPurposesChanged();
 
     return true;
 }
@@ -324,6 +327,48 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
     updateAddSettingAvailability();
 
     updateBoundaryTooltipsForCurrentTool();
+}
+
+/*!*******************************************************************************************************************
+ * \brief The GDS datatypes (purposes) the model's read_gds call reads, for the layout preview.
+ *
+ * The workflows ignore shapes on other datatypes, so the preview hides them too. The purposelist
+ * argument is resolved from the script (PythonParser::readGdsPurposes); when it names a setting or a
+ * loose variable, the grid's current value wins. When it can't be determined (no read_gds call, a
+ * computed list), datatype 0 is assumed, as in the templates.
+ *
+ * \return The datatypes.
+ **********************************************************************************************************************/
+QSet<int> MainWindow::currentGdsPurposes() const
+{
+    const PythonParser::GdsPurposes ref =
+            PythonParser::readGdsPurposes(m_ui->editRunPythonScript->toPlainText());
+    const QString key = !ref.settingsKey.isEmpty() ? ref.settingsKey : ref.variable;
+    if (!key.isEmpty() && m_simSettings.contains(key)) {
+        QSet<int> fromGrid;
+        if (PythonParser::parseIntList(m_simSettings.value(key).toString(), &fromGrid))
+            return fromGrid;
+    }
+    return ref.known ? ref.purposes : QSet<int>({0});
+}
+
+/*!*******************************************************************************************************************
+ * \brief currentGdsPurposes() as text ("0,2"), to see whether the preview is stale.
+ **********************************************************************************************************************/
+QString MainWindow::currentGdsPurposesKey() const
+{
+    QList<int> sorted = currentGdsPurposes().values();
+    std::sort(sorted.begin(), sorted.end());
+    QStringList parts;
+    for (int p : sorted)
+        parts << QString::number(p);
+    return parts.join(QLatin1Char(','));
+}
+
+void MainWindow::refreshLayoutPreviewIfPurposesChanged()
+{
+    if (!m_layoutPreviewKey.isEmpty() && currentGdsPurposesKey() != m_layoutPreviewPurposes)
+        refreshLayoutPreview();
 }
 
 /*!*******************************************************************************************************************
@@ -875,6 +920,73 @@ void MainWindow::reparseEditorIntoGrid()
     m_curPythonData = res;
     rebuildSimulationSettingsFromPalace(res.settings, mergeTipsPreferModel(res.settingTips, m_keywordTips),
                                         res.topLevel);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Gives tool-dependent grid rows the editor of the current tool, after a tool switch.
+ *
+ * \c fdump is a checkbox for Elmer EM (any non-empty list dumps every solved frequency) and a list of
+ * frequencies otherwise. The grid isn't rebuilt on a tool switch, so the old editor (and a bool) would
+ * stay. When the row doesn't fit the tool, pending grid edits are written into the editor (the writer
+ * turns a checkbox into a list) and the editor is read back into the grid, like Add setting does.
+ **********************************************************************************************************************/
+void MainWindow::retypeToolDependentSettings()
+{
+    if (!m_variantManager)
+        return;
+    const bool wantCheckbox = isElmerEmKey(currentSimToolKey());
+    bool mismatch = false;
+    forEachSimSettingProperty([&](QtProperty *p) {
+        if (p->propertyName().compare(QLatin1String("fdump"), Qt::CaseInsensitive) != 0)
+            return;
+        QtVariantProperty *vp = m_variantManager->variantProperty(p);
+        if (vp && (vp->propertyType() == QVariant::Bool) != wantCheckbox)
+            mismatch = true;
+    });
+    if (!mismatch || m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty())
+        return;
+    syncGuiSettingsToPythonEditor();
+    reparseEditorIntoGrid();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Warns when the user switches the simulation tool while a model is open (README: switching a
+ *        customized script is not automatic).
+ *
+ * Between the gds2palace tools (Palace, Elmer EM, Elmer Thermal), Save adapts the script's workflow calls
+ * (applyPalaceWorkflowToScript / applyElmerWorkflowToScript / applyElmerThermalWorkflowToScript), but not
+ * the settings. To or from openEMS nothing is converted: the script won't run with the other solver.
+ * The message goes to the Log window and, outside tests, to a dialog.
+ **********************************************************************************************************************/
+void MainWindow::warnAboutToolSwitch()
+{
+    const QString from = m_simToolBeforeSwitch;
+    m_simToolBeforeSwitch.clear();   // picking the same tool again doesn't change it: warn once
+    const QString to = currentSimToolKey();
+    if (from.isEmpty() || from == to || m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty())
+        return;
+
+    auto toolName = [this](const QString &key) {
+        const int idx = m_ui->cbxSimTool->findData(key);
+        return idx >= 0 ? m_ui->cbxSimTool->itemText(idx) : key;
+    };
+    const bool sameWorkflow = (from == QLatin1String("palace") || isElmerFamilyKey(from))
+            && (to == QLatin1String("palace") || isElmerFamilyKey(to));
+    QString msg;
+    if (sameWorkflow) {
+        msg = tr("The open model was set up for %1. On Save, EMStudio adapts its workflow calls to %2, "
+                 "but not its settings: check them before running (for example fdump, solver and "
+                 "boundary settings). To start clean, use File > New > %2.")
+                  .arg(toolName(from), toolName(to));
+    } else {
+        msg = tr("The open model was written for %1 and will not run with %2: the workflows differ and "
+                 "the script is not converted. Use File > New > %2, or open a model written for %2.")
+                  .arg(toolName(from), toolName(to));
+    }
+    info(msg, false);
+#ifndef EMSTUDIO_TESTING
+    QMessageBox::warning(this, tr("Simulation tool changed"), msg);
+#endif
 }
 
 /*!*******************************************************************************************************************

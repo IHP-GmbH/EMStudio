@@ -214,6 +214,8 @@ public:
                                                            int timeoutMs) const;
     void                            testImportPortsFromEditor();
     QVector<SanityFinding>          testCollectSanityFindings() const { return collectSanityFindings(); }
+    /*! Editor type of a settings grid row (QVariant::Bool for a checkbox); Invalid if not in the grid. */
+    int                             testSettingPropertyType(const QString &key) const;
     void                            testRefreshLayoutPreview() { refreshLayoutPreview(); }
     QString                         testPortCellText(int row, int col) const;
     QString                         testPortComboText(int row, int col) const;
@@ -589,6 +591,11 @@ private:
     QMap<QString, QString>          loadKeywordTipsCsv(const QString& simKeyLower) const;
     QString                         settingKeyword(const QString &key) const;
     qreal                           currentViaMergeSize() const;
+    /*! GDS datatypes the model's read_gds reads (purposelist); {0} when unknown. */
+    QSet<int>                       currentGdsPurposes() const;
+    QString                         currentGdsPurposesKey() const;
+    /*! Rebuilds the layout preview if the model now reads other GDS datatypes than it was built with. */
+    void                            refreshLayoutPreviewIfPurposesChanged();
     void                            applyLayoutPreviewPreferences();
     /*! File → New (one entry per tool) and the default-template helper behind it. */
     void                            setupNewModelMenu();
@@ -621,6 +628,10 @@ private:
                                                      QString *why) const;
     bool                            removeSettingFromScript(QString &script, const QString &key) const;
     void                            reparseEditorIntoGrid();
+    /*! After a tool switch: re-reads the grid if a tool-dependent row (fdump) has the wrong editor type. */
+    void                            retypeToolDependentSettings();
+    /*! The user picked another tool while a model is open: explain what Save will (not) adapt. */
+    void                            warnAboutToolSwitch();
     bool                            addSetting(const QString &key, const QString &pyValue);
     bool                            writeSettingValueToScript(QString &script, const QString &key,
                                                               const QString &pyValue) const;
@@ -813,6 +824,8 @@ private:
     qreal                           m_fieldLastVolumeClipZUm = 0.0;
     bool                            m_fieldLastVolumeLog = false;
     QString                         m_layoutPreviewKey;
+    QString                         m_simToolBeforeSwitch;   //!< Tool key before the last tool list change
+    QString                         m_layoutPreviewPurposes; //!< Datatypes the preview was built with ("0,2")
     QString                         m_fieldDumpSearchDir;
     QVector<FieldChoice>            m_fieldChoices;
     int                             m_fieldChoiceIndex = 0;

@@ -38,6 +38,7 @@ private slots:
     void thermalWorkflow_keepsSingleElmerThermalFlag();
     void loadModel_selectsSettingsCellnameAndKeepsItOnSave();
     void readGdsCellRef_findsTheCellArgument();
+    void readGdsPurposes_resolvesPurposelist();
     void applyTopCell_writesOnlyTheReadGdsVariable();
     void loadModel_withoutCellSelectsGdsTopCell();
     void loadModel_findsMissingInputFilesNextToModel();
@@ -46,6 +47,8 @@ private slots:
     void elmerSolverStage_runsSolverWithoutRunElmerScript();
     void layoutPreview_drawsThermalObjectsNotPorts();
     void thermalTargets_offerStackupLayersByType();
+    void fdump_neverWrittenAsBoolAfterToolSwitch();
+    void toolSwitch_warnsOnlyForUserChoiceWithOpenModel();
 };
 
 #endif // TST_ELMER_H

@@ -416,12 +416,24 @@ void MainWindow::applyOneSettingToScript(QString &script,
 
     const auto mode = itMode.value();
 
+    Q_UNUSED(simKeyLower);
+    const QVariant inScript = m_curPythonData.settings.contains(key)
+            ? m_curPythonData.settings.value(key)
+            : m_curPythonData.topLevel.value(key);
+
     QString pyValue;
-    // Elmer EM: checkbox → non-empty fdump list reusing an already-solved frequency
-    // (dumps every solved frequency; same codegen as setupEM).
+    // fdump is always a list of frequencies. The Elmer EM grid shows it as a checkbox (a bool), which
+    // becomes a non-empty list reusing an already-solved frequency (dumps every solved frequency; same
+    // codegen as setupEM). Converted whatever the tool is now: after a switch from Elmer EM the bool
+    // may still be in the grid, and gds2palace crashes on fdump = True / False.
     if (key.compare(QLatin1String("fdump"), Qt::CaseInsensitive) == 0
-        && isElmerEmKey(simKeyLower)
         && val.type() == QVariant::Bool) {
+        const QString current = inScript.toString().trimmed();
+        const bool scriptEnabled = !current.isEmpty() && current != QLatin1String("[]")
+                && current != QLatin1String("None")
+                && current.compare(QLatin1String("False"), Qt::CaseInsensitive) != 0;
+        if (inScript.isValid() && inScript.type() != QVariant::Bool && scriptEnabled == val.toBool())
+            return;   // the script's own list already says the same
         if (val.toBool()) {
             if (m_simSettings.contains(QStringLiteral("fstop")))
                 pyValue = QStringLiteral("[settings['fstop']]");
@@ -436,9 +448,6 @@ void MainWindow::applyOneSettingToScript(QString &script,
         // Text cells (lists, expressions, string literals) used to be skipped,
         // so edits were lost when Save re-read the script. Unchanged cells are
         // left alone to keep the script's own formatting.
-        const QVariant inScript = m_curPythonData.settings.contains(key)
-                ? m_curPythonData.settings.value(key)
-                : m_curPythonData.topLevel.value(key);
         if (val.toString().trimmed() == inScript.toString().trimmed())
             return;
         if (!textSettingToPython(key, val.toString(),
@@ -447,10 +456,14 @@ void MainWindow::applyOneSettingToScript(QString &script,
     } else {
         // Numbers and True/False: unchanged values keep the script's own spelling (1e9 stays
         // 1e9, not 1000000000), so Save doesn't rewrite lines the user didn't touch.
-        const QVariant inScript = m_curPythonData.settings.contains(key)
-                ? m_curPythonData.settings.value(key)
-                : m_curPythonData.topLevel.value(key);
         if (inScript.isValid()) {
+            // A checkbox never replaces a list, expression or string (e.g. a grid row whose editor
+            // type no longer matches the script).
+            if (val.type() == QVariant::Bool && inScript.type() != QVariant::Bool) {
+                info(tr("Not written: %1 is not True/False in the script (%2), but the grid holds a "
+                        "checkbox value.").arg(key, inScript.toString()), false);
+                return;
+            }
             if (val.type() == QVariant::Bool || inScript.type() == QVariant::Bool) {
                 if (val.type() == inScript.type() && val.toBool() == inScript.toBool())
                     return;

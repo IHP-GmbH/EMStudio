@@ -284,8 +284,8 @@ int fillEmptyPreferences(QMap<QString, QVariant> &prefs)
     setIfEmpty(prefs, QStringLiteral("FIELD_VIEWER_PYTHON"), hostPy, &n);
 
     const QString distro = prefs.value(QStringLiteral("WSL_DISTRO")).toString().trimmed();
-    const QString wslPy = findWslPython(distro);
-    setIfEmpty(prefs, QStringLiteral("PALACE_PYTHON"), wslPy.isEmpty() ? hostPy : wslPy, &n);
+    // Palace runs the model inside WSL: never fall back to the Windows host Python.
+    setIfEmpty(prefs, QStringLiteral("PALACE_PYTHON"), findWslPython(distro), &n);
 #else
     setIfEmpty(prefs, QStringLiteral("Python Path"), hostPy, &n);
     setIfEmpty(prefs, QStringLiteral("PALACE_PYTHON"), hostPy, &n);

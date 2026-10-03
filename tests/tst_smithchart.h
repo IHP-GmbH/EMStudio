@@ -17,7 +17,9 @@ class SmithChartTest : public QObject
 private slots:
     void paintsEmptyAndWithTraces();
     void zoomToggle_repaints();
-    void multiPointTrace_isStrokedNotFilled(); // regression #24
+    void multiPointTrace_isStrokedNotFilled();
+    void chartArea_isWhiteOnWindowBackground();
+    void labelsLegendAndMarker(); // regression #24
 };
 
 #endif // TST_SMITHCHART_H

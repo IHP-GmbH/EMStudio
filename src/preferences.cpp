@@ -247,10 +247,12 @@ void Preferences::setupPreferencesPanel()
     QtVariantProperty *pythonWslPathProp =
         m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("PALACE_PYTHON"));
     pythonWslPathProp->setWhatsThis("file");
-    pythonWslPathProp->setToolTip(tr("Path to the Python executable inside WSL used for Palace workflows.\n"
-                                     "Example:\n"
-                                     "  - /usr/bin/python3\n\n"
-                                     "This is typically needed when EMStudio runs Palace inside WSL."));
+    pythonWslPathProp->setToolTip(tr("Python that runs Palace models (gds2palace must be installed there).\n"
+                                     "On Windows the model runs inside WSL, so this must be a Linux path\n"
+                                     "inside the WSL distribution, not a Windows python.exe.\n"
+                                     "Examples:\n"
+                                     "  - /home/<user>/venv/palace/bin/python\n"
+                                     "  - /usr/bin/python3"));
     pythonWslPathProp->setValue(m_preferences.value(QStringLiteral("PALACE_PYTHON"), QString()));
     palaceGroup->addSubProperty(pythonWslPathProp);
 

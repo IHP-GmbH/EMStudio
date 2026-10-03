@@ -722,7 +722,8 @@ void MainWindow::applyBoundaries(QString &script, bool alsoTopLevelAssignment)
 /*!*******************************************************************************************************************
  * \brief Converts a native file path to the path form expected inside the Python script.
  *
- * On Windows, when using Palace with WSL available, converts paths to WSL format.
+ * On Windows, when using Palace with WSL available, converts paths to WSL format. Elmer runs the
+ * script with a Windows Python and keeps Windows paths.
  * On non-Windows platforms, returns the input as-is.
  *
  * \param nativePath  Native OS path.
@@ -735,7 +736,8 @@ void MainWindow::applyBoundaries(QString &script, bool alsoTopLevelAssignment)
 QString MainWindow::makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const
 {
 #ifdef Q_OS_WIN
-    if (simKeyLower == QLatin1String("palace") || isElmerFamilyKey(simKeyLower)) {
+    // Only Palace runs the model inside WSL; Elmer runs it with a Windows Python (ELMER_PYTHON).
+    if (simKeyLower == QLatin1String("palace")) {
         if (isWslAvailable())
             return toWslPath(nativePath);
     }
@@ -881,6 +883,24 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
             return a.canonicalFilePath() == b.canonicalFilePath();
         return QDir::cleanPath(a.absoluteFilePath()) == QDir::cleanPath(b.absoluteFilePath());
     };
+    // Can the solver's Python open the path as written? On Windows an absolute path must have the
+    // form makeScriptPathForPython() writes: /mnt/<drive>/... for Palace in WSL, <drive>:/... for a
+    // Windows Python (Elmer). Relative paths work in both.
+    auto usableForm = [&](const QString &scriptValue, const QString &value) -> bool {
+#ifdef Q_OS_WIN
+        static const QRegularExpression reWsl(QStringLiteral(R"(^/mnt/[a-zA-Z]/)"));
+        static const QRegularExpression reWin(QStringLiteral(R"(^[a-zA-Z]:[/\\])"));
+        const QString s = scriptValue.trimmed();
+        if (s.contains(reWsl))
+            return value.contains(reWsl);
+        if (s.contains(reWin))
+            return value.contains(reWin);
+#else
+        Q_UNUSED(scriptValue);
+        Q_UNUSED(value);
+#endif
+        return true;
+    };
     // <lhs> = "path"  # comment : value replaced (comment kept) unless it is the same file.
     auto replacePath = [&](const QString &lhsPattern, const QString &guiPath, const QString &value) {
         const QRegularExpression re(
@@ -893,7 +913,8 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
             const QRegularExpressionMatch quoted =
                 QRegularExpression(QStringLiteral(R"(^(['"])(.*)\1$)")).match(m.captured(2).trimmed());
             out += script.mid(last, m.capturedStart() - last);
-            out += (quoted.hasMatch() && sameFile(quoted.captured(2), guiPath))
+            out += (quoted.hasMatch() && sameFile(quoted.captured(2), guiPath)
+                    && usableForm(quoted.captured(2), value))
                     ? m.captured(0)
                     : m.captured(1) + QStringLiteral("\"%1\"").arg(value) + m.captured(3);
             last = m.capturedEnd();

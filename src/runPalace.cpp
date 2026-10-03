@@ -294,6 +294,19 @@ bool MainWindow::buildPalaceRunContext(PalaceRunContext &ctx, QString &outError)
         ctx.pythonCmd = m_preferences.value("PALACE_PYTHON").toString().trimmed();
         if (ctx.pythonCmd.isEmpty())
             ctx.pythonCmd = QStringLiteral("python3");
+
+        // The model runs inside WSL: a Windows interpreter can't be started there by its path,
+        // and it couldn't open the /mnt/... paths written into the script either.
+        static const QRegularExpression reWinPython(
+            QStringLiteral(R"(^[a-zA-Z]:[/\\]|\\|\.exe$)"), QRegularExpression::CaseInsensitiveOption);
+        if (ctx.pythonCmd.contains(reWinPython)) {
+            outError = QStringLiteral(
+                "PALACE_PYTHON is a Windows path (%1), but Palace runs the model inside WSL (%2). "
+                "Set PALACE_PYTHON in Preferences to a Python inside the WSL distribution that has "
+                "gds2palace installed, e.g. /home/<user>/venv/palace/bin/python.")
+                           .arg(ctx.pythonCmd, ctx.distro);
+            return false;
+        }
     } else {
         const QString solverPath =
             m_preferences.value(QStringLiteral("ELMER_SOLVER_PATH")).toString().trimmed();
@@ -384,9 +397,13 @@ void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
     }
 
     if (ctx.runMode == 1 && ctx.useWsl) {
+        // A Linux launcher path (/home/...) is shown as written, not with backslashes.
+        const bool linuxStyle = ctx.launcherWin.startsWith(QLatin1Char('/')) ||
+                                ctx.launcherWin.startsWith(QLatin1Char('~'));
         appendToSimulationLog(
             QString("[Launcher script: %1]\n")
-                .arg(QDir::toNativeSeparators(ctx.launcherWin)).toUtf8());
+                .arg(linuxStyle ? ctx.launcherWin : QDir::toNativeSeparators(ctx.launcherWin))
+                .toUtf8());
     }
 }
 

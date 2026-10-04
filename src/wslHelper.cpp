@@ -1,5 +1,6 @@
 #include <QDir>
 #include <QDebug>
+#include <QTimer>
 #include <QProcess>
 #include <QFileInfo>
 #include <QStandardPaths>
@@ -426,6 +427,127 @@ bool MainWindow::pathIsExecutablePortable(const QString &path, const QString &di
     return QFileInfo(path).isExecutable();
 #endif
 }
+
+#ifdef Q_OS_WIN
+
+/*!*******************************************************************************************************************
+ * \brief Returns the result of the asynchronous WSL executable check of \p base + \p suffix.
+ *
+ * Results come from startWslToolProbe() and stay cached until refreshSimToolOptions().
+ * Without wsl.exe the answer is No.
+ *
+ * \param base    Path inside WSL ("/..." or "~...") or a Windows path (converted with wslpath inside WSL).
+ * \param suffix  Relative path appended to the converted \p base (e.g. "bin/palace"), or empty.
+ * \param pending Receives the probe item when it hasn't been checked yet.
+ * \return Yes / No / NoAnswer from the probe, or Unknown while it is pending.
+ **********************************************************************************************************************/
+MainWindow::WslCheck MainWindow::wslExecutableCheck(const QString &base, const QString &suffix,
+                                                    QStringList &pending) const
+{
+    if (!isWslAvailable())
+        return WslCheck::No;
+
+    const QString item = base + QLatin1Char('\n') + suffix;
+    const WslCheck c = m_wslExecChecks.value(item, WslCheck::Unknown);
+    if (c == WslCheck::Unknown && !pending.contains(item))
+        pending << item;
+    return c;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Checks WSL paths for executability with one asynchronous wsl.exe call.
+ *
+ * Runs a bash script fed through stdin (no command-line quoting through wsl.exe) that prints
+ * "@EMSTUDIO <index> 1|0" per item. A cold WSL start can take many seconds, so the call doesn't block the
+ * UI; after 60 s it is killed. Items without an answer are stored as NoAnswer. When done, the results
+ * go into \c m_wslExecChecks and rebuildSimToolCombo() runs again.
+ *
+ * \param items  Probe items from wslExecutableCheck() ("base\nsuffix").
+ * \param distro WSL distribution, or empty for the default one.
+ **********************************************************************************************************************/
+void MainWindow::startWslToolProbe(const QStringList &items, const QString &distro)
+{
+    stopWslToolProbe();
+    m_wslProbeDistro = distro;
+
+    // Linux paths are tested as they are; Windows paths are converted with wslpath first.
+    QString script = QStringLiteral(
+        "t() {\n"
+        "  b=$1\n"
+        "  case \"$b\" in\n"
+        "    /*|\"~\"*) ;;\n"
+        "    *) b=$(wslpath -a \"$b\" 2>/dev/null) || b= ;;\n"
+        "  esac\n"
+        "  if [ -n \"$b\" ] && [ -n \"$2\" ]; then b=\"${b%/}/$2\"; fi\n"
+        "  if [ -n \"$b\" ] && test -x \"$b\"; then echo \"@EMSTUDIO $3 1\"; else echo \"@EMSTUDIO $3 0\"; fi\n"
+        "}\n");
+    for (int i = 0; i < items.size(); ++i) {
+        const QString base   = items[i].section(QLatin1Char('\n'), 0, 0);
+        const QString suffix = items[i].section(QLatin1Char('\n'), 1);
+        const bool isLinux   = base.startsWith('/') || base.startsWith('~');
+        script += QStringLiteral("t ") + shellQuoteSingle(isLinux ? base : QDir::toNativeSeparators(base))
+                + QLatin1Char(' ') + shellQuoteSingle(suffix)
+                + QLatin1Char(' ') + QString::number(i) + QLatin1Char('\n');
+    }
+
+    QStringList args;
+    if (!distro.isEmpty())
+        args << QStringLiteral("-d") << distro;
+    args << QStringLiteral("--") << QStringLiteral("bash") << QStringLiteral("-s");
+
+    auto *p = new QProcess(this);
+    m_wslProbeProcess = p;
+
+    const auto done = [this, p, items](const QString &out) {
+        if (m_wslProbeProcess != p)
+            return;
+        m_wslProbeProcess = nullptr;
+        p->deleteLater();
+
+        for (const QString &item : items)
+            m_wslExecChecks[item] = WslCheck::NoAnswer;
+        const QStringList lines = out.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        for (const QString &line : lines) {
+            const QStringList parts = line.trimmed().split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            if (parts.size() != 3 || parts[0] != QLatin1String("@EMSTUDIO"))
+                continue;
+            bool ok = false;
+            const int i = parts[1].toInt(&ok);
+            if (ok && i >= 0 && i < items.size())
+                m_wslExecChecks[items[i]] = (parts[2] == QLatin1String("1")) ? WslCheck::Yes : WslCheck::No;
+        }
+        rebuildSimToolCombo();
+    };
+
+    connect(p, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            [p, done](int, QProcess::ExitStatus) { done(decodeWslOutput(p->readAllStandardOutput())); });
+    connect(p, &QProcess::errorOccurred, this, [done](QProcess::ProcessError e) {
+        if (e == QProcess::FailedToStart)
+            done(QString());
+    });
+    QTimer::singleShot(60000, p, [p]() { p->kill(); });
+
+    p->start(wslExePath(), args);
+    p->write(script.toUtf8());
+    p->closeWriteChannel();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Abandons a running WSL tool path probe; its results are discarded.
+ **********************************************************************************************************************/
+void MainWindow::stopWslToolProbe()
+{
+    if (!m_wslProbeProcess)
+        return;
+    QProcess *p = m_wslProbeProcess;
+    m_wslProbeProcess = nullptr;
+    p->disconnect(this);
+    p->kill();
+    p->waitForFinished(1000);
+    p->deleteLater();
+}
+
+#endif
 
 /*!*******************************************************************************************************************
  * \brief Checks whether WSL is available on this system.

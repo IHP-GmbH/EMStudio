@@ -419,6 +419,9 @@ MainWindow::~MainWindow()
         m_looseConverterProcess->kill();
         m_looseConverterProcess->waitForFinished(2000);
     }
+#ifdef Q_OS_WIN
+    stopWslToolProbe();
+#endif
     delete m_ui;
 }
 
@@ -1472,17 +1475,36 @@ void MainWindow::registerAssistantMcpTools()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Re-checks the configured tool paths and rebuilds the "Simulation Tool" combo box (cbxSimTool).
+ *
+ * Forgets earlier WSL path checks (paths or files may have changed) and calls rebuildSimToolCombo().
+ **********************************************************************************************************************/
+void MainWindow::refreshSimToolOptions()
+{
+#ifdef Q_OS_WIN
+    stopWslToolProbe();
+    m_wslExecChecks.clear();
+#endif
+    rebuildSimToolCombo();
+}
+
+/*!*******************************************************************************************************************
  * \brief Rebuilds the "Simulation Tool" combo box (cbxSimTool) based on configured install paths.
  *
  * Reads configured tool paths from \c m_preferences, validates them with
  * pathIsExecutablePortable(), and repopulates \c cbxSimTool with the available tools
  * ("OpenEMS", "Palace", "Elmer").
+ * On Windows, paths inside WSL are checked by one asynchronous wsl.exe call (startWslToolProbe()), because
+ * a cold WSL start can take many seconds. Until it answers, those tools are listed provisionally; the
+ * probe's result rebuilds the combo again. A tool whose check WSL didn't answer stays listed, with a
+ * message: the run itself is then the test.
  * If none are valid, a placeholder item is shown and the combo is disabled. Emits an info() message
  * summarizing what is enabled.
  **********************************************************************************************************************/
-void MainWindow::refreshSimToolOptions()
+void MainWindow::rebuildSimToolCombo()
 {
     QSignalBlocker blocker(m_ui->cbxSimTool);
+    const QString previousKey = currentSimToolKey();
 
     const QString openemsPath      = m_preferences.value("Python Path").toString().trimmed();
     const QString palacePath       = m_preferences.value("PALACE_INSTALL_PATH").toString().trimmed();
@@ -1492,35 +1514,48 @@ void MainWindow::refreshSimToolOptions()
 
     const QString distro = m_preferences.value("WSL_DISTRO").toString().trimmed();
 
-    const bool hasOpenEMS = !openemsPath.isEmpty() && pathIsExecutablePortable(openemsPath, distro, 8000);
-
-    bool hasPalaceInstall = false;
-    if (!palacePath.isEmpty()) {
 #ifdef Q_OS_WIN
-        const QString palaceRootLinux = toLinuxPathPortable(palacePath, distro, 8000);
-        const QString palaceExeLinux  = QDir(palaceRootLinux).filePath("bin/palace");
-        hasPalaceInstall = !palaceRootLinux.isEmpty() && pathIsExecutablePortable(palaceExeLinux, distro, 8000);
-#else
-        const QString palaceExe = QDir(palacePath).filePath("bin/palace");
-        hasPalaceInstall = pathIsExecutablePortable(palaceExe, distro, 800);
-#endif
+    if (distro != m_wslProbeDistro) {
+        stopWslToolProbe();
+        m_wslExecChecks.clear();
     }
+    QStringList wslPending;     // probe items WSL hasn't checked yet
+    QStringList wslNoAnswer;    // settings whose check WSL didn't answer
+    const auto isWslPath = [](const QString &p) { return p.startsWith('/') || p.startsWith('~'); };
+    // Executable test: a Windows path directly, a WSL path through the probe (unknown = provisionally yes).
+    const auto executable = [&](const QString &path, const QString &suffix, const QString &prefKey) {
+        if (!isWslPath(path) && suffix.isEmpty())
+            return QFileInfo(path).isExecutable();
+        const WslCheck c = wslExecutableCheck(path, suffix, wslPending);
+        if (c == WslCheck::NoAnswer)
+            wslNoAnswer << prefKey;
+        return c != WslCheck::No;
+    };
+#else
+    const auto executable = [&](const QString &path, const QString &suffix, const QString &) {
+        return pathIsExecutablePortable(suffix.isEmpty() ? path : QDir(path).filePath(suffix), distro, 800);
+    };
+#endif
+
+    const bool hasOpenEMS = !openemsPath.isEmpty()
+        && executable(openemsPath, QString(), QStringLiteral("Python Path"));
+
+    // Executable mode: <PALACE_INSTALL_PATH>/bin/palace inside WSL on Windows (the root may be a Windows path).
+    bool hasPalaceInstall = false;
+    if (palaceRunMode != 1 && !palacePath.isEmpty())
+        hasPalaceInstall = executable(palacePath, QStringLiteral("bin/palace"),
+                                      QStringLiteral("PALACE_INSTALL_PATH"));
 
     const bool palaceScriptIsStub =
         palaceScriptPath.contains(QStringLiteral("palace_launcher_stub"), Qt::CaseInsensitive);
 
     bool hasPalaceScript = false;
-    if (!palaceScriptPath.isEmpty()) {
-#ifdef Q_OS_WIN
-        hasPalaceScript = pathIsExecutablePortable(palaceScriptPath, distro, 8000);
-#else
-        hasPalaceScript = pathIsExecutablePortable(palaceScriptPath, distro, 800);
-#endif
+    if (palaceRunMode == 1 && !palaceScriptPath.isEmpty()) {
 #ifndef EMSTUDIO_TESTING
         // Production: never treat the unit-test stub as a real Palace launcher.
-        if (palaceScriptIsStub)
-            hasPalaceScript = false;
+        if (!palaceScriptIsStub)
 #endif
+            hasPalaceScript = executable(palaceScriptPath, QString(), QStringLiteral("PALACE_RUN_SCRIPT"));
     }
 
     // Honour PALACE_RUN_MODE: Script → launcher only; Executable → install tree only.
@@ -1529,7 +1564,15 @@ void MainWindow::refreshSimToolOptions()
     const bool hasPalace = (palaceRunMode == 1) ? hasPalaceScript : hasPalaceInstall;
 
     const bool hasElmer = !elmerSolverPath.isEmpty()
-        && pathIsExecutablePortable(elmerSolverPath, distro, 800);
+        && executable(elmerSolverPath, QString(), QStringLiteral("ELMER_SOLVER_PATH"));
+
+#ifdef Q_OS_WIN
+    const bool wslChecking = !wslPending.isEmpty();
+    if (wslChecking)
+        startWslToolProbe(wslPending, distro);
+#else
+    const bool wslChecking = false;
+#endif
 
     m_ui->cbxSimTool->clear();
 
@@ -1573,7 +1616,19 @@ void MainWindow::refreshSimToolOptions()
             enabled << QStringLiteral("Elmer EM") << QStringLiteral("Elmer Thermal");
         else
             enabled << QStringLiteral("Elmer EM/Thermal (UI only — set ELMER_SOLVER_PATH to run)");
-        info(QStringLiteral("Enabled simulation tools: %1").arg(enabled.join(QStringLiteral(", "))));
+        // While WSL checks run, the list is provisional; the probe's rebuild reports the result.
+        if (wslChecking)
+            info(QStringLiteral("Checking tool paths inside WSL in the background "
+                                "(starting WSL may take a few seconds)..."));
+        else
+            info(QStringLiteral("Enabled simulation tools: %1").arg(enabled.join(QStringLiteral(", "))));
+
+#ifdef Q_OS_WIN
+        if (!wslNoAnswer.isEmpty())
+            info(QStringLiteral("WSL did not answer the check of %1; listed without verification. "
+                                "Use Setup > Preferences to check again.")
+                     .arg(wslNoAnswer.join(QStringLiteral(", "))), false);
+#endif
 
         if (!hasPalace) {
             if (palaceRunMode == 1) {
@@ -1612,6 +1667,18 @@ void MainWindow::refreshSimToolOptions()
             if (savedIdx >= 0 && savedIdx < m_ui->cbxSimTool->count())
                 m_ui->cbxSimTool->setCurrentIndex(savedIdx);
         }
+    }
+
+    // A late WSL answer can remove the selected tool: update the UI for the fallback, but keep the
+    // remembered choice so the tool comes back selected once it is configured.
+    const QString newKey = currentSimToolKey();
+    if (!previousKey.isEmpty() && newKey != previousKey) {
+        const QVariant keyPref = m_preferences.value(QStringLiteral("SIMULATION_TOOL_KEY"));
+        const QVariant idxPref = m_preferences.value(QStringLiteral("SIMULATION_TOOL_INDEX"));
+        blocker.unblock();
+        on_cbxSimTool_currentIndexChanged(m_ui->cbxSimTool->currentIndex());
+        m_preferences[QStringLiteral("SIMULATION_TOOL_KEY")]   = keyPref;
+        m_preferences[QStringLiteral("SIMULATION_TOOL_INDEX")] = idxPref;
     }
 
     updateBoundaryOptionsForCurrentTool();

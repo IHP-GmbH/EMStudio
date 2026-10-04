@@ -85,7 +85,7 @@ several files by topic. Add a method to the file whose topic it belongs to:
 | headless.cpp | `runHeadless()` for `-run -palace/-openems` |
 | gdsreader.cpp / xmlreader.cpp | GDS cell/layer lists; stackup layer names for the port combos |
 | tips.cpp | Load `keywords/<tool>.csv` (description, topic, default) and `workflow_signatures.csv`; merge with `# @brief` tips from the model |
-| wslHelper.cpp | Path conversion and existence checks that work across Windows and WSL |
+| wslHelper.cpp | Path conversion and existence checks that work across Windows and WSL. The Simulation Tool combo (`refreshSimToolOptions` → `rebuildSimToolCombo`) checks WSL tool paths with one asynchronous `wsl.exe -- bash -s` call (`startWslToolProbe`, results in `m_wslExecChecks`): a cold WSL start can exceed any short timeout. Until it answers, those tools are listed provisionally; a check WSL doesn't answer (60 s) is reported as such, never as "not executable" |
 | verification.cpp | `test*()` hooks, compiled only with `EMSTUDIO_TESTING` (see §6) |
 
 Key members:

@@ -792,6 +792,8 @@ private:
     QMap<QString, QVariant>         m_simSettings;
     QMap<QString, QVariant>         m_sysSettings;
     bool                            m_stackupHasOverridableVars = false;
+    /*! Overrides read unquoted from the script (e.g. a loop variable): name -> value text. */
+    QHash<QString, QString>         m_stackupOverrideExpressions;
     QPointer<class StackupEditor>   m_stackupEditor;
     ResultsViewer                  *m_resultsViewer = nullptr;
     QDockWidget                    *m_assistantDock = nullptr;

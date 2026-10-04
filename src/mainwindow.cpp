@@ -6403,6 +6403,7 @@ void MainWindow::clearModelInputs()
                                m_modelGdsKey, m_modelXmlKey})
         if (!key.isEmpty())
             m_simSettings.remove(key);
+    m_stackupOverrideExpressions.clear();
     m_modelGdsKey.clear();
     m_modelXmlKey.clear();
 

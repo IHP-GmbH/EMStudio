@@ -217,7 +217,9 @@ regular expressions. It never regenerates the whole script.
   `stackup_reader.read_substrate(..., variable_overrides=X)` passes, X being a top-level
   variable, a `settings['key']` or an inline dict (`findOverridesDict`). Load and Save use
   that dict; a script without the argument gets a top-level `variable_overrides` and
-  the argument only when the table has entries.
+  the argument only when the table has entries. A value that is unquoted in the script (a name
+  or expression, e.g. a loop variable; `m_stackupOverrideExpressions`) is written back unquoted
+  while its table text is unchanged; other non-numeric values are written as strings.
 
 File → New (`setupNewModelMenu` / `newModel`, one entry per tool, greyed out when the tool isn't
 in the tool list) selects the tool, clears the previous model's inputs (`clearModelInputs`: GDS, cells,

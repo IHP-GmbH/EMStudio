@@ -956,6 +956,47 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
 }
 
 /*!*******************************************************************************************************************
+ * \brief Returns the index of the first \a sep in \a text outside brackets and string literals, or -1.
+ **********************************************************************************************************************/
+static int indexOfTopLevel(const QString &text, QChar sep)
+{
+    int depth = 0;
+    QChar quote;
+    for (int i = 0; i < text.size(); ++i) {
+        const QChar c = text.at(i);
+        if (!quote.isNull()) {
+            if (c == QLatin1Char('\\'))
+                ++i;
+            else if (c == quote)
+                quote = QChar();
+        } else if (c == QLatin1Char('\'') || c == QLatin1Char('"')) {
+            quote = c;
+        } else if (c == QLatin1Char('(') || c == QLatin1Char('[') || c == QLatin1Char('{')) {
+            ++depth;
+        } else if (c == QLatin1Char(')') || c == QLatin1Char(']') || c == QLatin1Char('}')) {
+            --depth;
+        } else if (c == sep && depth == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Splits \a text at each \a sep outside brackets and string literals (e.g. a dict body into its entries).
+ **********************************************************************************************************************/
+static QStringList splitTopLevel(QString text, QChar sep)
+{
+    QStringList parts;
+    for (int i = indexOfTopLevel(text, sep); i >= 0; i = indexOfTopLevel(text, sep)) {
+        parts << text.left(i);
+        text.remove(0, i + 1);
+    }
+    parts << text;
+    return parts;
+}
+
+/*!*******************************************************************************************************************
  * \brief Finds the dict that holds the stackup Variable overrides in a model script.
  *
  * Follows the \c variable_overrides= argument of \c stackup_reader.read_substrate(...): a top-level
@@ -1040,6 +1081,9 @@ void MainWindow::applyVariableOverridesToScript(QString &script)
         val.toDouble(&okNum);
         if (okNum && !val.contains(QLatin1Char('\'')) && !val.contains(QLatin1Char('"')))
             entries << QStringLiteral("'%1': %2").arg(key, val);
+        else if (m_stackupOverrideExpressions.value(key) == val)
+            // Unquoted in the script (a name or expression, e.g. a loop variable): keep it as code.
+            entries << QStringLiteral("'%1': %2").arg(key, val);
         else
             entries << QStringLiteral("'%1': '%2'")
                            .arg(key, QString(val).replace(QLatin1Char('\''), QStringLiteral("\\'")));
@@ -1122,22 +1166,29 @@ void MainWindow::applyVariableOverridesToScript(QString &script)
 void MainWindow::loadVariableOverridesFromScript(const QString &script)
 {
     QVariantMap map;
+    m_stackupOverrideExpressions.clear();
     int dictStart = -1;
     int dictLength = 0;
     PythonParser::CallArgRef ref;
     findOverridesDict(script, &dictStart, &dictLength, &ref);
     if (dictStart >= 0) {
         const QString body = script.mid(dictStart + 1, dictLength - 2);
-        QRegularExpression reEntry(
-            R"(['\"]([^'\"]+)['\"]\s*:\s*([^,\}]+))");
-        QRegularExpressionMatchIterator it = reEntry.globalMatch(body);
-        while (it.hasNext()) {
-            const QRegularExpressionMatch e = it.next();
-            QString val = e.captured(2).trimmed();
-            if ((val.startsWith(QLatin1Char('\'')) && val.endsWith(QLatin1Char('\'')))
-                || (val.startsWith(QLatin1Char('"')) && val.endsWith(QLatin1Char('"'))))
+        const QRegularExpression reKey(QStringLiteral(R"(^\s*(['"])([^'"]+)\1\s*$)"));
+        for (const QString &entry : splitTopLevel(body, QLatin1Char(','))) {
+            const int colon = indexOfTopLevel(entry, QLatin1Char(':'));
+            if (colon < 0)
+                continue;
+            const QRegularExpressionMatch k = reKey.match(entry.left(colon));
+            if (!k.hasMatch())
+                continue;
+            QString val = entry.mid(colon + 1).trimmed();
+            if (val.size() >= 2
+                && ((val.startsWith(QLatin1Char('\'')) && val.endsWith(QLatin1Char('\'')))
+                    || (val.startsWith(QLatin1Char('"')) && val.endsWith(QLatin1Char('"')))))
                 val = val.mid(1, val.size() - 2);
-            map.insert(e.captured(1), val);
+            else
+                m_stackupOverrideExpressions.insert(k.captured(2), val);
+            map.insert(k.captured(2), val);
         }
     }
     m_simSettings[QStringLiteral("StackupVariableOverrides")] = map;

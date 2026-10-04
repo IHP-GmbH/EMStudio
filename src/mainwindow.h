@@ -791,6 +791,14 @@ private:
     void                            configureAssistantAgent();
 
     void                            refreshSimToolOptions();
+    void                            rebuildSimToolCombo();
+#ifdef Q_OS_WIN
+    enum class WslCheck { Unknown, Yes, No, NoAnswer };
+    WslCheck                        wslExecutableCheck(const QString &base, const QString &suffix,
+                                                       QStringList &pending) const;
+    void                            startWslToolProbe(const QStringList &items, const QString &distro);
+    void                            stopWslToolProbe();
+#endif
     bool                            pathLooksValid(const QString &path, const QString &relativeExe = QString()) const;
     bool                            fileLooksValid(const QString &path) const;
 
@@ -858,6 +866,11 @@ private:
     class QPushButton              *m_btnAddSetting = nullptr;     //!< "+ Add setting..." above the grid
     class QLineEdit                *m_settingsFilter = nullptr;    //!< Filter field above the grid
     mutable QHash<QString, bool>    m_pythonModuleCache;            //!< "python|module" → installed
+#ifdef Q_OS_WIN
+    QHash<QString, WslCheck>        m_wslExecChecks;                //!< WSL probe item → test -x result
+    QPointer<QProcess>              m_wslProbeProcess;              //!< Running WSL tool path probe, if any
+    QString                         m_wslProbeDistro;               //!< Distro of the running / last probe
+#endif
     QWidget                        *m_layoutPaneSplit = nullptr;   //!< Layout view + Layers, moved between pages
     bool                            m_layoutOnFieldsPage = false;
     bool                            m_substrateIso3d = false;       //!< Substrate's 2D/3D while on Fields

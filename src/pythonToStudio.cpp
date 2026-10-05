@@ -208,6 +208,17 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
     for (auto it = settings.constBegin(); it != settings.constEnd(); ++it)
         merged[it.key()] = it.value();             // overwrite => high priority
 
+    // m_simSettings is what Save writes. It must hold this script's values only: a key of the
+    // previous model would otherwise reach this one's script (Save writes every key in writeMode).
+    QSet<QString> gridKeys;
+    for (auto it = merged.constBegin(); it != merged.constEnd(); ++it)
+        if (!shouldSkipPalaceSettingKey(it.key()))
+            gridKeys.insert(it.key());
+    for (const QString &key : std::as_const(m_gridSettingKeys))
+        if (!gridKeys.contains(key))
+            m_simSettings.remove(key);
+    m_gridSettingKeys = gridKeys;
+
     // -------------------------------------------------------------------------------------------------
     // Generic settings, grouped by the topics of keywords/<tool>.csv (file order), unknown keys
     // alphabetically under "Other".
@@ -247,8 +258,13 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
 
         const PalacePropInfo info = inferPalacePropertyInfo(key, val);
 
-        if (shouldSkipStringSelfReference(key, info))
+        if (shouldSkipStringSelfReference(key, info)) {
+            // Hidden expressions (e.g. ('nogui' in sys.argv)) stay as written. Quoted file names are
+            // hidden too but keep their entry (the GDS / XML path handling sets it).
+            if (!m_curPythonData.quotedStrings.contains(key))
+                m_simSettings.remove(key);
             continue;
+        }
 
         QtVariantProperty* prop = m_variantManager->addProperty(info.propType, key);
         if (!prop)
@@ -286,6 +302,9 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
             setupDoubleAttributes(prop, info);
 
         prop->setValue(info.value);
+        // setValue emits no change when the value equals the editor's default (False, 0, ""), so the
+        // previous model's value would stay in m_simSettings.
+        m_simSettings.insert(key, info.value);
         // QtTreePropertyBrowser draws "modified" property names in bold: used for required keys.
         prop->setModified(requiredKeys.contains(keyword));
 

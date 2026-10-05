@@ -787,6 +787,7 @@ private:
     QSet<QtProperty *>              m_settingTopicGroups;     //!< Topic group properties in "Simulation Settings"
     QSet<QString>                   m_collapsedSettingTopics; //!< Topics the user collapsed
     bool                            m_rebuildingSettingsGrid = false; //!< Ignore expand/collapse signals meanwhile
+    QSet<QString>                   m_gridSettingKeys;        //!< Script keys the settings grid was last built from
 
     QMap<QString, QVariant>         m_preferences;
     QMap<QString, QVariant>         m_simSettings;

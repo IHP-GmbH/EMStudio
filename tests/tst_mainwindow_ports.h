@@ -21,6 +21,7 @@ private slots:
     void boundaryOptions_updateOnToolChange_withoutCrash();
     void saveAction_writesScriptToFile_and_updatesState();
     void saveAction_keepsEditedTextSettings();
+    void loadModel_dropsPreviousModelSettings();
     void saveAction_keepsUnchangedNumberSpelling();
     void saveAction_keepsIndentedSweepModel();
     void settingsGrid_groupsByTopic();

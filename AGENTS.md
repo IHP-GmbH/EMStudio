@@ -173,7 +173,10 @@ regular expressions. It never regenerates the whole script.
   (`collectSanityFindings`, code `fdump_bool`) flags `fdump = True/False` (gds2palace crashes on it).
   Text that looks like code (`foo.bar`, calls) and quoted strings containing `.`
   are hidden (`shouldSkipStringSelfReference`). Edits arrive in
-  `onSimulationSettingChanged()` → `m_simSettings`.
+  `onSimulationSettingChanged()` → `m_simSettings`. Every rebuild also sets `m_simSettings` itself
+  (one entry per shown row; hidden expressions and keys of the previous model, `m_gridSettingKeys`,
+  removed): `setValue` emits nothing when a value equals the editor default, and Save writes every
+  `m_simSettings` key the script has, so a previous model's value would otherwise land in this one.
 - **GUI → script**: `syncGuiSettingsToPythonEditor()` / `loadPythonScriptToEditor()`
   call:
   - `applySimSettingsToScript` → `applyOneSettingToScript`, once per key. It

@@ -722,6 +722,50 @@ void MainWindowPortsTest::saveAction_keepsEditedTextSettings()
     QCOMPARE(readSaved(), saved);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Loading a model replaces the previous model's settings: a hidden expression, a value equal to the editor
+ *        default (False) and a key the new model lacks must not reach the new model's script on Save.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::loadModel_dropsPreviousModelSettings()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto writeModel = [&](const QString &name, const QString &body) {
+        const QString path = dir.filePath(name);
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+            return QString();
+        f.write((QStringLiteral("import sys\nfrom gds2palace import *\nsettings = {}\n") + body
+                 + QStringLiteral("config_name, data_dir = simulation_setup.create_palace (excite_ports, settings)\n"))
+                .toUtf8());
+        return path;
+    };
+    auto readFile = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly | QIODevice::Text) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+
+    const QString modelA = writeModel(QStringLiteral("a.py"), QStringLiteral(
+        "settings['no_gui'] = True\n"
+        "settings['preprocess_gds'] = True\n"
+        "settings['margin'] = 50\n"));
+    const QString modelB = writeModel(QStringLiteral("b.py"), QStringLiteral(
+        "settings['no_gui'] = ('nogui' in sys.argv)  # command line\n"
+        "settings['preprocess_gds'] = False\n"));
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.loadPythonModel(modelA);
+    w.loadPythonModel(modelB);
+    w.testTriggerSave();
+
+    const QString saved = readFile(modelB);
+    QVERIFY2(saved.contains(QStringLiteral("settings['no_gui'] = ('nogui' in sys.argv)  # command line")),
+             qPrintable(saved));
+    QVERIFY2(saved.contains(QStringLiteral("settings['preprocess_gds'] = False")), qPrintable(saved));
+    QVERIFY2(!saved.contains(QStringLiteral("margin")), qPrintable(saved));
+}
+
 void MainWindowPortsTest::collectSanityFindings_reportsMissingInputs()
 {
     MainWindow w;

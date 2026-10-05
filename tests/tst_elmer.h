@@ -43,6 +43,7 @@ private slots:
     void loadModel_withoutCellSelectsGdsTopCell();
     void loadModel_findsMissingInputFilesNextToModel();
     void stackupOverrides_followReadSubstrateArgument();
+    void loadModel_replacesPreviousModelInputs();
     void stackupOverrides_keepUnquotedExpressions();
     void indentedThermalBlockAndCell_keepIndentation();
     void elmerSolverStage_runsSolverWithoutRunElmerScript();

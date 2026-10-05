@@ -780,7 +780,12 @@ void MainWindow::registerAssistantMcpTools()
                                QStringLiteral("Model file not found: %1").arg(path));
                     return out;
                 }
-                loadPythonModel(path);
+                if (!loadPythonModel(path)) {
+                    out.insert(QStringLiteral("ok"), false);
+                    out.insert(QStringLiteral("error"),
+                               QStringLiteral("Model could not be loaded: %1").arg(path));
+                    return out;
+                }
                 out.insert(QStringLiteral("ok"), true);
                 out.insert(QStringLiteral("model"), path);
                 out.insert(QStringLiteral("gds"),
@@ -3302,6 +3307,7 @@ void MainWindow::saveSettings()
     if (m_layoutLayerPanel) {
         settings.beginGroup(QStringLiteral("LayoutPreview"));
         settings.setValue(QStringLiteral("usedLayersOnly"), m_layoutLayerPanel->usedLayersOnly());
+        settings.setValue(QStringLiteral("emLayersOnly"), m_layoutLayerPanel->emLayersOnly());
         settings.setValue(QStringLiteral("showCoordinates"), m_layoutLayerPanel->showCoordinates());
         if (m_ui && m_ui->layoutView) {
             settings.setValue(QStringLiteral("view3d"), m_layoutOnFieldsPage
@@ -3405,9 +3411,11 @@ void MainWindow::loadSettings()
     if (m_layoutLayerPanel) {
         settings.beginGroup(QStringLiteral("LayoutPreview"));
         const bool usedOnly = settings.value(QStringLiteral("usedLayersOnly"), true).toBool();
+        const bool emOnly = settings.value(QStringLiteral("emLayersOnly"), false).toBool();
         const bool showCoords = settings.value(QStringLiteral("showCoordinates"), true).toBool();
         settings.endGroup();
         m_layoutLayerPanel->setUsedLayersOnly(usedOnly);
+        m_layoutLayerPanel->setEmLayersOnly(emOnly);
         m_layoutLayerPanel->setShowCoordinates(showCoords);
         if (m_ui && m_ui->layoutView)
             m_ui->layoutView->setShowCoordinates(showCoords);
@@ -4574,8 +4582,6 @@ void MainWindow::onLayoutLayerClicked(const QString &name, const QString &kind, 
         if (!ok)
             portNum = -1;
     }
-    if (portNum < 0 && markerRange)
-        portNum = gdsLayer - 200;
 
     m_blockPortSelectSync = true;
     int foundRow = -1;
@@ -4865,7 +4871,6 @@ void MainWindow::refreshLayoutPreview()
                 bool okPort = false;
                 const int portNum = numItem->text().trimmed().toInt(&okPort);
                 if (okPort && portNum >= 1 && portNum <= 99) {
-                    ports.insert(200 + portNum, pi);
                     LayoutView::LayerStyle pst;
                     pst.name = QStringLiteral("P%1").arg(portNum);
                     pst.kind = QStringLiteral("port");
@@ -4964,10 +4969,8 @@ void MainWindow::refreshLayoutPreview()
             if (listed.contains(gds))
                 continue;
             LayoutView::LayerStyle st;
-            const int portIdx = gds - 200;
-            st.name = (portIdx >= 1 && portIdx <= 99)
-                    ? QStringLiteral("P%1").arg(portIdx)
-                    : QStringLiteral("L%1").arg(gds);
+            // No Ports row uses this marker layer: its port number is unknown.
+            st.name = QStringLiteral("L%1").arg(gds);
             st.kind = QStringLiteral("port");
             st.color = QColor(220, 40, 180);
             st.order = 10000 + gds;
@@ -5105,6 +5108,13 @@ void MainWindow::setupLayoutLayerPanel()
                 QSettings settings = emstudioSettings();
                 settings.beginGroup(QStringLiteral("LayoutPreview"));
                 settings.setValue(QStringLiteral("usedLayersOnly"), on);
+                settings.endGroup();
+            });
+    connect(m_layoutLayerPanel, &LayoutLayerPanel::emLayersOnlyToggled,
+            this, [](bool on) {
+                QSettings settings = emstudioSettings();
+                settings.beginGroup(QStringLiteral("LayoutPreview"));
+                settings.setValue(QStringLiteral("emLayersOnly"), on);
                 settings.endGroup();
             });
     if (m_ui->layoutView)
@@ -6433,17 +6443,8 @@ void MainWindow::newModel(const QString &simKey)
         return;
     }
 
-#ifndef EMSTUDIO_TESTING
-    const bool unsaved = isStateChanged() || m_ui->editRunPythonScript->document()->isModified();
-    if (unsaved && !m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty()) {
-        const auto ret = QMessageBox::question(
-            this, tr("New Model"),
-            tr("The current model has unsaved changes.\n\nDiscard them and start a new model?"),
-            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
-        if (ret != QMessageBox::Yes)
-            return;
-    }
-#endif
+    if (!confirmDiscardUnsavedModel(tr("New Model"), tr("Discard them and start a new model?")))
+        return;
 
     // Same as choosing the tool in the list (Ports / Thermal page, keywords, boundaries, ...).
     m_ui->cbxSimTool->setCurrentIndex(idx);
@@ -6461,6 +6462,33 @@ void MainWindow::newModel(const QString &simKey)
     showRunControlPage(QStringLiteral("Main"));
     info(tr("New %1 model from the default template. Save (Ctrl+S) asks where to store it.")
              .arg(m_ui->cbxSimTool->itemText(idx)), false);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Asks before the current model's unsaved changes (GUI or editor) are discarded.
+ *
+ * Nothing is asked when there is no model text. Test builds never ask.
+ *
+ * \param title    Dialog title.
+ * \param question What happens on Yes, e.g. "Discard them and open another model?".
+ * \return True to go on (nothing unsaved, or the user agreed).
+ **********************************************************************************************************************/
+bool MainWindow::confirmDiscardUnsavedModel(const QString &title, const QString &question)
+{
+#ifndef EMSTUDIO_TESTING
+    const bool unsaved = isStateChanged() || m_ui->editRunPythonScript->document()->isModified();
+    if (unsaved && !m_ui->editRunPythonScript->toPlainText().trimmed().isEmpty()) {
+        const auto ret = QMessageBox::question(
+            this, title,
+            tr("The current model has unsaved changes.\n\n%1").arg(question),
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        return ret == QMessageBox::Yes;
+    }
+#else
+    Q_UNUSED(title);
+    Q_UNUSED(question);
+#endif
+    return true;
 }
 
 /*!*******************************************************************************************************************
@@ -6932,8 +6960,12 @@ void MainWindow::on_actionOpen_Python_Model_triggered()
 
     if (fileName.isEmpty())
         return;
+    if (!confirmDiscardUnsavedModel(tr("Open Model"), tr("Discard them and open %1?")
+                                        .arg(QFileInfo(fileName).fileName())))
+        return;
 
-    loadPythonModel(fileName);
+    if (!loadPythonModel(fileName))
+        return;
     addRecentPythonModel(fileName);
     setStateSaved();
 }
@@ -6948,40 +6980,52 @@ void MainWindow::on_actionOpen_Python_Model_triggered()
  * This function performs the full model import without opening any dialogs.
  * Used by the Open Python Model action, recent files, and startup restore.
  *
+ * The file is read and parsed before anything changes: a file that can't be read leaves the previous model
+ * as it was (title, path, log). Otherwise the previous model's inputs are cleared first (as File > New does),
+ * since Save and the editor sync write the GUI state into the script: a GDS path, top cell, stackup
+ * override or port of the previous model would land in this one.
+ *
  * \param fileName Absolute path to the Python model file (.py) to load.
+ * \return True when the model was loaded.
  **********************************************************************************************************************/
-void MainWindow::loadPythonModel(const QString &fileName)
+bool MainWindow::loadPythonModel(const QString &fileName)
 {
     if (fileName.isEmpty())
-        return;
-
-    // Restore last run log for this model if present; otherwise clear.
-    loadSimulationLogFromDisk(fileName);
+        return false;
 
     const QFileInfo fi(fileName);
-    m_preferences["PALACE_MODEL_DIR"]  = fi.absolutePath();
-    m_preferences["PALACE_MODEL_FILE"] = fileName;
 
     QFile file(fileName);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         error(QString("Cannot open file %1").arg(fileName));
-        return;
+        return false;
     }
 
     const QString textRaw = QString::fromUtf8(file.readAll());
     file.close();
 
+    // Parse from disk, then override start_simulation in memory (editor keeps forced False).
+    PythonParser::Result res = PythonParser::parseSettingsFromText(textRaw, fi.absolutePath(),
+                                                                   fi.completeBaseName());
+    if (!res.ok) {
+        error(tr("Failed to parse Python model file:\n%1").arg(res.error));
+        return false;
+    }
+
+    // From here on the new model replaces the previous one.
+    clearModelInputs();
+    m_simSettings.remove(QStringLiteral("RunDir"));
+
+    // Restore last run log for this model if present; otherwise clear.
+    loadSimulationLogFromDisk(fileName);
+
+    m_preferences["PALACE_MODEL_DIR"]  = fi.absolutePath();
+    m_preferences["PALACE_MODEL_FILE"] = fileName;
+
     QString text = textRaw;
     forceStartSimulationOff(text);
 
     loadVariableOverridesFromScript(text);
-
-    // Parse from disk, then override start_simulation in memory (editor keeps forced False).
-    PythonParser::Result res = PythonParser::parseSettings(fileName);
-    if (!res.ok) {
-        error(tr("Failed to parse Python model file:\n%1").arg(res.error));
-        return;
-    }
 
     if (res.settings.contains(QStringLiteral("start_simulation")))
         res.settings.insert(QStringLiteral("start_simulation"), false);
@@ -7101,6 +7145,7 @@ void MainWindow::loadPythonModel(const QString &fileName)
 
     // Results tab must follow the newly loaded model (not keep the previous run folder).
     updateResultsViewerFromModel(true);
+    return true;
 }
 
 /*!*******************************************************************************************************************
@@ -7610,7 +7655,11 @@ void MainWindow::onOpenRecentPythonModel()
         return;
     }
 
-    loadPythonModel(filePath);
+    if (!confirmDiscardUnsavedModel(tr("Open Model"), tr("Discard them and open %1?")
+                                        .arg(QFileInfo(filePath).fileName())))
+        return;
+    if (!loadPythonModel(filePath))
+        return;
     addRecentPythonModel(filePath);
     saveSettings();
 }

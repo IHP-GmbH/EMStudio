@@ -26,6 +26,7 @@
 #include <QColor>
 #include <QString>
 #include <QHash>
+#include <QSet>
 
 #include <functional>
 
@@ -72,6 +73,9 @@ public:
     void                        setShowCoordinates(bool on);
     bool                        usedLayersOnly() const;
     void                        setUsedLayersOnly(bool on);
+    /*! "EM only": unmapped layers (\c Entry::unmapped) are not listed and hidden in the layout. */
+    bool                        emLayersOnly() const;
+    void                        setEmLayersOnly(bool on);
     /*!
      * \brief Defers opacity signals while the slider moves (Iso3D rebuilds are costly).
      *
@@ -94,16 +98,19 @@ signals:
     /*! Show / Hide all: every listed layer at once (one redraw). */
     void                        layersVisibilityChanged(const QVector<int> &gdsLayers, bool visible);
     void                        opacityChanged(int gdsLayer, qreal opacity);
-    /*! Slider moved with "All layers" selected: the opacity of the whole layout (fills as one image). */
+    /*! Slider moved with "All layers" selected: the layout opacity factor (\c LayoutView::setLayoutOpacity;
+     *  the slider shows it times the default fill opacity, 59 % for 1). */
     void                        allOpacityChanged(qreal opacity);
     /*! The selection went back to "All layers" (Esc, empty-area click, "All layers" row). */
     void                        layerDeactivated();
     void                        layerActivated(const QString &name, const QString &kind);
     void                        showCoordinatesToggled(bool on);
     void                        usedLayersOnlyToggled(bool on);
+    void                        emLayersOnlyToggled(bool on);
 
 private slots:
     void                        onUsedOnlyToggled(bool on);
+    void                        onEmOnlyToggled(bool on);
     void                        onItemChanged(QListWidgetItem *item);
     void                        onCurrentItemChanged(QListWidgetItem *current, QListWidgetItem *previous);
     void                        onOpacitySlider(int value);
@@ -115,8 +122,17 @@ private slots:
 
 private:
     void                        rebuildList();
+    /*! Hides the unmapped layers while "EM only" is on, shows again those it hid that are
+     *  mapped now or when it is off. Returns the layers to hide / show (signals after rebuildList). */
+    void                        applyEmOnlyVisibility(QVector<int> *hide, QVector<int> *show);
+    void                        emitVisibility(const QVector<int> &hide, const QVector<int> &show);
     void                        selectAllLayersMode(bool notify);
     void                        updateOpacityControls();
+    /*! Fill opacity a layer with its own opacity \a layerOpacity shows on screen under the layout
+     *  opacity factor (\c m_layoutOpacity): faded below 1, more opaque above, at most 1. */
+    qreal                       shownLayerOpacity(qreal layerOpacity) const;
+    /*! The layer's own opacity (0..1) that shows \a shown on screen; the inverse of shownLayerOpacity. */
+    qreal                       layerOpacityForShown(qreal shown) const;
     /*! Check box of the "All layers" row: checked / unchecked / partly, from the listed layers. */
     void                        updateAllLayersCheck();
     bool                        isAllLayersItem(const QListWidgetItem *item) const;
@@ -125,6 +141,7 @@ private:
     static QIcon                swatchIcon(const QColor &c);
 
     QCheckBox                  *m_usedOnly = nullptr;
+    QCheckBox                  *m_emOnly = nullptr;
     QCheckBox                  *m_showCoords = nullptr;
     QListWidget                *m_list = nullptr;
     QLabel                     *m_title = nullptr;
@@ -133,7 +150,9 @@ private:
 
     QVector<Entry>              m_all;
     bool                        m_usedOnlyOn = true;
-    qreal                       m_layoutOpacity = 1.0; //!< Whole-layout opacity shown for "All layers"
+    bool                        m_emOnlyOn = false;
+    QSet<int>                   m_hiddenByEmOnly;   //!< Layers "EM only" hid (shown again when off)
+    qreal                       m_layoutOpacity = 1.0; //!< Layout opacity factor for "All layers" (LayoutView units)
     bool                        m_block = false;
     bool                        m_deferOpacity = false;
     bool                        m_opacityPending = false;

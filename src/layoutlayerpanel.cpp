@@ -19,6 +19,7 @@
  ************************************************************************/
 
 #include "layoutlayerpanel.h"
+#include "layoutview.h"
 
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -37,6 +38,7 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <climits>
+#include <cmath>
 
 #if QT_VERSION >= QT_VERSION_CHECK(5, 0, 0)
 
@@ -57,10 +59,17 @@ LayoutLayerPanel::LayoutLayerPanel(QWidget *parent)
     m_title->setStyleSheet(QStringLiteral("font-weight: bold;"));
     m_title->setVisible(false); // title lives next to "Layout" in MainWindow header row
 
-    m_usedOnly = new QCheckBox(tr("Used layers only"), this);
+    m_usedOnly = new QCheckBox(tr("Used only"), this);
     m_usedOnly->setChecked(true);
     m_usedOnly->setToolTip(tr("Hide stackup XML layers that do not appear in the current GDS layout."));
     connect(m_usedOnly, &QCheckBox::toggled, this, &LayoutLayerPanel::onUsedOnlyToggled);
+
+    m_emOnly = new QCheckBox(tr("EM only"), this);
+    m_emOnly->setChecked(false);
+    m_emOnly->setToolTip(tr("Hide layers that are not mapped to the simulation (GDS layers without a "
+                            "stackup layer, port / thermal markers without a table entry) in the list "
+                            "and in the layout."));
+    connect(m_emOnly, &QCheckBox::toggled, this, &LayoutLayerPanel::onEmOnlyToggled);
 
     m_showCoords = new QCheckBox(tr("Show coordinates"), this);
     m_showCoords->setChecked(true);
@@ -100,6 +109,7 @@ LayoutLayerPanel::LayoutLayerPanel(QWidget *parent)
     opts->setContentsMargins(0, 0, 0, 0);
     opts->setSpacing(8);
     opts->addWidget(m_usedOnly);
+    opts->addWidget(m_emOnly);
     opts->addWidget(m_showCoords);
     opts->addStretch(1);
     lay->addLayout(opts);
@@ -137,6 +147,17 @@ void LayoutLayerPanel::setUsedLayersOnly(bool on)
         m_usedOnly->setChecked(on);
 }
 
+bool LayoutLayerPanel::emLayersOnly() const
+{
+    return m_emOnly && m_emOnly->isChecked();
+}
+
+void LayoutLayerPanel::setEmLayersOnly(bool on)
+{
+    if (m_emOnly)
+        m_emOnly->setChecked(on);
+}
+
 void LayoutLayerPanel::clear()
 {
     m_all.clear();
@@ -149,7 +170,44 @@ void LayoutLayerPanel::clear()
 void LayoutLayerPanel::setLayers(const QVector<Entry> &layers)
 {
     m_all = layers;
+    QVector<int> hide, show;
+    applyEmOnlyVisibility(&hide, &show);
     rebuildList();
+    emitVisibility(hide, show);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Hides the unmapped layers while "EM only" is on and shows again the layers it hid that are mapped
+ *        now (or all of them when it is off). Updates \c m_all; the caller rebuilds the list, then calls
+ *        \c emitVisibility.
+ *
+ * \param hide  Receives the layers to hide in the layout.
+ * \param show  Receives the layers to show again.
+ **********************************************************************************************************************/
+void LayoutLayerPanel::applyEmOnlyVisibility(QVector<int> *hide, QVector<int> *show)
+{
+    for (Entry &e : m_all) {
+        if (m_emOnlyOn && e.unmapped) {
+            if (e.visible) {
+                e.visible = false;
+                m_hiddenByEmOnly.insert(e.gdsLayer);
+                hide->append(e.gdsLayer);
+            }
+        } else if (m_hiddenByEmOnly.remove(e.gdsLayer)) {
+            e.visible = true;
+            show->append(e.gdsLayer);
+        }
+    }
+    if (!m_emOnlyOn)
+        m_hiddenByEmOnly.clear();
+}
+
+void LayoutLayerPanel::emitVisibility(const QVector<int> &hide, const QVector<int> &show)
+{
+    if (!hide.isEmpty())
+        emit layersVisibilityChanged(hide, false);
+    if (!show.isEmpty())
+        emit layersVisibilityChanged(show, true);
 }
 
 void LayoutLayerPanel::setHighlightedName(const QString &name)
@@ -207,7 +265,7 @@ void LayoutLayerPanel::refreshOpacities(const std::function<qreal(int)> &opacity
 {
     for (Entry &e : m_all)
         e.opacity = opacityOf(e.gdsLayer);
-    m_layoutOpacity = qBound(0.0, layoutOpacity, 1.0);
+    m_layoutOpacity = qBound(0.0, layoutOpacity, LayoutView::maxLayoutOpacity());
     updateOpacityControls();
 }
 
@@ -227,26 +285,36 @@ void LayoutLayerPanel::updateOpacityControls()
     if (allMode) {
         for (const Entry &e : m_all)
             enabled |= e.used;
-        op = m_layoutOpacity;
+        // Shown as the fill opacity of an untouched layer: 59 % at the default factor 1.
+        op = qMin(1.0, m_layoutOpacity * LayoutView::defaultFillOpacity());
         if (enabled)
             label = tr("Opacity %1% · all layers").arg(int(op * 100.0 + 0.5));
-        tip = tr("Opacity of the whole layout: the layer fills are faded as one image, however many\n"
-                 "layers overlap. Outlines and port / thermal markers stay; 0 % shows outlines only.\n"
+        tip = tr("Fill opacity of the whole layout, %1 % by default. Below that the fills are faded as one\n"
+                 "image, however many layers overlap; above it they get more opaque, up to solid at 100 %.\n"
+                 "Outlines and port / thermal markers stay; 0 % shows outlines only.\n"
                  "The Fields page has its own value and starts with outlines only.\n"
-                 "Select a layer to change only that layer's fill.");
+                 "Select a layer to change only that layer's fill.")
+                .arg(qRound(LayoutView::defaultFillOpacity() * 100.0));
     } else {
+        // What the layer shows on screen: its own fill opacity under the layout opacity.
         const int gds = cur->data(kRoleGds).toInt();
         for (const Entry &e : m_all) {
             if (e.gdsLayer == gds) {
-                op = e.opacity;
+                op = shownLayerOpacity(e.opacity);
                 enabled = e.used; // unused stackup layers are not drawn
                 break;
             }
         }
-        if (enabled) {
+        const qreal maxShown = shownLayerOpacity(1.0);
+        if (enabled && maxShown <= 0.0) {
+            enabled = false;
+            tip = tr("The layout opacity (All layers) is 0 %: raise it to see layer fills.");
+        } else if (enabled) {
             label = tr("Opacity %1%").arg(int(op * 100.0 + 0.5));
-            tip = tr("Fill opacity of the selected layer.\n"
-                     "Esc or click below the list: all layers.");
+            tip = tr("Fill opacity of the selected layer as shown, with the All layers opacity applied.\n"
+                     "Up to %1 % at the current All layers opacity.\n"
+                     "Esc or click below the list: all layers.")
+                    .arg(qRound(maxShown * 100.0));
         } else {
             tip = tr("Layer is not present in the current GDS — opacity has no effect.");
         }
@@ -258,6 +326,22 @@ void LayoutLayerPanel::updateOpacityControls()
     m_opacity->setToolTip(tip);
     m_opacityLabel->setText(label);
     m_block = false;
+}
+
+qreal LayoutLayerPanel::shownLayerOpacity(qreal layerOpacity) const
+{
+    const qreal fade = qMin(1.0, m_layoutOpacity);
+    const qreal boost = qMax(1.0, m_layoutOpacity);
+    return qMin(1.0, layerOpacity * boost) * fade;
+}
+
+qreal LayoutLayerPanel::layerOpacityForShown(qreal shown) const
+{
+    const qreal fade = qMin(1.0, m_layoutOpacity);
+    const qreal boost = qMax(1.0, m_layoutOpacity);
+    if (fade <= 0.0)
+        return LayoutView::defaultFillOpacity();
+    return qBound(0.0, shown / fade / boost, 1.0);
 }
 
 bool LayoutLayerPanel::eventFilter(QObject *watched, QEvent *event)
@@ -291,6 +375,16 @@ void LayoutLayerPanel::onUsedOnlyToggled(bool on)
     emit usedLayersOnlyToggled(on);
 }
 
+void LayoutLayerPanel::onEmOnlyToggled(bool on)
+{
+    m_emOnlyOn = on;
+    QVector<int> hide, show;
+    applyEmOnlyVisibility(&hide, &show);
+    rebuildList();
+    emitVisibility(hide, show);
+    emit emLayersOnlyToggled(on);
+}
+
 void LayoutLayerPanel::rebuildList()
 {
     const QString keepName = m_list->currentItem()
@@ -314,6 +408,8 @@ void LayoutLayerPanel::rebuildList()
 
     for (const Entry &e : m_all) {
         if (m_usedOnlyOn && !e.used)
+            continue;
+        if (m_emOnlyOn && e.unmapped)
             continue;
         // Display text only; lookups use kRoleName (the plain layer name).
         const QString text = e.unmapped ? tr("%1 (not mapped)").arg(e.name) : e.name;
@@ -448,13 +544,28 @@ void LayoutLayerPanel::onOpacitySlider(int value)
 {
     if (m_block)
         return;
-    const qreal op = value / 100.0;
+    qreal op = value / 100.0;
     QListWidgetItem *cur = m_list->currentItem();
     int target = kGdsAllLayers;
     if (!cur || isAllLayersItem(cur)) {
-        m_layoutOpacity = op;
+        m_layoutOpacity = op / LayoutView::defaultFillOpacity();
+        // The default (59 %) is the factor 1 exactly: no fill restyling for the rounding.
+        if (std::abs(m_layoutOpacity - 1.0) < 0.5 / (100.0 * LayoutView::defaultFillOpacity()))
+            m_layoutOpacity = 1.0;
     } else {
+        // The slider shows the layer as seen: store its own opacity that gives that. Below 59 % All
+        // layers, a layer can't get more opaque than the layout fade allows.
         target = cur->data(kRoleGds).toInt();
+        const int cap = qRound(shownLayerOpacity(1.0) * 100.0);
+        if (value > cap) {
+            value = cap;
+            m_block = true;
+            m_opacity->setValue(cap);
+            m_block = false;
+        }
+        const qreal def = LayoutView::defaultFillOpacity();
+        op = qRound(shownLayerOpacity(def) * 100.0) == value   // back at the default: exactly
+                ? def : layerOpacityForShown(value / 100.0);
         for (Entry &e : m_all) {
             if (e.gdsLayer == target) {
                 e.opacity = op;
@@ -465,7 +576,7 @@ void LayoutLayerPanel::onOpacitySlider(int value)
     updateOpacityControls();
 
     m_pendingGds = target;
-    m_pendingOpacity = op;
+    m_pendingOpacity = target == kGdsAllLayers ? m_layoutOpacity : op;
     m_opacityPending = true;
     if (!m_deferOpacity) {
         flushPendingOpacity();
@@ -532,7 +643,7 @@ void LayoutLayerPanel::hideUnmappedLayers()
 }
 
 /*!*******************************************************************************************************************
- * \brief Shows or hides the listed layers (respects "Used layers only") that match \a which, with one
+ * \brief Shows or hides the listed layers (respects "Used only") that match \a which, with one
  *        \c layersVisibilityChanged signal.
  **********************************************************************************************************************/
 void LayoutLayerPanel::setListedVisible(bool visible, const std::function<bool(const Entry &)> &which)

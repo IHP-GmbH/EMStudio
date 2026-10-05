@@ -782,10 +782,9 @@ void LayoutView::rebuildScene2D(bool refit)
         if (m_styles.contains(p.layer)) {
             st = m_styles.value(p.layer);
         } else {
-            const int portIdx = p.layer - 200;
-            st.name = (portIdx >= 1 && portIdx <= 99)
-                    ? QStringLiteral("P%1").arg(portIdx)
-                    : QStringLiteral("L%1").arg(p.layer);
+            // No style: a marker layer no Ports row uses. Its port number is unknown (P<n> names
+            // come only from the Ports table).
+            st.name = QStringLiteral("L%1").arg(p.layer);
             st.kind = QStringLiteral("port");
             st.color = QColor(220, 40, 180);
             st.order = 10000 + p.layer;
@@ -920,7 +919,7 @@ void LayoutView::rebuildScene2D(bool refit)
             continue;
 
         QColor fill = it.style.color;
-        fill.setAlpha(qBound(0, int(kBaseFillAlpha * op + 0.5), 255));
+        fill.setAlpha(layerFillAlpha(op));
         QPen outline(QColor(20, 20, 20), 0);
         if (m_fieldOn && !isPort) {
             // Field view: shapes as outlines in their layer color over the heatmap.
@@ -1193,10 +1192,9 @@ void LayoutView::rebuildScene3D(bool refit)
         if (m_styles.contains(p.layer)) {
             st = m_styles.value(p.layer);
         } else {
-            const int portIdx = p.layer - 200;
-            st.name = (portIdx >= 1 && portIdx <= 99)
-                    ? QStringLiteral("P%1").arg(portIdx)
-                    : QStringLiteral("L%1").arg(p.layer);
+            // No style: a marker layer no Ports row uses. Its port number is unknown (P<n> names
+            // come only from the Ports table).
+            st.name = QStringLiteral("L%1").arg(p.layer);
             st.kind = QStringLiteral("port");
             st.color = QColor(220, 40, 180);
             st.order = 10000 + p.layer;
@@ -1320,7 +1318,7 @@ void LayoutView::rebuildScene3D(bool refit)
         QColor col = it.style.color;
         col.setAlpha(qBound(40, int(255 * op + 0.5), 255));
         const QString pname = it.style.name.isEmpty()
-                ? QStringLiteral("P%1").arg(it.poly.layer - 200)
+                ? QStringLiteral("L%1").arg(it.poly.layer)
                 : it.style.name;
 
         const QString thermalTip = thermalMarkerToolTip(it.poly.layer, pname);
@@ -1557,8 +1555,8 @@ void LayoutView::rebuildScene3D(bool refit)
 
         // Vias slightly more opaque so pillars stay readable under translucent metals.
         const qreal fillScale = isVia ? 1.15 : 1.0;
-        const int fillAlpha = qBound(0, int(kBaseFillAlpha * op * fillScale + 0.5), 230);
-        const int wallAlpha = qBound(0, int(kBaseFillAlpha * op * 0.85 * fillScale + 0.5), 220);
+        const int fillAlpha = layerFillAlpha(op * fillScale, 230);
+        const int wallAlpha = layerFillAlpha(op * 0.85 * fillScale, 220);
 
         const qreal zCap = fromBelow ? z0 : z1;
         QPolygonF topPoly;
@@ -1684,7 +1682,7 @@ void LayoutView::rebuildScene3D(bool refit)
             pix->setZValue(double(cuts.at(seg)));
             pix->setAcceptedMouseButtons(Qt::NoButton);
             pix->setData(kRoleFade, true);
-            pix->setOpacity(layoutOpacity());
+            pix->setOpacity(layoutFade());
         }
     } else {
         const QPen facePen(QColor(30, 30, 30), 0);
@@ -2501,7 +2499,7 @@ void LayoutView::setLayerHighlightVisual(const QString &name, bool on)
                 shape->setPen(normalPoly);
                 if (item->data(kRoleBrush).isValid()) {
                     QColor orig = item->data(kRoleBrush).value<QColor>();
-                    orig.setAlpha(qBound(0, int(kBaseFillAlpha * op + 0.5), 255));
+                    orig.setAlpha(layerFillAlpha(op));
                     shape->setBrush(orig);
                     item->setData(kRoleBrush, QVariant());
                 }
@@ -3665,15 +3663,40 @@ qreal LayoutView::layoutOpacity() const
  **********************************************************************************************************************/
 void LayoutView::setLayoutOpacity(qreal opacity)
 {
-    (m_fieldOn ? m_fieldLayoutOpacity : m_layoutOpacity) = qBound(0.0, opacity, 1.0);
+    const qreal boostBefore = layoutFillBoost();
+    (m_fieldOn ? m_fieldLayoutOpacity : m_layoutOpacity) = qBound(0.0, opacity, maxLayoutOpacity());
+    if (!qFuzzyCompare(boostBefore, layoutFillBoost()) && m_scene) {
+        // The fill alphas change: Iso3D draws them anew, 2D restyles its fills.
+        if (rebuildIso3dForStyleChange())
+            return;
+        for (QGraphicsItem *item : m_scene->items())
+            if (item->data(kRoleGds).isValid())
+                applyItemVisual(item);
+    }
     applyLayoutOpacity();
+}
+
+qreal LayoutView::layoutFade() const
+{
+    return qMin(1.0, layoutOpacity());
+}
+
+qreal LayoutView::layoutFillBoost() const
+{
+    return qMax(1.0, layoutOpacity());
+}
+
+int LayoutView::layerFillAlpha(qreal op, int cap) const
+{
+    const qreal boost = layoutFillBoost();
+    return qBound(0, int(kBaseFillAlpha * op * boost + 0.5), boost > 1.0 ? 255 : cap);
 }
 
 void LayoutView::applyLayoutOpacity()
 {
     if (!m_scene)
         return;
-    const qreal op = layoutOpacity();
+    const qreal op = layoutFade();
     for (QGraphicsItem *item : m_scene->items()) {
         if (!item->data(kRoleFade).toBool())
             continue;
@@ -3707,7 +3730,7 @@ QGraphicsItem *LayoutView::addFadeGroup(qreal z)
 {
     auto *group = new FadeGroupItem;
     auto *effect = new QGraphicsOpacityEffect;
-    effect->setOpacity(layoutOpacity());
+    effect->setOpacity(layoutFade());
     group->setGraphicsEffect(effect);
     group->setData(kRoleFade, true);
     group->setZValue(z);
@@ -3866,7 +3889,7 @@ void LayoutView::applyItemVisual(QGraphicsItem *item)
             QColor fill = shape->brush().color();
             if (item->data(kRoleBrush).isValid())
                 fill = item->data(kRoleBrush).value<QColor>();
-            fill.setAlpha(qBound(0, int(kBaseFillAlpha * op + 0.5), 255));
+            fill.setAlpha(layerFillAlpha(op));
             shape->setBrush(fill);
             item->setData(kRoleBrush, QVariant());
         }

@@ -166,7 +166,7 @@ public:
     void                            setGdsFile(const QString &filePath);
     void                            setSubstrateFile(const QString &filePath);
     void                            tryAutoLoadRecentPythonForTopCell();
-    void                            loadPythonModel(const QString &fileName);
+    bool                            loadPythonModel(const QString &fileName);
     void                            runHeadless(const QString& simKeyLower);
 
 signals:
@@ -601,6 +601,8 @@ private:
     void                            setupNewModelMenu();
     void                            updateNewModelActions();
     void                            newModel(const QString &simKey);
+    /*! Asks before the current model's unsaved changes are discarded (File > New, Open, Recent). */
+    bool                            confirmDiscardUnsavedModel(const QString &title, const QString &question);
     /*! File → Convert to settings dictionary (convertloosemodel.cpp). */
     bool                            canConvertLooseModel(QString *why = nullptr) const;
     void                            updateConvertLooseModelAction();

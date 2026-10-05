@@ -1128,6 +1128,75 @@ void ElmerTest::stackupOverrides_followReadSubstrateArgument()
             QStringLiteral("variable_overrides = "));
 }
 
+/*! An override given as a name or expression (e.g. a loop variable) stays code on Save instead of
+ *  becoming a quoted string; only an edited value is rewritten. */
+void ElmerTest::stackupOverrides_keepUnquotedExpressions()
+{
+    const QString examples = QDir(repoScriptsDir()).absoluteFilePath(QStringLiteral("../examples/palace/resistors_rsil"));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QFile::copy(examples + QStringLiteral("/resistors_with_ports.gds"), dir.filePath(QStringLiteral("r.gds"))));
+    QVERIFY(QFile::copy(examples + QStringLiteral("/SG13G2_resistors_200um.xml"), dir.filePath(QStringLiteral("stack.xml"))));
+
+    const QString model = dir.filePath(QStringLiteral("loop.py"));
+    {
+        QFile f(model);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        f.write(QStringLiteral("from gds2palace import *\n"
+                               "settings = {}\n"
+                               "settings['unit'] = 1e-06\n"
+                               "settings['GdsFile'] = \"%1\"\n"
+                               "settings['SubstrateFile'] = \"%2\"\n"
+                               "for total in [100.0, 120.0]:\n"
+                               "    variable_overrides = {'air_thickness': air, 'total_thickness': max(total, 100.0)}\n"
+                               "    simulation_ports = simulation_setup.all_simulation_ports()\n"
+                               "    materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate"
+                               "(settings['SubstrateFile'], variable_overrides=variable_overrides)\n"
+                               "    allpolygons = gds_reader.read_gds(settings['GdsFile'], l, purposelist=[0])\n"
+                               "    config_name, data_dir = simulation_setup.create_palace (excite_ports, settings)\n")
+                    .arg(QDir::fromNativeSeparators(dir.filePath(QStringLiteral("r.gds"))),
+                         QDir::fromNativeSeparators(dir.filePath(QStringLiteral("stack.xml"))))
+                    .toUtf8());
+    }
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.loadPythonModel(model);
+
+    auto *tbl = w.findChild<QTableWidget *>(QStringLiteral("tblStackupOverrides"));
+    QVERIFY(tbl);
+    auto overrideItem = [&](const QString &name) -> QTableWidgetItem * {
+        for (int r = 0; r < tbl->rowCount(); ++r)
+            if (tbl->item(r, 0) && tbl->item(r, 0)->text() == name)
+                return tbl->item(r, 2);
+        return nullptr;
+    };
+    QVERIFY(overrideItem(QStringLiteral("air_thickness")));
+    QVERIFY(overrideItem(QStringLiteral("total_thickness")));
+    QCOMPARE(overrideItem(QStringLiteral("air_thickness"))->text(), QStringLiteral("air"));
+    QCOMPARE(overrideItem(QStringLiteral("total_thickness"))->text(), QStringLiteral("max(total, 100.0)"));
+
+    auto savedText = [&]() {
+        QFile f(model);
+        return f.open(QIODevice::ReadOnly | QIODevice::Text) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+
+    // Unchanged table: the dict keeps its expressions.
+    w.testTriggerSave();
+    QString saved = savedText();
+    QVERIFY2(saved.contains(QStringLiteral(
+                 "    variable_overrides = {'air_thickness': air, 'total_thickness': max(total, 100.0)}\n")),
+             qPrintable(saved));
+
+    // A value typed in the table is a string; the untouched expression stays code.
+    overrideItem(QStringLiteral("air_thickness"))->setText(QStringLiteral("thick"));
+    w.testTriggerSave();
+    saved = savedText();
+    QVERIFY2(saved.contains(QStringLiteral(
+                 "    variable_overrides = {'air_thickness': 'thick', 'total_thickness': max(total, 100.0)}\n")),
+             qPrintable(saved));
+}
+
 /*! Thermal objects and the cell variable inside a loop keep their indentation; an unchanged
  *  thermal block (other formatting) is left alone, comments after it stay. */
 void ElmerTest::indentedThermalBlockAndCell_keepIndentation()

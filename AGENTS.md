@@ -398,10 +398,17 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   recordings. The Qt tests `MainWindowPortsTest::convertLooseModel_*` use the same fixture. In the
   test binary, wait with `QTRY_*`, not `QSignalSpy::wait()`: `HeadlessDispatchTest` calls
   `QCoreApplication::exit`, after which nested event loops return at once.
+- Golden scripts as Python: `python -m pytest tests/python/test_golden_scripts.py` (numpy only) runs
+  `tests/golden/tst_*_golden.py` against `tests/python/fixtures/golden_standins` (gds2palace,
+  gds2openEMS, openEMS stand-ins with the real exported names and signatures, recording each call).
+  The expected scripts must run without error, and the GUI edits must reach the workflow calls (top
+  cell → `read_gds(cellname=...)`, required keywords → `create_palace` settings, `numfreq`). The Qt
+  golden tests only compare text; this catches an expected script that couldn't run. Keep the
+  stand-ins in step with the real packages when the templates use new workflow calls.
 - Python tests for the field scripts: `python -m pytest tests/python` (needs
   pyvista; the viewer tests also need PySide6 + pyvistaqt, run with
   `QT_QPA_PLATFORM=offscreen`). They build small synthetic dumps; they are not
-  part of the Qt test binary or CI yet. Creating several `QtInteractor` windows
+  part of the Qt test binary or CI yet; neither are the converter and golden-script tests. Creating several `QtInteractor` windows
   in one offscreen process aborts VTK; share one window per module.
 - Solver stubs in `tests/tools/` stand in for openEMS, Palace and Elmer. Tests set
   them through preferences, e.g. `testSetPreference("PALACE_RUN_SCRIPT", stub)`. Tests that run a

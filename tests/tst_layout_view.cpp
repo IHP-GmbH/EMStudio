@@ -1133,6 +1133,25 @@ void LayoutViewTest::layoutOpacity_fadesStackAsOneImage()
     // Per-layer values are untouched by the layout opacity.
     QCOMPARE(view.layerOpacity(3), LayoutView::defaultFillOpacity());
 
+    // Above 1 the fills get more opaque by one factor (relative look kept), solid at the maximum;
+    // the fade stays at 1. Back at 1 the default alpha returns.
+    auto fillAlphaOf = [&](int gds) {
+        for (QGraphicsItem *c : fillGroup()->childItems())
+            if (auto *p = qgraphicsitem_cast<QGraphicsPolygonItem *>(c))
+                if (p->data(3).toInt() == gds)
+                    return p->brush().color().alpha();
+        return -1;
+    };
+    QCOMPARE(fillAlphaOf(3), 150);
+    view.setLayoutOpacity(LayoutView::maxLayoutOpacity());
+    QCOMPARE(fillAlphaOf(3), 255);
+    QCOMPARE(qobject_cast<QGraphicsOpacityEffect *>(fillGroup()->graphicsEffect())->opacity(), 1.0);
+    view.setLayoutOpacity(1.0 + 0.5 * (LayoutView::maxLayoutOpacity() - 1.0));
+    QCOMPARE(fillAlphaOf(3), int(150 * (1.0 + 0.5 * (LayoutView::maxLayoutOpacity() - 1.0)) + 0.5));
+    view.setLayoutOpacity(1.0);
+    QCOMPARE(fillAlphaOf(3), 150);
+    view.setLayoutOpacity(0.2);
+
     auto portLine = [&view]() -> QGraphicsLineItem * {
         for (QGraphicsItem *it : view.scene()->items())
             if (auto *l = qgraphicsitem_cast<QGraphicsLineItem *>(it))

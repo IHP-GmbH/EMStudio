@@ -18,6 +18,7 @@ private slots:
     void layers_filterHighlightOpacityAndContextMenu();
     void opacity_deferredUntilSliderReleased();
     void unmappedPort_isMarkedInList();
+    void emLayersOnly_hidesUnmappedAndRestores();
 };
 
 #endif // TST_LAYOUT_LAYER_PANEL_H

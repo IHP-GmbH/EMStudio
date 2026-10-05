@@ -1490,3 +1490,71 @@ void ElmerTest::toolSwitch_warnsOnlyForUserChoiceWithOpenModel()
     QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
     QCOMPARE(logCount(QStringLiteral("The open model")), 2);
 }
+
+/*! Loading a model replaces the previous model's inputs: its GDS / XML path, stackup overrides and top cell must
+ *  not be written into a model whose paths the parser can't resolve (os.path.join), and a file that can't be
+ *  read leaves the loaded model as it was. */
+void ElmerTest::loadModel_replacesPreviousModelInputs()
+{
+    const QString examples = QDir(repoScriptsDir()).absoluteFilePath(QStringLiteral("../examples/palace/resistors_rsil"));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QVERIFY(QFile::copy(examples + QStringLiteral("/resistors_with_ports.gds"), dir.filePath(QStringLiteral("r.gds"))));
+    QVERIFY(QFile::copy(examples + QStringLiteral("/SG13G2_resistors_200um.xml"), dir.filePath(QStringLiteral("stack.xml"))));
+    auto writeModel = [&](const QString &name, const QString &body) {
+        const QString path = dir.filePath(name);
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+            return QString();
+        f.write((QStringLiteral("import os\nfrom gds2palace import *\nsettings = {}\nsettings['unit'] = 1e-06\n") + body
+                 + QStringLiteral("simulation_ports = simulation_setup.all_simulation_ports()\n"
+                                  "allpolygons = gds_reader.read_gds(settings['GdsFile'], l, purposelist=[0])\n"
+                                  "config_name, data_dir = simulation_setup.create_palace (excite_ports, settings)\n"))
+                    .toUtf8());
+        return path;
+    };
+    auto readFile = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly | QIODevice::Text) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+
+    const QString modelA = writeModel(QStringLiteral("a.py"), QStringLiteral(
+        "settings['GdsFile'] = \"%1\"\n"
+        "settings['SubstrateFile'] = \"%2\"\n"
+        "variable_overrides = {'air_thickness': 80.0}\n"
+        "materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate "
+        "(settings['SubstrateFile'], variable_overrides=variable_overrides)\n")
+        .arg(QDir::fromNativeSeparators(dir.filePath(QStringLiteral("r.gds"))),
+             QDir::fromNativeSeparators(dir.filePath(QStringLiteral("stack.xml")))));
+    const QString bodyB = QStringLiteral(
+        "settings['GdsFile'] = os.path.join(os.path.dirname(__file__), 'layout_b.gds')\n"
+        "settings['SubstrateFile'] = os.path.join(os.path.dirname(__file__), 'stackup_b.xml')\n"
+        "materials_list, dielectrics_list, metals_list = stackup_reader.read_substrate (settings['SubstrateFile'])\n");
+    const QString modelB = writeModel(QStringLiteral("b.py"), bodyB);
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    auto *scriptPath = w.findChild<QLineEdit *>(QStringLiteral("txtRunPythonScript"));
+    QVERIFY(scriptPath);
+    QVERIFY(w.loadPythonModel(modelA));
+    QVERIFY(!w.findChild<QComboBox *>(QStringLiteral("cbxTopCell"))->currentText().isEmpty());
+
+    QVERIFY(w.loadPythonModel(modelB));
+    QCOMPARE(scriptPath->text(), modelB);
+    QVERIFY(w.findChild<QLineEdit *>(QStringLiteral("txtGdsFile"))->text().isEmpty());
+    QVERIFY(w.findChild<QLineEdit *>(QStringLiteral("txtSubstrate"))->text().isEmpty());
+    QVERIFY2(!w.testEditorText().contains(QStringLiteral("r.gds")), qPrintable(w.testEditorText()));
+    w.testTriggerSave();
+    const QString saved = readFile(modelB);
+    QVERIFY2(saved.contains(bodyB), qPrintable(saved));
+    QVERIFY2(!saved.contains(QStringLiteral("air_thickness")) && !saved.contains(QStringLiteral("r.gds"))
+             && !saved.contains(QStringLiteral("stack.xml")),
+             qPrintable(saved));
+
+    // A file that can't be read: B stays loaded (title / path, editor).
+    const QString editorBefore = w.testEditorText();
+    QVERIFY(!w.loadPythonModel(dir.filePath(QStringLiteral("missing.py"))));
+    QCOMPARE(scriptPath->text(), modelB);
+    QCOMPARE(w.testEditorText(), editorBefore);
+    QVERIFY(w.windowTitle().contains(QFileInfo(modelB).absoluteFilePath()));
+}

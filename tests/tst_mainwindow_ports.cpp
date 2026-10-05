@@ -954,18 +954,41 @@ void MainWindowPortsTest::layoutPreview_withGoldenGds_populatesLayerPanel()
     QVERIFY2(layerList, "LayoutLayerPanel list not found");
     QVERIFY(layerList->count() >= 1);
 
-    // Port markers 201 / 202 have no Ports table rows yet: listed as not mapped.
+    // Port markers 201 / 202 have no Ports table rows yet: listed by layer number (their port
+    // number is unknown), as not mapped.
     auto *panel = w.findChild<LayoutLayerPanel *>();
     QVERIFY(panel);
     auto *panelList = panel->findChild<QListWidget *>();
     QVERIFY(panelList);
-    QStringList portTexts;
-    for (int i = 0; i < panelList->count(); ++i)
-        if (panelList->item(i)->text().startsWith(QLatin1Char('P')))
-            portTexts << panelList->item(i)->text();
-    QVERIFY2(portTexts.contains(QStringLiteral("P1 (not mapped)"))
-             && portTexts.contains(QStringLiteral("P2 (not mapped)")),
+    auto panelTexts = [&]() {
+        QStringList t;
+        for (int i = 1; i < panelList->count(); ++i)   // row 0 is "All layers"
+            t << panelList->item(i)->text();
+        return t;
+    };
+    QStringList portTexts = panelTexts();
+    QVERIFY2(portTexts.contains(QStringLiteral("L201 (not mapped)"))
+             && portTexts.contains(QStringLiteral("L202 (not mapped)"))
+             && portTexts.filter(QRegularExpression(QStringLiteral("^P\\d"))).isEmpty(),
              qPrintable(portTexts.join(QStringLiteral(" | "))));
+
+    // A Ports row names its source layer by the row's port number: port 1 on layer 202 is P1,
+    // layer 201 stays L201.
+    w.testClickAddPort();
+    auto *tblPorts = w.findChild<QTableWidget *>(QStringLiteral("tblPorts"));
+    QVERIFY(tblPorts);
+    auto *srcBox = qobject_cast<QComboBox *>(tblPorts->cellWidget(0, 3));
+    QVERIFY(srcBox);
+    srcBox->setCurrentText(QStringLiteral("202"));
+    QCOMPARE(w.testPortComboText(0, 3), QStringLiteral("202"));
+    w.testRefreshLayoutPreview();
+    portTexts = panelTexts();
+    QVERIFY2(portTexts.filter(QRegularExpression(QStringLiteral("^P1\\b"))).size() == 1
+             && portTexts.contains(QStringLiteral("L201 (not mapped)"))
+             && portTexts.filter(QStringLiteral("L202")).isEmpty(),
+             qPrintable(portTexts.join(QStringLiteral(" | "))));
+    w.testRemoveAllPorts();
+    w.testRefreshLayoutPreview();
 
     // Order: stack layers from top to bottom, port markers last.
     panel->setUsedLayersOnly(false);
@@ -981,10 +1004,11 @@ void MainWindowPortsTest::layoutPreview_withGoldenGds_populatesLayerPanel()
         QVERIFY2(idx > prev, qPrintable(texts.join(QStringLiteral(" | "))));
         prev = idx;
     }
-    const int firstPort = texts.indexOf(QStringLiteral("P1 (not mapped)"));
+    const int firstPort = texts.indexOf(QStringLiteral("L201 (not mapped)"));
     QVERIFY(firstPort > prev);
     for (int i = firstPort; i < texts.size(); ++i)
-        QVERIFY2(texts.at(i).startsWith(QLatin1Char('P')), qPrintable(texts.join(QStringLiteral(" | "))));
+        QVERIFY2(texts.at(i).endsWith(QStringLiteral("(not mapped)")),
+                 qPrintable(texts.join(QStringLiteral(" | "))));
     panel->setUsedLayersOnly(true);
 
     QListWidgetItem *item = layerList->item(0);

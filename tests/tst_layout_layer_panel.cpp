@@ -19,6 +19,7 @@
 #include <QStyleOptionViewItem>
 
 #include "layoutlayerpanel.h"
+#include "layoutview.h"
 
 void LayoutLayerPanelTest::layers_filterHighlightOpacityAndContextMenu()
 {
@@ -74,15 +75,23 @@ void LayoutLayerPanelTest::layers_filterHighlightOpacityAndContextMenu()
     QCOMPARE(list->count(), 3);
     QCOMPARE(list->item(0)->text(), QStringLiteral("All layers"));
 
-    // Nothing selected → "All layers": slider enabled and shows the true opacity.
+    // Nothing selected → "All layers": slider enabled and shows the fill opacity of an untouched
+    // layer (59 %); the signal carries the layout opacity factor (1 = default).
+    const qreal base = LayoutView::defaultFillOpacity();
     auto *slider = panel.findChild<QSlider *>();
     QVERIFY(slider);
     QVERIFY(slider->isEnabled());
-    QCOMPARE(slider->value(), 100);
+    QCOMPARE(slider->value(), 59);
     QSignalSpy allSpy(&panel, &LayoutLayerPanel::allOpacityChanged);
     slider->setValue(40);
     QCOMPARE(allSpy.count(), 1);
-    QCOMPARE(allSpy.takeFirst().at(0).toReal(), 0.4);
+    QVERIFY(qFuzzyCompare(allSpy.takeFirst().at(0).toReal(), 0.4 / base));
+    slider->setValue(100);   // above 59 %: fills more opaque, up to solid
+    QVERIFY(qFuzzyCompare(allSpy.takeFirst().at(0).toReal(), LayoutView::maxLayoutOpacity()));
+    slider->setValue(59);    // back to the default: exactly factor 1
+    QCOMPARE(allSpy.takeFirst().at(0).toReal(), 1.0);
+    slider->setValue(40);
+    allSpy.clear();
 
     panel.setUsedLayersOnly(false);
     QVERIFY(usedSpy.count() >= 1);
@@ -91,12 +100,20 @@ void LayoutLayerPanelTest::layers_filterHighlightOpacityAndContextMenu()
     panel.setHighlightedName(QStringLiteral("Metal1"));
     QVERIFY(actSpy.count() >= 1);
 
+    // A layer's slider shows it as seen: its own fill (100 %) under All layers at 40 % (factor
+    // 0.4 / 0.59) is 68 %, which is also the most it can show until All layers goes up.
+    const qreal factor = 0.4 / base;
     QVERIFY(slider->isEnabled());
-    QCOMPARE(slider->value(), 100); // the layer's own fill value; "All layers" is the whole layout
+    QCOMPARE(slider->value(), qRound(factor * 100.0));
     slider->setValue(55);
     QCOMPARE(opSpy.count(), 1);
-    QCOMPARE(opSpy.at(0).at(1).toReal(), 0.55);
+    QVERIFY(qFuzzyCompare(opSpy.at(0).at(1).toReal(), 0.55 / factor));   // its own value
     QCOMPARE(allSpy.count(), 0);
+    slider->setValue(95);                 // capped at what the layout fade allows
+    QCOMPARE(slider->value(), qRound(factor * 100.0));
+    QCOMPARE(opSpy.last().at(1).toReal(), 1.0);
+    slider->setValue(55);
+    opSpy.clear();
 
     // Esc in the list returns to "All layers": the whole-layout opacity again.
     QSignalSpy deactSpy(&panel, &LayoutLayerPanel::layerDeactivated);
@@ -104,6 +121,14 @@ void LayoutLayerPanelTest::layers_filterHighlightOpacityAndContextMenu()
     QCOMPARE(deactSpy.count(), 1);
     QCOMPARE(list->currentItem(), list->item(0));
     QCOMPARE(slider->value(), 40);
+
+    // Untouched layers (own 59 %) show what All layers shows: 30 % there, 30 % on the layer.
+    panel.refreshOpacities([base](int) { return base; }, 0.3 / base);
+    QCOMPARE(slider->value(), 30);
+    panel.setHighlightedName(QStringLiteral("Via1"));
+    QCOMPARE(slider->value(), 30);
+    panel.refreshOpacities([](int) { return 1.0; }, 0.4 / base);
+    QTest::keyClick(list, Qt::Key_Escape);
 
     // A right-click (context menu) must not select the row under it: the slider stays on
     // "All layers".
@@ -128,7 +153,9 @@ void LayoutLayerPanelTest::layers_filterHighlightOpacityAndContextMenu()
     // refreshOpacities (e.g. switch to the Fields page) shows the view's layout opacity.
     panel.refreshOpacities([](int) { return 0.55; }, 0.0);
     QCOMPARE(slider->value(), 0);
-    panel.refreshOpacities([](int) { return 0.55; }, 0.4);
+    panel.refreshOpacities([](int) { return 0.55; }, 1.0);   // the layout default: 59 %
+    QCOMPARE(slider->value(), 59);
+    panel.refreshOpacities([](int) { return 0.55; }, 0.4 / base);
     QCOMPARE(slider->value(), 40);
 
     // Unused layer: opacity slider must stay disabled (nothing to fade in the preview).
@@ -235,24 +262,24 @@ void LayoutLayerPanelTest::opacity_deferredUntilSliderReleased()
     QVERIFY(labelFollows);
     slider->setSliderDown(false);
     QCOMPARE(allSpy.count(), 1);
-    QCOMPARE(allSpy.takeFirst().at(0).toReal(), 0.3);
+    QVERIFY(qFuzzyCompare(allSpy.takeFirst().at(0).toReal(), 0.3 / LayoutView::defaultFillOpacity()));
 
     // Wheel / key steps: one signal once the value settles.
     slider->setValue(20);
     slider->setValue(10);
     QCOMPARE(allSpy.count(), 0);
     QTRY_COMPARE_WITH_TIMEOUT(allSpy.count(), 1, 2000);
-    QCOMPARE(allSpy.takeFirst().at(0).toReal(), 0.1);
+    QVERIFY(qFuzzyCompare(allSpy.takeFirst().at(0).toReal(), 0.1 / LayoutView::defaultFillOpacity()));
 
     // A pending change is flushed for its own layer when the selection changes.
     panel.setHighlightedName(QStringLiteral("Metal1"));
     slider->setSliderDown(true);
-    slider->setValue(50);
+    slider->setValue(15);   // shown value under All layers at 10 %: own value 15 / 10 x 0.59
     QCOMPARE(oneSpy.count(), 0);
     panel.setDeferOpacityUpdates(false); // leaving Iso3D flushes at once
     QCOMPARE(oneSpy.count(), 1);
     QCOMPARE(oneSpy.at(0).at(0).toInt(), 1);
-    QCOMPARE(oneSpy.at(0).at(1).toReal(), 0.5);
+    QVERIFY(qFuzzyCompare(oneSpy.at(0).at(1).toReal(), 0.15 / (0.1 / LayoutView::defaultFillOpacity())));
     slider->setSliderDown(false);
 }
 
@@ -305,4 +332,68 @@ void LayoutLayerPanelTest::unmappedPort_isMarkedInList()
     QCOMPARE(batchSpy.at(0).at(0).value<QVector<int>>().size(), 1);
     QVERIFY(!batchSpy.at(0).at(1).toBool());
     QCOMPARE(list->item(0)->checkState(), Qt::PartiallyChecked);
+}
+
+/*! "EM only" removes the unmapped layers from the list and hides them in the layout; a layer that becomes
+ *  mapped comes back, and unchecking shows again only the layers it hid. */
+void LayoutLayerPanelTest::emLayersOnly_hidesUnmappedAndRestores()
+{
+    LayoutLayerPanel panel;
+    auto entry = [](int gds, const QString &name, const QString &kind, bool unmapped, bool visible) {
+        LayoutLayerPanel::Entry e;
+        e.gdsLayer = gds;
+        e.name = name;
+        e.kind = kind;
+        e.color = Qt::magenta;
+        e.unmapped = unmapped;
+        e.visible = visible;
+        return e;
+    };
+    const auto metal = entry(8, QStringLiteral("Metal1"), QStringLiteral("conductor"), false, true);
+    const auto p1 = entry(202, QStringLiteral("P1"), QStringLiteral("port"), false, true);
+    const auto l201 = entry(201, QStringLiteral("L201"), QStringLiteral("port"), true, true);
+    const auto l14 = entry(14, QStringLiteral("L14"), QStringLiteral("port"), true, false); // already hidden
+    panel.setLayers({metal, p1, l201, l14});
+
+    auto *list = panel.findChild<QListWidget *>();
+    QVERIFY(list);
+    auto listed = [&]() {
+        QStringList t;
+        for (int i = 1; i < list->count(); ++i)   // row 0 is "All layers"
+            t << list->item(i)->data(Qt::DisplayRole).toString();
+        return t;
+    };
+    QCOMPARE(listed().size(), 4);
+
+    QSignalSpy spy(&panel, &LayoutLayerPanel::layersVisibilityChanged);
+    QSignalSpy toggled(&panel, &LayoutLayerPanel::emLayersOnlyToggled);
+    panel.setEmLayersOnly(true);
+    QVERIFY(panel.emLayersOnly());
+    QCOMPARE(toggled.count(), 1);
+    QCOMPARE(listed(), QStringList({QStringLiteral("Metal1"), QStringLiteral("P1")}));
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(0).value<QVector<int>>(), QVector<int>({201}));   // L14 was already hidden
+    QVERIFY(!spy.at(0).at(1).toBool());
+    QCOMPARE(list->item(0)->checkState(), Qt::Checked);   // all listed layers are shown
+
+    // The preview refreshes (setLayers with the view's visibility): L201 is now mapped as P2.
+    spy.clear();
+    panel.setLayers({metal, p1, entry(201, QStringLiteral("P2"), QStringLiteral("port"), false, false),
+                     l14});
+    QVERIFY(listed().contains(QStringLiteral("P2")));
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(0).value<QVector<int>>(), QVector<int>({201}));
+    QVERIFY(spy.at(0).at(1).toBool());
+
+    // A refresh with a new unmapped layer hides it; unchecking shows only that one again, L14 stays hidden.
+    panel.setLayers({metal, p1, l201, l14});
+    spy.clear();
+    panel.setEmLayersOnly(false);
+    QCOMPARE(listed().size(), 4);
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.at(0).at(0).value<QVector<int>>(), QVector<int>({201}));
+    QVERIFY(spy.at(0).at(1).toBool());
+    for (int i = 1; i < list->count(); ++i)
+        if (list->item(i)->data(Qt::DisplayRole).toString().startsWith(QStringLiteral("L14")))
+            QCOMPARE(list->item(i)->checkState(), Qt::Unchecked);
 }

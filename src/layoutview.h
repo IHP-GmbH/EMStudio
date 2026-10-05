@@ -174,13 +174,17 @@ public:
     /*! Fill opacity of layers that were never changed (\c kBaseFillAlpha / 255). */
     static qreal                defaultFillOpacity() { return kBaseFillAlpha / 255.0; }
     /*!
-     * \brief Opacity (0..1) of the layout fills as one image, however many layers overlap.
+     * \brief Layout opacity factor, applied on top of the per-layer fill opacities.
      *
-     * Applied on top of the per-layer fill opacities; outlines, the highlight and port / thermal
-     * markers are not faded. The layout and the Field view keep their own value (Field: 0, outlines).
+     * 0..1 fades the layout fills as one image, however many layers overlap; above 1 (up to
+     * 1 / \c defaultFillOpacity()) the fills get more opaque, an untouched layer solid at the maximum.
+     * Outlines, the highlight and port / thermal marker lines are not affected. The layout and the
+     * Field view keep their own value (layout 1, Field 0 = outlines).
      */
     void                        setLayoutOpacity(qreal opacity);
     qreal                       layoutOpacity() const;
+    /*! Largest layout opacity factor: an untouched layer's fill is opaque. */
+    static qreal                maxLayoutOpacity() { return 1.0 / defaultFillOpacity(); }
 
     void                        clearMeasure();
     /*! Clears Field click-probe marker and readout. */
@@ -345,6 +349,13 @@ private:
     qreal                       markerOpacityFor(int gdsLayer) const;
     /*! Applies layoutOpacity() to the faded items (kRoleFade) of the scene. */
     void                        applyLayoutOpacity();
+    /*! Fade of the layout fills as one image: the layout opacity up to 1. */
+    qreal                       layoutFade() const;
+    /*! Fill alpha multiplier above layout opacity 1 (1 otherwise). */
+    qreal                       layoutFillBoost() const;
+    /*! Fill alpha of a layer fill with styling multiplier \a op (\c opacityFor), capped at \a cap
+     *  unless the layout opacity makes the fills more opaque. */
+    int                         layerFillAlpha(qreal op, int cap = 255) const;
     /*! New parent item faded by the layout opacity as one image (QGraphicsOpacityEffect). */
     QGraphicsItem              *addFadeGroup(qreal z);
     QString                     thermalMarkerToolTip(int gdsLayer, const QString &name) const;

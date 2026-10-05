@@ -498,6 +498,26 @@ bool MainWindow::testPathExistsPortable(const QString& path,
 }
 
 /*!*******************************************************************************************************************
+ * \brief Reads cells, top cells and (layer, datatype) pairs of a GDS file with readGdsFileInfo().
+ *
+ * \param filePath GDS file.
+ * \param cells    Receives the cell names.
+ * \param topCells Receives the top-level cells.
+ * \param layers   Receives the (layer, datatype) pairs.
+ * \return False if the file can't be read.
+ **********************************************************************************************************************/
+bool MainWindow::testReadGdsFileInfo(const QString &filePath, QStringList *cells, QStringList *topCells,
+                                     QSet<QPair<int, int>> *layers)
+{
+    GdsFileInfo info;
+    const bool ok = readGdsFileInfo(filePath, &info);
+    *cells = info.cells;
+    *topCells = info.topCells;
+    *layers = info.layers;
+    return ok;
+}
+
+/*!*******************************************************************************************************************
  * \brief Imports ports from the current editor text in test mode.
  **********************************************************************************************************************/
 void MainWindow::testImportPortsFromEditor()

@@ -35,6 +35,8 @@ private slots:
     void settingsGrid_tooltipsCombineModelAndKeywordFile();
     void collectSanityFindings_reportsMissingInputs();
     void layoutPreview_withGoldenGds_populatesLayerPanel();
+    void loadPythonModel_buildsLayoutPreviewOnce();
+    void gdsCache_rereadsChangedFile();
     void layoutPreview_showsOnlyModelPurposes();
     void convertLooseModel_backsUpConvertsAndReloads();
     void convertLooseModel_refusalLeavesModelUntouched();

@@ -206,6 +206,9 @@ static void rebuildComboWithMapping(QComboBox* box,
         if (nameToGds.contains(cur)) cur = QString::number(nameToGds.value(cur));
     }
 
+    // The selection is the same layer before and after; observers (layout preview, Save state) must
+    // not see the empty selection of the intermediate clear().
+    const QSignalBlocker blocker(box);
     box->clear();
     box->addItems(newItems);
     int idx = box->findText(cur);
@@ -3719,6 +3722,9 @@ void MainWindow::on_actionSave_triggered()
             return;
     }
 
+    // Sync, re-parse and reload ask for several preview builds; one at the end is enough.
+    LayoutPreviewHold previewHold(this);
+
     QString script = m_ui->editRunPythonScript->toPlainText();
     const QString simKey = currentSimToolKey().toLower();
 
@@ -3891,14 +3897,17 @@ void MainWindow::updateGdsUserInfo()
     m_sysSettings["GdsDir"] = QFileInfo(filePath).absolutePath();
     m_ui->btnAddPort->setEnabled(true);
 
-    m_cells.clear();
-    m_layers.clear();
-
-    QStringList topCells;
-    m_cells  = extractGdsCellNames(filePath, &topCells);
-    m_layers = extractGdsLayerNumbers(filePath);
+    // Load and Save call this several times for the same file: read it only when it changed.
+    const QString key = gdsFileKey(filePath);
+    if (key.isEmpty() || key != m_gdsInfoCache.key) {
+        m_gdsInfoCache.key.clear();
+        if (readGdsFileInfo(filePath, &m_gdsInfoCache))
+            m_gdsInfoCache.key = key;
+    }
+    m_cells  = m_gdsInfoCache.cells;
+    m_layers = m_gdsInfoCache.layers;
     // What gds2palace / gds2openEMS load without a (valid) cell name: top_level()[0].
-    m_gdsTopCell = topCells.value(0, m_cells.value(0));
+    m_gdsTopCell = m_gdsInfoCache.topCells.value(0, m_cells.value(0));
 
     QString desired = m_simSettings.value("TopCell").toString().trimmed();
     if (desired.isEmpty())
@@ -4644,16 +4653,58 @@ void MainWindow::onPortsTableSelectionChanged()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Holds the layout preview: refreshLayoutPreview() calls are deferred until the hold ends.
+ *
+ * Used while several inputs change in a row (model load: GDS, stackup, ports), so the preview and the Layers
+ * panel are built once from the final state instead of showing each intermediate one.
+ *
+ * \param w Main window whose preview is held.
+ **********************************************************************************************************************/
+MainWindow::LayoutPreviewHold::LayoutPreviewHold(MainWindow *w)
+    : m_w(w)
+{
+    ++m_w->m_layoutPreviewHold;
+}
+
+MainWindow::LayoutPreviewHold::~LayoutPreviewHold()
+{
+    release();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Ends the hold now; the last hold to end runs the refresh that was asked for meanwhile.
+ **********************************************************************************************************************/
+void MainWindow::LayoutPreviewHold::release()
+{
+    if (!m_w)
+        return;
+    MainWindow *w = m_w;
+    m_w = nullptr;
+    if (--w->m_layoutPreviewHold > 0 || !w->m_layoutPreviewPending)
+        return;
+    w->m_layoutPreviewPending = false;
+    w->refreshLayoutPreview();
+}
+
+/*!*******************************************************************************************************************
  * \brief Rebuilds the Substrate-tab Layout preview from the current GDS and stackup.
  *
  * Flattens the selected top cell via GdsLayout::flattenTopCell, builds per-layer
  * colors/names from the substrate XML (and \c m_gdsToSubName fallback), then calls
  * LayoutView::setPolygons. Clears the view when GDS/top cell is missing or flatten fails.
+ * While a LayoutPreviewHold is alive it only marks the refresh as pending.
  **********************************************************************************************************************/
 void MainWindow::refreshLayoutPreview()
 {
     if (!m_ui || !m_ui->layoutView)
         return;
+    if (m_layoutPreviewHold > 0) {
+        m_layoutPreviewPending = true;
+        return;
+    }
+#ifdef EMSTUDIO_TESTING
+    ++m_layoutPreviewRefreshCount;
+#endif
 
     const QString gdsPath = m_ui->txtGdsFile->text().trimmed();
     const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
@@ -4661,6 +4712,8 @@ void MainWindow::refreshLayoutPreview()
         m_ui->layoutView->clear();
         m_layoutPreviewKey.clear();
         m_fieldLastDumpPath.clear();
+        m_flatPolysKey.clear();
+        m_flatPolys.clear();
         if (m_layoutLayerPanel)
             m_layoutLayerPanel->clear();
         return;
@@ -4671,27 +4724,39 @@ void MainWindow::refreshLayoutPreview()
     // during flatten / Iso3D of via-dense layouts.
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
-    QVector<GdsFlatPolygon> polys;
-    QString err;
-    if (!GdsLayout::flattenTopCell(gdsPath, topCell, &polys, &err)) {
-        QApplication::restoreOverrideCursor();
-        m_ui->layoutView->clear();
-        m_layoutPreviewKey.clear();
-        m_fieldLastDumpPath.clear();
-        if (m_layoutLayerPanel)
-            m_layoutLayerPanel->clear();
-        if (!err.isEmpty())
-            info(err);
-        return;
+    // Flatten only when the file or the cell changed (Save, port and setting edits rebuild the preview).
+    const QString flatKey = gdsFileKey(gdsPath) + QLatin1Char('\n') + topCell;
+    if (flatKey != m_flatPolysKey) {
+        m_flatPolysKey.clear();
+        QString err;
+        if (!GdsLayout::flattenTopCell(gdsPath, topCell, &m_flatPolys, &err)) {
+            m_flatPolys.clear();
+            QApplication::restoreOverrideCursor();
+            m_ui->layoutView->clear();
+            m_layoutPreviewKey.clear();
+            m_fieldLastDumpPath.clear();
+            if (m_layoutLayerPanel)
+                m_layoutLayerPanel->clear();
+            if (!err.isEmpty())
+                info(err);
+            return;
+        }
+        m_flatPolysKey = flatKey;
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
     }
-    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // The workflows read only the datatypes in read_gds(purposelist=...); hide the others.
     const QSet<int> purposes = currentGdsPurposes();
     m_layoutPreviewPurposes = currentGdsPurposesKey();
-    polys.erase(std::remove_if(polys.begin(), polys.end(),
-                               [&purposes](const GdsFlatPolygon &p) { return !purposes.contains(p.datatype); }),
-                polys.end());
+    const auto readByWorkflow = [&purposes](const GdsFlatPolygon &p) { return purposes.contains(p.datatype); };
+    QVector<GdsFlatPolygon> polys;
+    if (std::all_of(m_flatPolys.cbegin(), m_flatPolys.cend(), readByWorkflow)) {
+        polys = m_flatPolys;   // shared, no copy
+    } else {
+        for (const GdsFlatPolygon &p : qAsConst(m_flatPolys))
+            if (readByWorkflow(p))
+                polys.append(p);
+    }
 
     // Model load always uses Top2D first — Iso3D is slow on via-dense GDS; user can switch after.
     if (m_ui->layoutView->isView3d())
@@ -5971,6 +6036,10 @@ void MainWindow::applySubLayerNamesToPorts(bool toNames)
 {
     const int rows = m_ui->tblPorts->rowCount();
 
+    // Names and numbers select the same layers: no preview refresh per combo.
+    const bool wasBlocked = m_blockPortChanges;
+    m_blockPortChanges = true;
+
     for (int r = 0; r < rows; ++r) {
         auto* srcBox  = qobject_cast<QComboBox*>(m_ui->tblPorts->cellWidget(r, 3));
         auto* fromBox = qobject_cast<QComboBox*>(m_ui->tblPorts->cellWidget(r, 4));
@@ -6005,6 +6074,7 @@ void MainWindow::applySubLayerNamesToPorts(bool toNames)
         rebuildComboWithMapping(fromBox, m_gdsToSubName, m_subNameToGds, toNames);
         rebuildComboWithMapping(toBox,   m_gdsToSubName, m_subNameToGds, toNames);
     }
+    m_blockPortChanges = wasBlocked;
 
     setStateChanged();
 }
@@ -7012,7 +7082,9 @@ bool MainWindow::loadPythonModel(const QString &fileName)
         return false;
     }
 
-    // From here on the new model replaces the previous one.
+    // From here on the new model replaces the previous one. The preview is built once, when GDS, stackup
+    // and ports are in: earlier builds would show the port markers without their Ports rows ("not mapped").
+    LayoutPreviewHold previewHold(this);
     clearModelInputs();
     m_simSettings.remove(QStringLiteral("RunDir"));
 
@@ -7142,6 +7214,7 @@ bool MainWindow::loadPythonModel(const QString &fileName)
     }
 
     setStateSaved();
+    previewHold.release();
 
     // Results tab must follow the newly loaded model (not keep the previous run folder).
     updateResultsViewerFromModel(true);

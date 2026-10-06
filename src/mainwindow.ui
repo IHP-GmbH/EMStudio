@@ -40,7 +40,7 @@
           <item>
            <widget class="QLabel" name="label_2">
             <property name="text">
-             <string>GDS File</string>
+             <string>Layout File</string>
             </property>
            </widget>
           </item>

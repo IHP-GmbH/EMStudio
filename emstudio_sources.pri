@@ -36,6 +36,7 @@ SOURCES += \
     $$TOP/extension/variantmanager.cpp \
     $$TOP/src/finddialog.cpp \
     $$TOP/src/gdsreader.cpp \
+    $$TOP/src/layoutfile.cpp \
     $$TOP/src/gdslayout.cpp \
     $$TOP/src/layoutview.cpp \
     $$TOP/src/layoutlayerpanel.cpp \
@@ -104,6 +105,7 @@ HEADERS += \
     $$TOP/src/pythonsyntaxhighlighter.h \
     $$TOP/src/substrate.h \
     $$TOP/src/substrateview.h \
+    $$TOP/src/layoutfile.h \
     $$TOP/src/gdslayout.h \
     $$TOP/src/layoutview.h \
     $$TOP/src/layoutlayerpanel.h \

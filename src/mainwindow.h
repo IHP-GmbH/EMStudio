@@ -425,6 +425,12 @@ private:
     static QString                  gdsFileKey(const QString &filePath);
     static bool                     readGdsFileInfo(const QString &filePath, GdsFileInfo *info);
 
+    /*! Resolve Layout File to a GDS path (identity for .gds; room_to_gds cache for ROOM). */
+    QString                         resolveLayoutGdsPath(const QString &layoutPath, QString *errorMsg = nullptr) const;
+    /*! Before Run: convert ROOM→GDS and patch the on-disk model script; editor keeps ROOM. */
+    bool                            prepareLayoutForRun(QString *errorMsg = nullptr);
+    void                            restoreLayoutPathAfterRun();
+
     QStringList                     readSubstrateLayers(const QString &xmlFilePath);
     QHash<int, QString>             readSubstrateLayerMap(const QString &xmlFilePath);
 
@@ -802,6 +808,8 @@ private:
     GdsFileInfo                     m_gdsInfoCache;        //!< Last GDS read by updateGdsUserInfo()
     QString                         m_flatPolysKey;        //!< GDS version + top cell of m_flatPolys
     QVector<GdsFlatPolygon>         m_flatPolys;           //!< Last flattened top cell (all datatypes)
+    bool                            m_layoutPathPatchedForRun = false; //!< On-disk script GdsFile temporarily GDS
+    QString                         m_layoutPathPatchedScript;         //!< Model script path that was patched
     QStringList                     m_subLayers;
     QHash<QString, QString>         m_subLayerTypes;   //!< Stackup layer name -> type (conductor, sheet, via, ...)
 

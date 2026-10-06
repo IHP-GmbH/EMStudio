@@ -219,6 +219,25 @@ QString findPalaceInstallRoot()
     return {};
 }
 
+QString findRoomToGds()
+{
+#ifdef Q_OS_WIN
+    return firstExistingFile({
+        QStandardPaths::findExecutable(QStringLiteral("room_to_gds")),
+        QStandardPaths::findExecutable(QStringLiteral("room_to_gds.exe")),
+        QDir::homePath() + QStringLiteral("/Documents/CommonDB/build/room_to_gds.exe"),
+        QDir::homePath() + QStringLiteral("/Documents/Room/build/room_to_gds.exe"),
+    });
+#else
+    return firstExistingFile({
+        QStandardPaths::findExecutable(QStringLiteral("room_to_gds")),
+        QDir::homePath() + QStringLiteral("/CommonDB/build/room_to_gds"),
+        QDir::homePath() + QStringLiteral("/Room/build/room_to_gds"),
+        QStringLiteral("/usr/local/bin/room_to_gds"),
+    });
+#endif
+}
+
 QString findOpenemsInstallRoot()
 {
 #ifdef Q_OS_WIN
@@ -294,6 +313,7 @@ int fillEmptyPreferences(QMap<QString, QVariant> &prefs)
 #endif
 
     setIfEmpty(prefs, QStringLiteral("KLAYOUT_EXE"), findKlayoutExe(), &n);
+    setIfEmpty(prefs, QStringLiteral("ROOM_TO_GDS"), findRoomToGds(), &n);
     setIfEmpty(prefs, QStringLiteral("ELMER_SOLVER_PATH"), findElmerSolver(), &n);
     // Do not invent PALACE_INSTALL_PATH when the user already runs via Script mode —
     // filling an empty install key confused enablement / Preference UI earlier.

@@ -130,6 +130,7 @@ set(SOURCES
 
     src/finddialog.cpp
     src/gdsreader.cpp
+    src/layoutfile.cpp
     src/gdslayout.cpp
     src/layoutview.cpp
     src/layoutlayerpanel.cpp

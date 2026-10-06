@@ -77,6 +77,7 @@
 #include "ui_mainwindow.h"
 #include "substrateview.h"
 #include "layoutview.h"
+#include "layoutfile.h"
 #include "layoutlayerpanel.h"
 #include "gdslayout.h"
 #include "substrate.h"
@@ -3885,7 +3886,110 @@ void MainWindow::updateEditStackupButtonState()
 }
 
 /*!*******************************************************************************************************************
- * \brief Updates internal GDS information from the selected GDS file.
+ * \brief Resolve Layout File to GDS bytes for readers/solvers (ROOM → cache via room_to_gds).
+ **********************************************************************************************************************/
+QString MainWindow::resolveLayoutGdsPath(const QString &layoutPath, QString *errorMsg) const
+{
+    const QString path = layoutPath.trimmed();
+    if (path.isEmpty()) {
+        if (errorMsg)
+            *errorMsg = tr("Layout file path is empty.");
+        return {};
+    }
+    if (!QFileInfo::exists(path)) {
+        if (errorMsg)
+            *errorMsg = tr("Layout file does not exist:\n%1").arg(path);
+        return {};
+    }
+    if (!isRoomLayoutPath(path))
+        return QFileInfo(path).absoluteFilePath();
+
+    const QString exe = m_preferences.value(QStringLiteral("ROOM_TO_GDS")).toString().trimmed();
+    return materializeRoomLayoutGds(path, exe, errorMsg);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Before Run: convert ROOM layout to GDS and patch the on-disk model script (editor keeps ROOM).
+ **********************************************************************************************************************/
+bool MainWindow::prepareLayoutForRun(QString *errorMsg)
+{
+    restoreLayoutPathAfterRun();
+
+    const QString layoutPath = m_ui && m_ui->txtGdsFile ? m_ui->txtGdsFile->text().trimmed() : QString();
+    if (!isRoomLayoutPath(layoutPath))
+        return true;
+
+    QString err;
+    const QString gdsPath = resolveLayoutGdsPath(layoutPath, &err);
+    if (gdsPath.isEmpty()) {
+        if (errorMsg)
+            *errorMsg = err;
+        return false;
+    }
+
+    const QString scriptPath = m_simSettings.value(QStringLiteral("RunPythonScript")).toString().trimmed();
+    if (scriptPath.isEmpty() || !QFileInfo::exists(scriptPath)) {
+        if (errorMsg)
+            *errorMsg = tr("Model script not found; cannot inject GDS path for ROOM layout.");
+        return false;
+    }
+
+    QFile in(scriptPath);
+    if (!in.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        if (errorMsg)
+            *errorMsg = tr("Cannot read model script:\n%1").arg(scriptPath);
+        return false;
+    }
+    QString text = QString::fromUtf8(in.readAll());
+    in.close();
+
+    const QString gdsForScript = makeScriptPathForPython(gdsPath, currentSimToolKey().toLower());
+    if (rewriteLayoutPathInScript(&text, layoutPath, gdsForScript) <= 0) {
+        // Script may use a relative path; still force settings / gds_filename via apply helpers.
+        QString patched = text;
+        const QString savedGds = m_simSettings.value(QStringLiteral("GdsFile")).toString();
+        m_simSettings[QStringLiteral("GdsFile")] = gdsPath;
+        applyGdsAndXmlPaths(patched, currentSimToolKey().toLower());
+        m_simSettings[QStringLiteral("GdsFile")] = savedGds;
+        text = patched;
+    }
+
+    QFile out(scriptPath);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        if (errorMsg)
+            *errorMsg = tr("Cannot write model script for ROOM→GDS run:\n%1").arg(scriptPath);
+        return false;
+    }
+    out.write(text.toUtf8());
+    out.close();
+
+    m_layoutPathPatchedForRun = true;
+    m_layoutPathPatchedScript = scriptPath;
+    info(tr("ROOM layout converted to GDS for this run:\n%1").arg(gdsPath));
+    return true;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Restore ROOM path in the on-disk model script after a run that used a temporary GDS.
+ **********************************************************************************************************************/
+void MainWindow::restoreLayoutPathAfterRun()
+{
+    if (!m_layoutPathPatchedForRun || m_layoutPathPatchedScript.isEmpty())
+        return;
+
+    if (m_ui && m_ui->editRunPythonScript) {
+        QFile out(m_layoutPathPatchedScript);
+        if (out.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            out.write(m_ui->editRunPythonScript->toPlainText().toUtf8());
+            out.close();
+        }
+    }
+    m_layoutPathPatchedForRun = false;
+    m_layoutPathPatchedScript.clear();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Updates internal layout information from the selected Layout File (GDS or ROOM).
  * This includes extracting cells and layers, updating the top cell combo box, and enabling the "Add Port" button.
  **********************************************************************************************************************/
 void MainWindow::updateGdsUserInfo()
@@ -3897,11 +4001,21 @@ void MainWindow::updateGdsUserInfo()
     m_sysSettings["GdsDir"] = QFileInfo(filePath).absolutePath();
     m_ui->btnAddPort->setEnabled(true);
 
+    QString readPath = filePath;
+    if (isRoomLayoutPath(filePath)) {
+        QString err;
+        readPath = resolveLayoutGdsPath(filePath, &err);
+        if (readPath.isEmpty()) {
+            error(err);
+            return;
+        }
+    }
+
     // Load and Save call this several times for the same file: read it only when it changed.
-    const QString key = gdsFileKey(filePath);
+    const QString key = gdsFileKey(filePath); // key by Layout File (ROOM or GDS), not only cache GDS
     if (key.isEmpty() || key != m_gdsInfoCache.key) {
         m_gdsInfoCache.key.clear();
-        if (readGdsFileInfo(filePath, &m_gdsInfoCache))
+        if (readGdsFileInfo(readPath, &m_gdsInfoCache))
             m_gdsInfoCache.key = key;
     }
     m_cells  = m_gdsInfoCache.cells;
@@ -3957,7 +4071,7 @@ void MainWindow::updateGdsUserInfo()
 }
 
 /*!*******************************************************************************************************************
- * \brief Opens a file dialog for selecting a GDS file and updates UI and settings accordingly.
+ * \brief Opens a file dialog for selecting a layout file (GDS or ROOM) and updates UI and settings.
  **********************************************************************************************************************/
 void MainWindow::on_btnGdsFile_clicked()
 {
@@ -3970,8 +4084,8 @@ void MainWindow::on_btnGdsFile_clicked()
         }
     }
 
-    QString filePath = QFileDialog::getOpenFileName(this, tr("Select GDS File"), defaultDir,
-                                                    tr("GDS Files (*.gds *.gdsii);;All Files (*)"));
+    QString filePath = QFileDialog::getOpenFileName(this, tr("Select Layout File"), defaultDir,
+                                                    layoutFileDialogFilter());
     if (!filePath.isEmpty()) {
         m_ui->txtGdsFile->setText(filePath);
         m_simSettings[QStringLiteral("GdsFile")] = filePath;
@@ -4069,7 +4183,7 @@ void MainWindow::on_btnShowInKlayout_clicked()
 
     const QString gdsPath = m_ui->txtGdsFile->text().trimmed();
     if (gdsPath.isEmpty() || !QFileInfo::exists(gdsPath)) {
-        error(tr("GDS file is not set or does not exist."));
+        error(tr("Layout file is not set or does not exist."));
         return;
     }
 
@@ -4706,9 +4820,9 @@ void MainWindow::refreshLayoutPreview()
     ++m_layoutPreviewRefreshCount;
 #endif
 
-    const QString gdsPath = m_ui->txtGdsFile->text().trimmed();
+    const QString layoutPath = m_ui->txtGdsFile->text().trimmed();
     const QString topCell = m_ui->cbxTopCell->currentText().trimmed();
-    if (gdsPath.isEmpty() || !QFileInfo::exists(gdsPath) || topCell.isEmpty()) {
+    if (layoutPath.isEmpty() || !QFileInfo::exists(layoutPath) || topCell.isEmpty()) {
         m_ui->layoutView->clear();
         m_layoutPreviewKey.clear();
         m_fieldLastDumpPath.clear();
@@ -4719,13 +4833,26 @@ void MainWindow::refreshLayoutPreview()
         return;
     }
 
+    QString flattenErr;
+    const QString gdsPath = resolveLayoutGdsPath(layoutPath, &flattenErr);
+    if (gdsPath.isEmpty()) {
+        m_ui->layoutView->clear();
+        m_layoutPreviewKey.clear();
+        m_flatPolysKey.clear();
+        m_flatPolys.clear();
+        if (m_layoutLayerPanel)
+            m_layoutLayerPanel->clear();
+        error(flattenErr);
+        return;
+    }
+
     QApplication::setOverrideCursor(Qt::WaitCursor);
     // Keep the message pump alive so Windows does not mark us "Not Responding"
     // during flatten / Iso3D of via-dense layouts.
     QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // Flatten only when the file or the cell changed (Save, port and setting edits rebuild the preview).
-    const QString flatKey = gdsFileKey(gdsPath) + QLatin1Char('\n') + topCell;
+    const QString flatKey = gdsFileKey(layoutPath) + QLatin1Char('\n') + topCell;
     if (flatKey != m_flatPolysKey) {
         m_flatPolysKey.clear();
         QString err;
@@ -5593,24 +5720,33 @@ QVector<SanityFinding> MainWindow::collectSanityFindings() const
         SanityFinding f;
         f.severity = SanityFinding::Error;
         f.code = QStringLiteral("empty_topcell");
-        f.message = tr("Top cell is empty. Select a GDS top cell before running.");
+        f.message = tr("Top cell is empty. Select a layout top cell before running.");
         out.append(f);
     }
 
-    // --- GDS ---
+    // --- Layout (GDS or ROOM) ---
     const QString gdsPath = m_ui->txtGdsFile ? m_ui->txtGdsFile->text().trimmed() : QString();
     if (gdsPath.isEmpty()) {
         SanityFinding f;
         f.severity = SanityFinding::Error;
         f.code = QStringLiteral("missing_gds");
-        f.message = tr("GDS file path is empty.");
+        f.message = tr("Layout file path is empty.");
         out.append(f);
     } else if (!QFileInfo::exists(gdsPath)) {
         SanityFinding f;
         f.severity = SanityFinding::Error;
         f.code = QStringLiteral("gds_not_found");
-        f.message = tr("GDS file does not exist:\n%1").arg(gdsPath);
+        f.message = tr("Layout file does not exist:\n%1").arg(gdsPath);
         out.append(f);
+    } else if (isRoomLayoutPath(gdsPath)) {
+        const QString exe = m_preferences.value(QStringLiteral("ROOM_TO_GDS")).toString().trimmed();
+        if (exe.isEmpty() || !QFileInfo::exists(exe)) {
+            SanityFinding f;
+            f.severity = SanityFinding::Error;
+            f.code = QStringLiteral("missing_room_to_gds");
+            f.message = tr("Layout File is ROOM but ROOM_TO_GDS (room_to_gds) is not configured.");
+            out.append(f);
+        }
     }
 
     // --- Substrate ---

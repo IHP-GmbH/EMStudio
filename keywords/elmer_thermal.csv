@@ -4,10 +4,10 @@ preview_only	True|False, only show the unmeshed geometry, then stop without mesh
 save_gmsh_unrolled	True|False, also save the gmsh geometry file without meshing, for debugging	Script control and output files	False
 start_simulation	Always False in EMStudio: EMStudio starts the solver itself after the Python stage	Script control and output files	False
 unit	Unit of geometry values, typically 1e-6 (micron)	Input files	1e-6	yes
-purpose	Which GDSII data type is evaluated? Values in [] can be separated by comma	Input files	[0]
-preprocess_gds	True|False, preprocess GDSII for safe handling of cutouts/holes	Input files	False
+purpose	Which GDS/ROOM datatype is evaluated? Values in [] can be separated by comma	Input files	[0]
+preprocess_gds	True|False, preprocess layout (GDS/ROOM) for safe handling of cutouts/holes	Input files	False
 merge_polygon_size	Merge via polygons with distance less than .. microns, set to 0 to disable via merging	Input files	0
-cellname	GDSII cell to simulate, empty string uses the top cell	Input files	''
+cellname	Layout cell (GDS/ROOM) to simulate, empty string uses the top cell	Input files	''
 variable_overrides	Overrides for stackup <Variable> values, edited on the Substrate tab	Input files	{}
 refined_cellsize	Fine mesh size near conductors and heat sources, in project units	Mesh size and accuracy		yes
 meshsize_max	Coarsest mesh size, in project units	Mesh size and accuracy	70

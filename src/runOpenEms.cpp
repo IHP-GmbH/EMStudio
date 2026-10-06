@@ -56,6 +56,16 @@ void MainWindow::runOpenEMS(bool interactive)
         setStateSaved();
     }
 
+    {
+        QString layoutErr;
+        if (!prepareLayoutForRun(&layoutErr)) {
+            error(layoutErr, true);
+            if (!interactive)
+                QCoreApplication::exit(1);
+            return;
+        }
+    }
+
     QString pythonPath = m_preferences.value("Python Path").toString().trimmed();
     if (pythonPath.isEmpty()) {
         pythonPath = QStringLiteral("python");
@@ -143,6 +153,7 @@ void MainWindow::runOpenEMS(bool interactive)
                 appendToSimulationLog(
                     QString("\n[Simulation finished with exit code %1]\n").arg(exitCode).toUtf8());
                 persistSimulationLogSnapshot();
+                restoreLayoutPathAfterRun();
 
                 if (m_simProcess) {
                     m_simProcess->deleteLater();
@@ -166,6 +177,7 @@ void MainWindow::runOpenEMS(bool interactive)
     if (!m_simProcess->waitForStarted(3000)) {
         error("Failed to start simulation process.", false);
         persistSimulationLogSnapshot();
+        restoreLayoutPathAfterRun();
 
         if (m_simProcess) {
             m_simProcess->deleteLater();

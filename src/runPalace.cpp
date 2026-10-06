@@ -117,6 +117,16 @@ void MainWindow::runPalace(bool interactive)
         setStateSaved();
     }
 
+    {
+        QString layoutErr;
+        if (!prepareLayoutForRun(&layoutErr)) {
+            error(layoutErr, true);
+            if (!interactive)
+                QCoreApplication::exit(1);
+            return;
+        }
+    }
+
     PalaceRunContext ctx;
     QString err;
     if (!buildPalaceRunContext(ctx, err)) {
@@ -160,6 +170,7 @@ void MainWindow::runPalace(bool interactive)
         m_simProcess->deleteLater();
         m_simProcess = nullptr;
         m_palacePhase = PalacePhase::None;
+        restoreLayoutPathAfterRun();
 
         if (!interactive)
             QCoreApplication::exit(3);
@@ -668,6 +679,9 @@ bool MainWindow::loadSimulationLogFromDisk(const QString &modelFile)
 void MainWindow::onPalaceProcessFinished(int exitCode)
 {
     const int runMode = m_preferences.value("PALACE_RUN_MODE", 0).toInt();
+    auto endPalaceRun = [this]() {
+        restoreLayoutPathAfterRun();
+    };
 
     if (m_palacePhase == PalacePhase::PythonModel) {
         if (exitCode != 0) {
@@ -681,6 +695,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
                 m_simProcess = nullptr;
             }
             m_palacePhase = PalacePhase::None;
+            endPalaceRun();
 
             if (m_headless)
                 QCoreApplication::exit(exitCode);
@@ -702,6 +717,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
                     m_simProcess = nullptr;
                 }
                 m_palacePhase = PalacePhase::None;
+                endPalaceRun();
 
                 if (m_headless)
                     QCoreApplication::exit(1);
@@ -727,6 +743,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
                 m_simProcess = nullptr;
             }
             m_palacePhase = PalacePhase::None;
+            endPalaceRun();
 
             if (m_headless)
                 QCoreApplication::exit(0);
@@ -748,6 +765,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
                 m_simProcess = nullptr;
             }
             m_palacePhase = PalacePhase::None;
+            endPalaceRun();
 
             if (m_headless)
                 QCoreApplication::exit(1);
@@ -799,6 +817,7 @@ void MainWindow::onPalaceProcessFinished(int exitCode)
             m_simProcess = nullptr;
         }
         m_palacePhase = PalacePhase::None;
+        endPalaceRun();
 
         // Palace/Elmer EM write CSV; Results needs Touchstone (.sNp) via combine_extend_snp.py
         // Elmer Thermal → Substrate tab + Layout Field at hottest Z.
@@ -1112,6 +1131,7 @@ void MainWindow::failPalaceSolver(const QString &message, bool showDialog)
     }
 
     m_palacePhase = PalacePhase::None;
+    restoreLayoutPathAfterRun();
 }
 
 /*!*******************************************************************************************************************

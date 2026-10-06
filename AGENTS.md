@@ -30,10 +30,13 @@ The legacy key `elmer` maps to `elmer_em` (`normalizeSimToolKey`). Use
 `isElmerFamilyKey` / `isElmerEmKey` / `isElmerThermalKey` (src/elmerThermalUi.cpp)
 rather than comparing strings.
 
-Inputs: a GDSII layout (`.gds`) with a top cell, an XML **stackup** (substrate)
-file, ports drawn on special GDS layers, and the model script. The script must sit
-next to the solver workflow folder (`modules/` for openEMS, `gds2palace/` for
-Palace/Elmer) unless that package is installed with pip.
+Inputs: a **Layout File** — GDSII (`.gds`) or ROOM layout (`.layout.room`) — with a
+top cell, an XML **stackup** (substrate) file, ports drawn on special GDS layers,
+and the model script. Script keys stay `GdsFile` / `gds_filename`. ROOM layouts are
+converted to a cached GDS via preference `ROOM_TO_GDS` (`room_to_gds` from CommonDB)
+before preview flatten and before Run. The script must sit next to the solver
+workflow folder (`modules/` for openEMS, `gds2palace/` for Palace/Elmer) unless that
+package is installed with pip.
 
 ---
 

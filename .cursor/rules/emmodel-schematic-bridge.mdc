@@ -15,11 +15,14 @@ Keysight ADS pattern after RF/EM:
 
 ## Decision for IHP stack (EMStudio / LibMan / CommonDB / Qucs-S)
 
-- **Do** aim for: cell with layout + emmodel artifact + layout-lookalike **symbol**
-- **Do not** add a new geometric CORE `ViewType` only for S-parameters in v1
-- Prefer LibMan view `emmodel` (sidecar `.sNp` + meta) and/or CORE `opaque`/properties
-- **Qucs-S** does **not** open an `emmodel` view natively; it opens `schematic.core` / `symbol.core` and uses Touchstone via FileSP / `.lib` / netlist
-- Publish path: EMStudio → `.sNp` + auto symbol look-alike + emmodel meta → schematic instance nets via nport/FileSP
+- Cell: **layout** + **emmodel** + layout-lookalike **symbol** (+ optional **emsetup** folder of variants)
+- **Do** add Room `ViewType::EmModel` + `EmModelViewData` (CommonDB schema) — first-class, not opaque-only
+- On disk: `<cell>.emmodel.room`; variants live under `<cell>.emsetup/<name>/` (not a ViewType)
+- `emmodel.room` = published handle (default variant, port map, snp/ref, EMStudio `.py` path, topology/setup hashes)
+- Heavy artifacts (`.sNp`, fields, `.py`) stay as files under `emsetup/`; room holds structured meta + refs
+- EMStudio Layout File may be GDS or ROOM; **before Run**, ROOM is converted to GDS for the workflow
+- LibMan launches EMStudio like setupEM (`-libman-cell`); after a successful Run, EMStudio writes `<cell>.emmodel.room`
+- **Qucs-S** does **not** open `emmodel` natively; uses Touchstone via FileSP / `.lib` / netlist + **symbol**
 
 ## Fragile contract
 

@@ -387,6 +387,15 @@ void Preferences::setupPreferencesPanel()
     klayoutOptionsProp->setValue(m_preferences.value(QStringLiteral("KLAYOUT_OPTIONS"), QString()));
     klayoutGroup->addSubProperty(klayoutOptionsProp);
 
+    QtVariantProperty *roomToGdsProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("ROOM_TO_GDS"));
+    roomToGdsProp->setWhatsThis("file");
+    roomToGdsProp->setToolTip(tr(
+        "CommonDB room_to_gds converter (ROOM layout → GDS for preview and solvers).\n"
+        "Required when Layout File is a *.layout.room. Leave empty to auto-detect."));
+    roomToGdsProp->setValue(m_preferences.value(QStringLiteral("ROOM_TO_GDS"), QString()));
+    klayoutGroup->addSubProperty(roomToGdsProp);
+
     // -------------------------------------------------------------------------------------------------------------
     // Layout Field view
     // -------------------------------------------------------------------------------------------------------------

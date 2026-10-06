@@ -502,7 +502,11 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
    `mainwindow.ui` (`m_ui->txtGdsFile` etc., and auto-connected `on_<name>_<signal>`
    slots). Renaming one breaks code without a compile error for auto-connections.
 6. **WSL paths.** Use `toLinuxPathPortable` / `wslToWinPath` / `pathExistsPortable`
-   for anything Palace touches on Windows.
+   for the Palace **solver** on Windows. Model scripts (openEMS / Elmer / gds2palace)
+   always use host paths: `makeScriptPathForPython` must not write `/mnt/<drive>/…`.
+   `applyGdsAndXmlPaths` rewrites an absolute path of the other form (`/mnt/d/...` vs
+   `D:/...`) even when it names the same file. `PALACE_PYTHON` is a Windows interpreter
+   for gds2palace; WSL is only for `bin/palace`.
 7. **Vendored QtPropertyBrowser.** Fix bugs if needed, but keep its API; the app
    and Preferences rely on `QtVariantPropertyManager` signals.
 8. **No blocking UI.** Long work (solver runs, field export, version probes) runs

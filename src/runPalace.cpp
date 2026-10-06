@@ -409,9 +409,14 @@ void MainWindow::logPalaceStartupInfo(const PalaceRunContext &ctx)
     }
 
     if (ctx.runMode == 1 && !isElmerFamilyKey(ctx.simKeyLower)) {
+        // A Linux launcher path (/home/...) is shown as written, not with backslashes.
+        const bool linuxStyle = ctx.launcherWin.startsWith(QLatin1Char('/'))
+            || ctx.launcherWin.startsWith(QLatin1Char('~'));
         appendToSimulationLog(
             QString("[Launcher script: %1]\n")
-                .arg(QDir::toNativeSeparators(ctx.launcherWin)).toUtf8());
+                .arg(linuxStyle ? ctx.launcherWin
+                                : QDir::toNativeSeparators(ctx.launcherWin))
+                .toUtf8());
     }
 }
 

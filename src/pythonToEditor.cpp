@@ -736,26 +736,19 @@ void MainWindow::applyBoundaries(QString &script, bool alsoTopLevelAssignment)
 /*!*******************************************************************************************************************
  * \brief Converts a native file path to the path form expected inside the Python script.
  *
- * On Windows, when using Palace with WSL available, converts paths to WSL format.
- * On non-Windows platforms, returns the input as-is.
+ * Model scripts always run with a host Python (openEMS / Elmer / gds2palace). On Windows that
+ * means Windows paths — never \c /mnt/<drive>/… (a regression that broke Elmer, and would break
+ * Palace after gds2palace moved to native Windows). The Palace binary still runs in WSL; its
+ * paths are converted at solver launch time, not in the model script.
  *
  * \param nativePath  Native OS path.
- * \param simKeyLower Current simulation tool key in lower-case (e.g. "openems", "palace").
+ * \param simKeyLower Current simulation tool key in lower-case (unused; kept for call sites).
  *
  * \return Converted script-friendly path string.
  **********************************************************************************************************************/
-#include "wslHelper.h"
-
 QString MainWindow::makeScriptPathForPython(QString nativePath, const QString &simKeyLower) const
 {
-#ifdef Q_OS_WIN
-    if (simKeyLower == QLatin1String("palace") || isElmerFamilyKey(simKeyLower)) {
-        if (isWslAvailable())
-            return toWslPath(nativePath);
-    }
-#else
     Q_UNUSED(simKeyLower);
-#endif
     // Python string literals: prefer forward slashes (works on Windows too).
     return QDir::fromNativeSeparators(nativePath);
 }
@@ -869,7 +862,8 @@ void MainWindow::applyTopCellToScript(QString &script, const QString &topCell)
  *
  * Replaces top-level \c gds_filename / \c XML_filename and gds2palace-style
  * \c settings['GdsFile'] / \c settings['SubstrateFile'] (plus model-specific keys).
- * Paths may be converted to WSL form depending on platform/tool.
+ * Absolute paths are rewritten when the script still has the other OS form
+ * (\c /mnt/d/... vs \c D:/...), even if both name the same file.
  *
  * \param script      Python script text to be modified in-place.
  * \param simKeyLower Current simulation tool key in lower-case (e.g. "openems", "palace").
@@ -895,6 +889,24 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
             return a.canonicalFilePath() == b.canonicalFilePath();
         return QDir::cleanPath(a.absoluteFilePath()) == QDir::cleanPath(b.absoluteFilePath());
     };
+    // Can the host Python open the path as written? Absolute /mnt/... must be rewritten to
+    // D:/... (and the reverse) even when sameFile() is true — leftover from when Palace/Elmer
+    // scripts were given WSL paths.
+    auto usableForm = [&](const QString &scriptValue, const QString &value) -> bool {
+#ifdef Q_OS_WIN
+        static const QRegularExpression reWsl(QStringLiteral(R"(^/mnt/[a-zA-Z]/)"));
+        static const QRegularExpression reWin(QStringLiteral(R"(^[a-zA-Z]:[/\\])"));
+        const QString s = scriptValue.trimmed();
+        if (reWsl.match(s).hasMatch())
+            return reWsl.match(value).hasMatch();
+        if (reWin.match(s).hasMatch())
+            return reWin.match(value).hasMatch();
+#else
+        Q_UNUSED(scriptValue);
+        Q_UNUSED(value);
+#endif
+        return true;
+    };
     // <lhs> = "path"  # comment : value replaced (comment kept) unless it is the same file.
     auto replacePath = [&](const QString &lhsPattern, const QString &guiPath, const QString &value) {
         const QRegularExpression re(
@@ -907,7 +919,8 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
             const QRegularExpressionMatch quoted =
                 QRegularExpression(QStringLiteral(R"(^(['"])(.*)\1$)")).match(m.captured(2).trimmed());
             out += script.mid(last, m.capturedStart() - last);
-            out += (quoted.hasMatch() && sameFile(quoted.captured(2), guiPath))
+            out += (quoted.hasMatch() && sameFile(quoted.captured(2), guiPath)
+                    && usableForm(quoted.captured(2), value))
                     ? m.captured(0)
                     : m.captured(1) + QStringLiteral("\"%1\"").arg(value) + m.captured(3);
             last = m.capturedEnd();

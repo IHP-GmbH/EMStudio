@@ -298,6 +298,34 @@ jobs:
           chmod +x ../tools/get_code_coverage.sh
           ../tools/get_code_coverage.sh .
 
+  # Model converter + golden scripts as Python (stand-in workflows; no gmsh / openEMS).
+  # Matrix covers the users' solver Python range; converter AST checks depend on the version.
+  tests-python:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install test deps (numpy + pytest)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy pytest
+
+      - name: Run Python tests (model converter, golden scripts)
+        run: |
+          # Field-viewer tests need pyvista / PySide6 and are not run here.
+          python -m pytest -v tests/python/test_convert_loose.py tests/python/test_golden_scripts.py
+
   build-windows:
     runs-on: windows-latest
 

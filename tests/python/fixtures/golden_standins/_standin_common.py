@@ -1,12 +1,19 @@
 """Stand-ins for the gds2palace / gds2openEMS / openEMS calls the EMStudio templates make.
 
-They keep the real function signatures (a wrong argument fails like in the real workflow) and
-record every call as one JSON line in the file named by STANDIN_RECORD. Nothing is meshed or
-simulated.
+Signatures come from ``workflow_standins.api`` (shared with convert_loose). Every call is
+recorded as one JSON line in the file named by STANDIN_RECORD. Nothing is meshed or simulated.
 """
 
 import json
 import os
+import sys
+
+# fixtures/ is on PYTHONPATH next to this package (see test_golden_scripts.py).
+_FIXTURES = os.path.normpath(os.path.join(os.path.dirname(__file__), ".."))
+if _FIXTURES not in sys.path:
+    sys.path.insert(0, _FIXTURES)
+
+from workflow_standins import api as _api  # noqa: E402
 
 
 def record(call, **args):
@@ -27,49 +34,29 @@ def get_basename(filename):
 
 
 # stackup_reader
-class StackupLayers:
-    def getlayernumbers(self):
-        return [8, 10, 30]
+StackupLayers = _api.StackupLayers
 
 
 def read_substrate(XML_filename, variable_overrides=None):
     record("read_substrate", XML_filename=XML_filename, variable_overrides=variable_overrides)
-    return [], [], StackupLayers()
+    return _api.read_substrate(XML_filename, variable_overrides=variable_overrides)
 
 
 # gds_reader (same signature in gds2palace and gds2openEMS)
 def read_gds(filename, layerlist, purposelist, metals_list, preprocess=False, merge_polygon_size=0,
-             mirror=False, offset_x=0, offset_y=0, gds_boundary_layers=[], layernumber_offset=0,
+             mirror=False, offset_x=0, offset_y=0, gds_boundary_layers=None, layernumber_offset=0,
              cellname="", derived_layers=None):
+    if gds_boundary_layers is None:
+        gds_boundary_layers = []
     record("read_gds", filename=filename, layerlist=list(layerlist), purposelist=purposelist,
            preprocess=preprocess, merge_polygon_size=merge_polygon_size, cellname=cellname)
-    return []
+    return _api.read_gds(filename, layerlist, purposelist, metals_list, preprocess=preprocess,
+                         merge_polygon_size=merge_polygon_size, mirror=mirror, offset_x=offset_x,
+                         offset_y=offset_y, gds_boundary_layers=gds_boundary_layers,
+                         layernumber_offset=layernumber_offset, cellname=cellname,
+                         derived_layers=derived_layers)
 
 
-# simulation_setup ports (same in both workflows)
-class simulation_port:
-    def __init__(self, portnumber, voltage, port_Z0, source_layernum, target_layername=None,
-                 from_layername=None, to_layername=None, direction='x'):
-        self.portnumber = portnumber
-        self.voltage = voltage
-        self.port_Z0 = port_Z0
-        self.source_layernum = source_layernum
-        self.target_layername = target_layername
-        self.from_layername = from_layername
-        self.to_layername = to_layername
-        self.direction = direction
-
-
-class all_simulation_ports:
-    def __init__(self):
-        self.ports = []
-        self.portcount = 0
-        self.portlayers = []
-
-    def add_port(self, port):
-        self.ports.append(port)
-        self.portcount = len(self.ports)
-        self.portlayers.append(port.source_layernum)
-
-    def all_active_excitations(self):
-        return [p for p in self.ports if p.voltage != 0]
+# simulation_setup ports
+simulation_port = _api.simulation_port
+all_simulation_ports = _api.all_simulation_ports

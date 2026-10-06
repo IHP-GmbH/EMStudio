@@ -17,7 +17,8 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPT = os.path.join(HERE, "..", "..", "scripts", "convert_loose_to_settings.py")
 SIGNATURES = os.path.join(HERE, "..", "..", "keywords", "workflow_signatures.csv")
-FIXTURE = os.path.join(HERE, "fixtures", "convert_loose")
+FIXTURES = os.path.join(HERE, "fixtures")
+FIXTURE = os.path.join(FIXTURES, "convert_loose")
 FAKE_OPENEMS = os.path.join(FIXTURE, "fake_openems")
 
 pytest.importorskip("numpy")
@@ -64,7 +65,8 @@ def run_model(model, package_dir=None):
     if record.exists():
         record.unlink()
     env = dict(os.environ, CONVERT_RECORD=str(record))
-    paths = [FAKE_OPENEMS] + ([str(package_dir)] if package_dir else [])
+    # fixtures/ so fake_openems can import workflow_standins.api (shared with golden_standins)
+    paths = [FAKE_OPENEMS, FIXTURES] + ([str(package_dir)] if package_dir else [])
     env["PYTHONPATH"] = os.pathsep.join(paths)
     r = subprocess.run([sys.executable, model.name], cwd=model.parent, env=env,
                        capture_output=True, text=True)

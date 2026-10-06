@@ -111,20 +111,30 @@ def runSimulation (excite_portnumbers=None,
     return os.path.join(sim_path, "excite_" + "_".join(str(p) for p in excite_portnumbers))
 
 
+# Same port types as workflow_standins.api (golden_standins shares that module).
 class all_simulation_ports:
     def __init__(self):
         self.ports = []
+        self.portcount = 0
+        self.portlayers = []
 
     def add_port(self, port):
         self.ports.append(port)
+        self.portcount = len(self.ports)
+        self.portlayers.append(port.source_layernum)
 
-    @property
-    def portlayers(self):
-        return [p.source_layernum for p in self.ports]
+    def all_active_excitations(self):
+        return [p for p in self.ports if getattr(p, "voltage", 0) != 0]
 
 
 class simulation_port:
     def __init__(self, portnumber, voltage, port_Z0, source_layernum, target_layername=None,
                  from_layername=None, to_layername=None, direction='x'):
         self.portnumber = portnumber
+        self.voltage = voltage
+        self.port_Z0 = port_Z0
         self.source_layernum = source_layernum
+        self.target_layername = target_layername
+        self.from_layername = from_layername
+        self.to_layername = to_layername
+        self.direction = direction

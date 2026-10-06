@@ -398,10 +398,19 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   recordings. The Qt tests `MainWindowPortsTest::convertLooseModel_*` use the same fixture. In the
   test binary, wait with `QTRY_*`, not `QSignalSpy::wait()`: `HeadlessDispatchTest` calls
   `QCoreApplication::exit`, after which nested event loops return at once.
+- Golden scripts as Python: `python -m pytest tests/python/test_golden_scripts.py` (numpy only) runs
+  `tests/golden/tst_*_golden.py` against `tests/python/fixtures/golden_standins` (gds2palace,
+  gds2openEMS, openEMS). Signatures live in `fixtures/workflow_standins/api.py` and are shared with
+  convert_loose's fake openEMS so the two fixtures cannot drift. The expected scripts must run
+  without error, and the GUI edits must reach the workflow calls (top cell → `read_gds(cellname=...)`,
+  required keywords → `create_palace` settings, `numfreq`). The openEMS golden has an empty Ports
+  table; the test injects one port so `setupSimulation` / `runSimulation` run. The Qt golden tests
+  only compare text; this catches an expected script that couldn't run. Keep `workflow_standins.api`
+  in step with the real packages when the templates use new calls.
 - Python tests for the field scripts: `python -m pytest tests/python` (needs
   pyvista; the viewer tests also need PySide6 + pyvistaqt, run with
   `QT_QPA_PLATFORM=offscreen`). They build small synthetic dumps; they are not
-  part of the Qt test binary or CI yet. Creating several `QtInteractor` windows
+  part of the Qt test binary (converter + golden-script tests run in CI `tests-python`). Creating several `QtInteractor` windows
   in one offscreen process aborts VTK; share one window per module.
 - Solver stubs in `tests/tools/` stand in for openEMS, Palace and Elmer. Tests set
   them through preferences, e.g. `testSetPreference("PALACE_RUN_SCRIPT", stub)`. Tests that run a
@@ -441,6 +450,7 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
 - CI (.github/workflows/build.yml):
   - `build-linux`, plus `build-ubuntu-portable` for older glibc;
   - `tests-linux` (Qt 5.15.2, xvfb, `gds2palace==0.5.2` for the About golden);
+  - `tests-python` (matrix Python 3.10 / 3.12: `test_convert_loose.py` + `test_golden_scripts.py`);
   - `build-windows` (MinGW, stages `field_viewer_python`, Inno Setup installer
     `installer/EMStudio.iss` packing `build/dist/*`).
 

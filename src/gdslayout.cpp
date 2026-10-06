@@ -22,6 +22,7 @@
 
 #include <QtMath>
 #include <QFile>
+#include <QBuffer>
 #include <QHash>
 #include <QDataStream>
 #include <QByteArray>
@@ -202,13 +203,14 @@ bool readAscii(QDataStream &stream, qint64 dataSize, QString *out)
  * converted to thin closed outlines. TEXT/NODE are skipped. On success \a cells holds
  * every structure; \a dbuMeters is the database unit in metres (default 1 nm).
  *
- * \param file       Open QFile in ReadOnly mode.
+ * \param file       Open device in ReadOnly mode (a QBuffer over the file's bytes: record-wise reads from a
+ *                   QFile are slow on Windows).
  * \param cells      Output map: structure name → RawCell.
  * \param dbuMeters  Output database unit length in metres.
  * \param errorMsg   Optional error text if no structures are found.
  * \return           True if at least one structure was parsed.
  **********************************************************************************************************************/
-bool parseLibrary(QFile &file, QHash<QString, RawCell> *cells, double *dbuMeters, QString *errorMsg)
+bool parseLibrary(QIODevice &file, QHash<QString, RawCell> *cells, double *dbuMeters, QString *errorMsg)
 {
     QDataStream stream(&file);
     stream.setByteOrder(QDataStream::BigEndian);
@@ -639,9 +641,14 @@ bool GdsLayout::flattenTopCell(const QString &filePath,
         return false;
     }
 
+    QByteArray bytes = file.readAll();
+    file.close();
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::ReadOnly);
+
     QHash<QString, RawCell> cells;
     double dbuMeters = 1e-9;
-    if (!parseLibrary(file, &cells, &dbuMeters, errorMsg)) {
+    if (!parseLibrary(buffer, &cells, &dbuMeters, errorMsg)) {
         if (errorMsg && errorMsg->isEmpty())
             *errorMsg = QStringLiteral("Failed to parse GDS file.");
         return false;

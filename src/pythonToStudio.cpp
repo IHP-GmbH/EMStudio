@@ -107,6 +107,8 @@ bool MainWindow::applyPythonScriptFromEditor()
     }
 
     m_curPythonData = res;
+    // GDS, stackup and ports are re-read below, each step asking for a preview: build it once at the end.
+    LayoutPreviewHold previewHold(this);
     if (m_ui->layoutView)
         m_ui->layoutView->setViaMergeSize(currentViaMergeSize());
 

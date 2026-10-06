@@ -21,6 +21,7 @@
 #include <QWheelEvent>
 #include <QSignalSpy>
 #include <QShortcut>
+#include <QCheckBox>
 
 #include "mainwindow.h"
 #include "layoutlayerpanel.h"
@@ -1044,6 +1045,167 @@ void MainWindowPortsTest::layoutPreview_withGoldenGds_populatesLayerPanel()
         QApplication::sendEvent(gv->viewport(), &wheel);
         break;
     }
+}
+
+/*!*******************************************************************************************************************
+ * \brief Loading a model builds the layout preview once, after its ports are in, and switching the port
+ *        combos between layer numbers and names doesn't rebuild it: the Layers panel never shows the port
+ *        markers as "(not mapped)" in between (it flickered P1 ↔ "L201 (not mapped)" before).
+ **********************************************************************************************************************/
+void MainWindowPortsTest::loadPythonModel_buildsLayoutPreviewOnce()
+{
+    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY2(!gdsPath.isEmpty() && !xmlPath.isEmpty(), "Golden GDS / XML missing");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString model = dir.filePath(QStringLiteral("ports_model.py"));
+    {
+        QFile m(model);
+        QVERIFY(m.open(QIODevice::WriteOnly | QIODevice::Text));
+        m.write(QStringLiteral(
+                    "from openEMS import openEMS\n"
+                    "gds_filename = \"%1\"\n"
+                    "cellname = \"t1\"\n"
+                    "XML_filename = \"%2\"\n"
+                    "simulation_ports = simulation_setup.all_simulation_ports()\n"
+                    "simulation_ports.add_port(simulation_setup.simulation_port(portnumber=1, voltage=1, "
+                    "port_Z0=50, source_layernum=201, from_layername='Metal1', to_layername='TopMetal2', "
+                    "direction='z'))\n"
+                    "simulation_ports.add_port(simulation_setup.simulation_port(portnumber=2, voltage=1, "
+                    "port_Z0=50, source_layernum=202, target_layername='Metal1', direction='x'))\n"
+                    "allpolygons = gds_reader.read_gds(gds_filename, layernumbers, purposelist=[0], "
+                    "metals_list=metals_list, cellname=cellname)\n")
+                    .arg(gdsPath, xmlPath).toUtf8());
+    }
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.resize(1200, 800);
+    w.show();
+    QTest::qWait(30);
+
+    auto *panel = w.findChild<LayoutLayerPanel *>();
+    QVERIFY(panel);
+    auto *panelList = panel->findChild<QListWidget *>();
+    QVERIFY(panelList);
+    auto panelTexts = [&]() {
+        QStringList t;
+        for (int i = 1; i < panelList->count(); ++i)   // row 0 is "All layers"
+            t << panelList->item(i)->text();
+        return t;
+    };
+    auto checkPorts = [&]() {
+        const QStringList t = panelTexts();
+        QVERIFY2(t.filter(QRegularExpression(QStringLiteral("^P1\\b"))).size() == 1
+                 && t.filter(QRegularExpression(QStringLiteral("^P2\\b"))).size() == 1
+                 && t.filter(QStringLiteral("(not mapped)")).isEmpty(),
+                 qPrintable(t.join(QStringLiteral(" | "))));
+    };
+
+    // First load, and a reload of the same model (as after File → Convert to Settings Dictionary).
+    for (int pass = 0; pass < 2; ++pass) {
+        const int before = w.testLayoutPreviewRefreshCount();
+        QVERIFY(w.loadPythonModel(model));
+        QCOMPARE(w.testLayoutPreviewRefreshCount() - before, 1);
+        checkPorts();
+    }
+
+    // The load switched the ports to stackup layer names; switching back and forth selects the same
+    // layers, so the preview isn't rebuilt (one rebuild per combo signal before).
+    auto *names = w.findChild<QCheckBox *>(QStringLiteral("cbSubLayerNames"));
+    QVERIFY(names);
+    QVERIFY(names->isChecked());
+    const QStringList texts = panelTexts();
+    const int before = w.testLayoutPreviewRefreshCount();
+    names->setChecked(false);
+    names->setChecked(true);
+    QCOMPARE(w.testLayoutPreviewRefreshCount(), before);
+    QCOMPARE(panelTexts(), texts);
+
+    // Save (GUI → script, write, re-parse, reload GDS / stackup / ports) builds it once too.
+    w.testSetEditorText(w.testEditorText() + QStringLiteral("\n# edited\n"));
+    const int beforeSave = w.testLayoutPreviewRefreshCount();
+    w.testTriggerSave();
+    QCOMPARE(w.testLayoutPreviewRefreshCount() - beforeSave, 1);
+    checkPorts();
+}
+
+/*!*******************************************************************************************************************
+ * \brief The GDS cells / layers and the flattened preview are cached per file version: a GDS changed on
+ *        disk (same path, e.g. saved again in KLayout) is read again.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::gdsCache_rereadsChangedFile()
+{
+    const QString golden = QFINDTESTDATA("golden/line_simple_viaport.gds");
+    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY2(!golden.isEmpty() && !xmlPath.isEmpty(), "Golden GDS / XML missing");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString gds = dir.filePath(QStringLiteral("layout.gds"));
+    QVERIFY(QFile::copy(golden, gds));
+
+    QStringList cells, topCells;
+    QSet<QPair<int, int>> layers;
+    QVERIFY(MainWindow::testReadGdsFileInfo(gds, &cells, &topCells, &layers));
+    QCOMPARE(cells, QStringList{QStringLiteral("t1")});
+    QCOMPARE(topCells, QStringList{QStringLiteral("t1")});
+    QVERIFY(layers.contains(qMakePair(201, 0)) && layers.contains(qMakePair(202, 0)));
+    QVERIFY(!layers.contains(qMakePair(203, 0)));
+    QVERIFY(!MainWindow::testReadGdsFileInfo(dir.filePath(QStringLiteral("missing.gds")),
+                                             &cells, &topCells, &layers));
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    w.resize(1200, 800);
+    w.show();
+    QTest::qWait(30);
+    w.setGdsFile(gds);
+    w.setTopCell(QStringLiteral("t1"));
+    w.setSubstrateFile(xmlPath);
+    w.testRefreshLayoutPreview();
+
+    auto *panel = w.findChild<LayoutLayerPanel *>();
+    QVERIFY(panel);
+    auto *panelList = panel->findChild<QListWidget *>();
+    QVERIFY(panelList);
+    auto panelTexts = [&]() {
+        QStringList t;
+        for (int i = 1; i < panelList->count(); ++i)   // row 0 is "All layers"
+            t << panelList->item(i)->text();
+        return t;
+    };
+    QVERIFY(panelTexts().contains(QStringLiteral("L202 (not mapped)")));
+
+    // Same path and size, marker layer 202 → 203, newer time stamp.
+    QFile f(gds);
+    QVERIFY(f.open(QIODevice::ReadWrite));
+    QByteArray bytes = f.readAll();
+    const QByteArray layer202("\x00\x06\x0d\x02\x00\xca", 6);
+    const QByteArray layer203("\x00\x06\x0d\x02\x00\xcb", 6);
+    QVERIFY(bytes.contains(layer202));
+    bytes.replace(layer202, layer203);
+    QVERIFY(f.seek(0));
+    QCOMPARE(f.write(bytes), qint64(bytes.size()));
+    QVERIFY(f.setFileTime(QDateTime::currentDateTime().addSecs(10), QFileDevice::FileModificationTime));
+    f.close();
+
+    w.setGdsFile(gds);
+    w.testRefreshLayoutPreview();
+    const QStringList texts = panelTexts();
+    QVERIFY2(texts.contains(QStringLiteral("L203 (not mapped)")) && texts.filter(QStringLiteral("L202")).isEmpty(),
+             qPrintable(texts.join(QStringLiteral(" | "))));
+
+    // The port combos offer the layers of the new file.
+    w.testClickAddPort();
+    auto *tblPorts = w.findChild<QTableWidget *>(QStringLiteral("tblPorts"));
+    QVERIFY(tblPorts);
+    auto *srcBox = qobject_cast<QComboBox *>(tblPorts->cellWidget(0, 3));
+    QVERIFY(srcBox);
+    QVERIFY(srcBox->findText(QStringLiteral("203")) >= 0);
+    QCOMPARE(srcBox->findText(QStringLiteral("202")), -1);
 }
 
 /*!*******************************************************************************************************************

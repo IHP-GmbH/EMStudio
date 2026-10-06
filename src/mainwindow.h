@@ -217,6 +217,9 @@ public:
     /*! Editor type of a settings grid row (QVariant::Bool for a checkbox); Invalid if not in the grid. */
     int                             testSettingPropertyType(const QString &key) const;
     void                            testRefreshLayoutPreview() { refreshLayoutPreview(); }
+    int                             testLayoutPreviewRefreshCount() const { return m_layoutPreviewRefreshCount; }
+    static bool                     testReadGdsFileInfo(const QString &filePath, QStringList *cells,
+                                                        QStringList *topCells, QSet<QPair<int, int>> *layers);
     QString                         testPortCellText(int row, int col) const;
     QString                         testPortComboText(int row, int col) const;
     void                            testClickAddPort();
@@ -411,9 +414,16 @@ private:
     QStringList                     recentPythonModels() const;
     void                            setRecentPythonModels(const QStringList& list);
 
-    QStringList                     extractGdsCellNames(const QString &filePath,
-                                                        QStringList *topCells = nullptr);
-    QSet<QPair<int, int>>           extractGdsLayerNumbers(const QString &filePath);
+    /*! Cells and layers of a GDS file (gdsreader.cpp); \c key identifies the file version read. */
+    struct GdsFileInfo
+    {
+        QString                     key;
+        QStringList                 cells;
+        QStringList                 topCells;
+        QSet<QPair<int, int>>       layers;
+    };
+    static QString                  gdsFileKey(const QString &filePath);
+    static bool                     readGdsFileInfo(const QString &filePath, GdsFileInfo *info);
 
     QStringList                     readSubstrateLayers(const QString &xmlFilePath);
     QHash<int, QString>             readSubstrateLayerMap(const QString &xmlFilePath);
@@ -540,6 +550,16 @@ private:
     void                            updateSubLayerNamesCheckboxState();
     void                            rebuildLayerMapping();
     void                            refreshLayoutPreview();
+    /*! Defers refreshLayoutPreview() calls while alive; the last one to go builds the preview once. */
+    class LayoutPreviewHold
+    {
+    public:
+        explicit                    LayoutPreviewHold(MainWindow *w);
+                                    ~LayoutPreviewHold();
+        void                        release();
+    private:
+        MainWindow                 *m_w;
+    };
     void                            setupLayoutLayerPanel();
     /*! Moves the layout + Layers pane to the Fields page (Field mode on) or back to Substrate. */
     void                            placeLayoutPane(bool fieldsPage);
@@ -779,6 +799,9 @@ private:
 
     QStringList                     m_cells;
     QSet<QPair<int, int>>           m_layers;
+    GdsFileInfo                     m_gdsInfoCache;        //!< Last GDS read by updateGdsUserInfo()
+    QString                         m_flatPolysKey;        //!< GDS version + top cell of m_flatPolys
+    QVector<GdsFlatPolygon>         m_flatPolys;           //!< Last flattened top cell (all datatypes)
     QStringList                     m_subLayers;
     QHash<QString, QString>         m_subLayerTypes;   //!< Stackup layer name -> type (conductor, sheet, via, ...)
 
@@ -831,6 +854,11 @@ private:
     QString                         m_layoutPreviewKey;
     QString                         m_simToolBeforeSwitch;   //!< Tool key before the last tool list change
     QString                         m_layoutPreviewPurposes; //!< Datatypes the preview was built with ("0,2")
+    int                             m_layoutPreviewHold = 0;        //!< > 0: refreshLayoutPreview() only marks pending
+    bool                            m_layoutPreviewPending = false; //!< A refresh was asked for while held
+#ifdef EMSTUDIO_TESTING
+    int                             m_layoutPreviewRefreshCount = 0; //!< Preview builds (test hook)
+#endif
     QString                         m_fieldDumpSearchDir;
     QVector<FieldChoice>            m_fieldChoices;
     int                             m_fieldChoiceIndex = 0;

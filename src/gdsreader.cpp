@@ -25,165 +25,88 @@
 #include <QDebug>
 #include <QString>
 #include <QFileInfo>
-#include <QDataStream>
+#include <QDateTime>
 #include <QStringList>
 
 #include "mainwindow.h"
 
 /*!*******************************************************************************************************************
- * \brief Extracts the list of cell names from a GDSII file.
+ * \brief Identifies a version of a file: absolute path, size and modification time.
  *
- * This function reads the binary GDSII file format and identifies records with record type 0x06 (STRNAME),
- * which contain the names of the defined cells in the layout. SNAME records (0x12, SREF/AREF targets)
- * mark referenced cells; the others are top-level cells.
+ * Used to reuse what was read from a GDS file as long as the file is unchanged.
  *
- * \param filePath Path to the GDSII file.
- * \param topCells Optional: receives the top-level cells in file order (like gdstk's top_level()).
- * \return A list of extracted cell names.
+ * \param filePath Path to the file.
+ * \return Key, or an empty string when the file doesn't exist.
  **********************************************************************************************************************/
-QStringList MainWindow::extractGdsCellNames(const QString &filePath, QStringList *topCells)
+QString MainWindow::gdsFileKey(const QString &filePath)
 {
-    QFile file(filePath);
-    QStringList cellNames;
-    QSet<QString> referenced;
-    if (topCells)
-        topCells->clear();
-
-    if (!file.open(QIODevice::ReadOnly))
-        return cellNames;
-
-    QDataStream stream(&file);
-    stream.setByteOrder(QDataStream::BigEndian);
-
-    while (file.bytesAvailable() >= 4) {
-
-        const qint64 recStartPos = file.pos();
-
-        quint16 size = 0;
-        quint8 recordType = 0, dataType = 0;
-
-        stream >> size >> recordType >> dataType;
-
-        if (stream.status() != QDataStream::Ok) {
-            break;
-        }
-
-        if (size < 4 || (size & 1) != 0) {
-            break;
-        }
-
-        const qint64 dataSize = qint64(size) - 4;
-
-        if (dataSize > file.bytesAvailable()) {
-            break;
-        }
-
-        if ((recordType == 0x06 || recordType == 0x12) && dataType == 0x06) { // STRNAME / SNAME
-            QByteArray nameData;
-            nameData.resize(int(dataSize));
-            if (dataSize > 0) {
-                const int read = stream.readRawData(nameData.data(), int(dataSize));
-                if (read != dataSize || stream.status() != QDataStream::Ok) {
-                    break;
-                }
-            }
-
-            // Names are NUL-padded to an even length.
-            QString cellName = QString::fromLatin1(nameData).remove(QChar(0)).trimmed();
-            if (cellName.isEmpty())
-                continue;
-            if (recordType == 0x06)
-                cellNames << cellName;
-            else
-                referenced.insert(cellName);
-
-        } else {
-            const qint64 newPos = recStartPos + size;
-            if (!file.seek(newPos)) {
-                break;
-            }
-        }
-    }
-
-    file.close();
-    if (topCells) {
-        for (const QString &name : cellNames)
-            if (!referenced.contains(name))
-                *topCells << name;
-    }
-    return cellNames;
+    const QFileInfo fi(filePath);
+    if (!fi.exists())
+        return QString();
+    return fi.absoluteFilePath() + QLatin1Char('|') + QString::number(fi.size()) + QLatin1Char('|')
+            + QString::number(fi.lastModified().toMSecsSinceEpoch());
 }
 
-
 /*!*******************************************************************************************************************
- * \brief Extracts the set of layer and datatype pairs from a GDSII file.
+ * \brief Reads the cell names and the (layer, datatype) pairs of a GDSII file in one pass.
  *
- * This function parses the binary GDSII file and collects all (layer, datatype) pairs by reading
- * LAYER (0x0D) and DATATYPE (0x0E) records. The extracted pairs are stored in a QSet to avoid duplicates.
+ * The file is read into memory at once (record-wise reads are slow on Windows) and its records are walked:
+ * STRNAME (0x06) names a cell, SNAME (0x12, SREF/AREF target) marks a referenced cell; cells that are never
+ * referenced are top-level cells (in file order, like gdstk's top_level()). LAYER (0x0D) followed by
+ * DATATYPE (0x0E) gives a (layer, datatype) pair.
  *
  * \param filePath Path to the GDSII file.
- * \return A set of unique (layer, datatype) pairs found in the file.
+ * \param info     Receives cells, top cells and layers (\c key is left unchanged).
+ * \return False if the file can't be read.
  **********************************************************************************************************************/
-QSet<QPair<int, int>> MainWindow::extractGdsLayerNumbers(const QString &filePath)
+bool MainWindow::readGdsFileInfo(const QString &filePath, GdsFileInfo *info)
 {
+    info->cells.clear();
+    info->topCells.clear();
+    info->layers.clear();
+
     QFile file(filePath);
-    QSet<QPair<int, int>> layers;
-
     if (!file.open(QIODevice::ReadOnly))
-        return layers;
+        return false;
+    const QByteArray data = file.readAll();
+    file.close();
 
-    QDataStream stream(&file);
-    stream.setByteOrder(QDataStream::BigEndian);
-
+    const auto *bytes = reinterpret_cast<const uchar *>(data.constData());
+    const qint64 n = data.size();
+    QSet<QString> referenced;
     int currentLayer = -1;
-    int currentDatatype = -1;
 
-    while (file.bytesAvailable() >= 4) {
-
-        const qint64 recStart = file.pos();
-
-        quint16 size = 0;
-        quint8 recordType = 0, dataType = 0;
-        stream >> size >> recordType >> dataType;
-
-        if (stream.status() != QDataStream::Ok)
+    for (qint64 pos = 0; pos + 4 <= n; ) {
+        const int size = (bytes[pos] << 8) | bytes[pos + 1];
+        const uchar recordType = bytes[pos + 2];
+        const uchar dataType = bytes[pos + 3];
+        // GDS: size includes the 4-byte header and is even
+        if (size < 4 || (size & 1) != 0 || pos + size > n)
             break;
+        const uchar *payload = bytes + pos + 4;
+        const int dataSize = size - 4;
 
-        // GDS: size includes header(4) and usually is even
-        if (size < 4 || (size & 1) != 0)
-            break;
-
-        const qint64 dataSize = qint64(size) - 4;
-        if (dataSize > file.bytesAvailable())
-            break;
-
-        if (recordType == 0x0D && dataType == 0x02) { // LAYER (2 bytes)
-            if (dataSize < 2) break;
-
-            quint16 layer = 0;
-            stream >> layer;
-            if (stream.status() != QDataStream::Ok) break;
-
-            currentLayer = int(layer);
-
-        } else if (recordType == 0x0E && dataType == 0x02) { // DATATYPE (2 bytes)
-            if (dataSize < 2) break;
-
-            quint16 dtype = 0;
-            stream >> dtype;
-            if (stream.status() != QDataStream::Ok) break;
-
-            currentDatatype = int(dtype);
-
-            if (currentLayer >= 0 && currentDatatype >= 0)
-                layers.insert(qMakePair(currentLayer, currentDatatype));
+        if ((recordType == 0x06 || recordType == 0x12) && dataType == 0x06) { // STRNAME / SNAME
+            // Names are NUL-padded to an even length.
+            const QString name = QString::fromLatin1(reinterpret_cast<const char *>(payload), dataSize)
+                                         .remove(QChar(0)).trimmed();
+            if (!name.isEmpty()) {
+                if (recordType == 0x06)
+                    info->cells << name;
+                else
+                    referenced.insert(name);
+            }
+        } else if (recordType == 0x0D && dataType == 0x02 && dataSize >= 2) { // LAYER
+            currentLayer = (payload[0] << 8) | payload[1];
+        } else if (recordType == 0x0E && dataType == 0x02 && dataSize >= 2) { // DATATYPE
+            if (currentLayer >= 0)
+                info->layers.insert(qMakePair(currentLayer, (payload[0] << 8) | payload[1]));
         }
-
-        const qint64 nextPos = recStart + size;
-        if (!file.seek(nextPos))
-            break;
+        pos += size;
     }
 
-    file.close();
-    return layers;
+    for (const QString &name : qAsConst(info->cells))
+        if (!referenced.contains(name))
+            info->topCells << name;
+    return true;
 }

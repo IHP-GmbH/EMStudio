@@ -34,9 +34,6 @@ QString findElmerSolver();
 QString findPalaceInstallRoot();
 QString findOpenemsInstallRoot();
 QString findRoomToGds();
-#ifdef Q_OS_WIN
-QString findWslPython(const QString &distro);
-#endif
 
 } // namespace ToolAutoDetect
 

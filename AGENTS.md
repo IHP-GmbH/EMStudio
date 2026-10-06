@@ -22,7 +22,7 @@ starts the solver and shows the results:
 | Tool key (`currentSimToolKey()`) | Workflow / Python package | Solver | Results |
 |---|---|---|---|
 | `openems` | IHP openEMS flow (`modules/`, `gds2openEMS`) | openEMS (FDTD), started by the Python script | Touchstone `.sNp` |
-| `palace` | `gds2palace` (gmsh mesh + `config.json`) | AWS Palace (FEM). On Windows it runs inside WSL. | Palace CSV → `.sNp` |
+| `palace` | `gds2palace` (gmsh mesh + `config.json`; native Python on Windows) | AWS Palace (FEM). On Windows the solver runs inside WSL. | Palace CSV → `.sNp` |
 | `elmer_em` | `gds2palace` in Elmer mode | ElmerSolver (VectorHelmholtz) | CSV → `.sNp` |
 | `elmer_thermal` | `gds2palace` thermal | ElmerSolver (HeatSolve) | `thermal_results*.vtu`, shown in Layout Field |
 
@@ -32,11 +32,16 @@ rather than comparing strings.
 
 Inputs: a **Layout File** — GDSII (`.gds`) or ROOM layout (`.layout.room`) — with a
 top cell, an XML **stackup** (substrate) file, ports drawn on special GDS layers,
-and the model script. Script keys stay `GdsFile` / `gds_filename`. ROOM layouts are
-converted to a cached GDS via preference `ROOM_TO_GDS` (`room_to_gds` from CommonDB)
-before preview flatten and before Run. The script must sit next to the solver
-workflow folder (`modules/` for openEMS, `gds2palace/` for Palace/Elmer) unless that
-package is installed with pip.
+and the model script. Script keys stay `GdsFile` / `gds_filename`. When Layout File
+is ROOM, the script stores `layout_room` (source) and `gds_filename` as
+`./<layoutOrCellStem>.gds` beside the model (same folder as RunDir; e.g. under
+`*.emsetup/`); preference `ROOM_TO_GDS` (`room_to_gds` from CommonDB) converts
+ROOM→that GDS for preview and before Run. With `layout_room` / an emsetup model path,
+Run Control **Output** auto-fills EmModel publish fields; **Create** writes
+`<cell>.emmodel.room` (needs CMake `-DEMSTUDIO_ROOM_SOURCE_DIR=…/CommonDB`,
+`EMSTUDIO_HAS_ROOM`). The script must sit next to the solver workflow folder
+(`modules/` for openEMS, `gds2palace/` for Palace/Elmer) unless that package is
+installed with pip.
 
 ---
 
@@ -82,6 +87,8 @@ several files by topic. Add a method to the file whose topic it belongs to:
 | pythonToEditor.cpp | **GUI → script**: patch settings, paths, ports, stackup variable overrides and boundaries into the script text |
 | runOpenEms.cpp | Run openEMS (one Python process) |
 | runPalace.cpp | Run Palace / Elmer: Python stage, then solver stage; WSL, launcher scripts, MPI cores, simulation log, CSV→Touchstone |
+| outputEmModel.cpp | Run Control **Output** page: visibility (`layout_room` / `*.emsetup`), autofill, Create → `.emmodel.room` |
+| emmodelwriter.cpp | Fill `room::EmModelViewData` and `Database::saveToFile` (needs `EMSTUDIO_HAS_ROOM`) |
 | elmerThermalUi.cpp | Tool-key helpers, Ports↔Thermal tab switch, thermal objects table ↔ script, opening thermal results in Field view |
 | convertloosemodel.cpp | File → Convert to Settings Dictionary: runs `scripts/convert_loose_to_settings.py`, confirmation dialog, verified backup, replace, reload |
 | sidebysidediff.cpp | `SideBySideDiff`: original and changed Python side by side for that dialog. Rows come aligned from the converter's report (`rows`: line per side, 0 = filler); synced scrolling, syntax highlighting, line-number gutter, Previous/Next change. `changeShown` (original lines of the shown change) selects the variables assigned there in the dialog's table; a table row calls `goToLeftLine` |
@@ -108,8 +115,9 @@ Key members:
   values were quoted strings (`quotedStrings`).
 - `m_tabMap`: tab **title** → index. Code calls `showTab(m_tabMap["Substrate"])`
   etc., so renaming a tab title in `mainwindow.ui` breaks those lookups.
-  Titles: Main, Substrate, Python, Ports (relabelled Thermal for Elmer Thermal),
-  Simulate, Results, Fields.
+Titles: Main, Substrate, Python, Ports (relabelled Thermal for Elmer Thermal),
+Simulate, Results, Fields, Output (EmModel publish; hidden unless `layout_room` /
+emsetup).
 
 QSettings: organization `EMStudio`, application `EMStudioApp` (on Linux:
 `~/.config/EMStudio/EMStudioApp.conf`). Always open it with
@@ -286,11 +294,13 @@ sanitycheck.cpp) → `runOpenEMS()` or `runPalace()`. Both save first.
 - **Palace / Elmer** (runPalace.cpp): `PalaceRunContext` is built by
   `buildPalaceRunContext`. Phases (`PalacePhase`):
   1. `PythonModel`: gds2palace writes the mesh and `config.json` (Palace) or `.sif`
-     (Elmer).
+     (Elmer). On Windows this stage is always **native** (`PALACE_PYTHON` /
+     `ELMER_PYTHON` as a Windows interpreter; WSL-style `/home/...` paths in
+     `PALACE_PYTHON` are ignored and other host Pythons are tried).
   2. `PalaceSolver`: Palace runs as an executable (`PALACE_INSTALL_PATH`) or via a
-     launcher script (`PALACE_RUN_MODE`, `PALACE_RUN_SCRIPT`). On Windows it runs
-     inside WSL (`WSL_DISTRO`, wslHelper). Elmer runs natively (`ELMER_SOLVER_PATH`,
-     `ELMER_PYTHON`).
+     launcher script (`PALACE_RUN_MODE`, `PALACE_RUN_SCRIPT`). On Windows the
+     **solver** still runs inside WSL (`WSL_DISTRO`, wslHelper). Elmer runs
+     natively (`ELMER_SOLVER_PATH`, `ELMER_PYTHON`).
 
   If the model has `preview_only = True`, the run ends after phase 1: gds2palace doesn't
   mesh then, so a solver would read a fresh config next to an old mesh.
@@ -311,9 +321,10 @@ sanitycheck.cpp) → `runOpenEMS()` or `runPalace()`. Both save first.
 | Stackup cross-section | substrateview | 2.5D stack drawing; clicking a layer highlights it in the layout view |
 | Stackup editor | stackupeditor | Dialog that edits the XML; emits saved → reload |
 | Layout preview | gdslayout (flattening: own GDSII reader, the file read into memory at once; `refreshLayoutPreview` keeps the flattened top cell per `gdsFileKey` + cell in `m_flatPolys` and filters the datatypes from it; STRANS reflection is about the X axis before the rotation, AREF corner points are origin + cols / rows pitches, element state including a TEXT's MAG is reset after every element; check changes against KLayout's flattening), layoutview, layoutlayerpanel | Like the workflows, the preview shows only the GDS datatypes of the model's `read_gds(purposelist=...)` (`PythonParser::readGdsPurposes`: literal, variable or `settings['key']`, keyword or 3rd positional argument; the grid value wins; unknown → datatype 0; `MainWindow::currentGdsPurposes`). `refreshLayoutPreviewIfPurposesChanged` rebuilds it after a model load and after Save's re-parse, since the GDS path is set before the editor holds the new script. One `LayoutView` + Layers panel (`m_layoutPaneSplit`) shared by two pages: `placeLayoutPane()` (called from `showTab`) moves it to **Substrate** (top view / Iso3D, Field off) or **Fields** (Field mode on, 2D; 3D opens the Field viewer), keeps Substrate's 2D/3D choice and each page's manual zoom (`LayoutView::viewState`). The view's Field button is hidden; Shift+F emits `fieldPageRequested`. Field mode isn't persisted. Opacity has two levels. Per layer (`layerOpacity` / `setLayerOpacity`, a selected row in the Layers panel) is the fill alpha of that layer; the panel's slider shows it as seen, with the layout opacity applied (`LayoutLayerPanel::shownLayerOpacity` / `layerOpacityForShown`; capped at the layout fade, disabled at layout opacity 0), and stores the layer's own value. **Layout opacity** (`layoutOpacity` / `setLayoutOpacity`, the "All layers" slider, which shows it × `defaultFillOpacity()` = 59 % at the default 1) is a factor up to `maxLayoutOpacity()` (1 / 0.59): above 1 it multiplies every fill alpha (`layerFillAlpha`, `layoutFillBoost`; 2D restyles, Iso3D rebuilds), so the relative look stays and an untouched layer is solid at the maximum; up to 1 (`layoutFade`) it fades all fills as one image, so the slider looks the same however many layers overlap (thermal stacks: 20+ fills): in 2D every fill (layers and port / thermal marker areas) is a child of one `addFadeGroup` item (`QGraphicsOpacityEffect`), while a twin outline item on top (`kRoleOutline` = its pen, no brush) carries the name for clicks and the highlight; in Iso3D each run of faces between thermal surfaces is one faded group or pixmap (`kRoleFade`, `applyLayoutOpacity`). Lines, arrows and labels are never faded, so 0 % shows outlines. The layout view and Field mode keep their own layout opacity (`m_layoutOpacity` 1.0, `m_fieldLayoutOpacity` 0.0 = outlines in layer color over the heatmap); port / thermal marker lines and labels stay at full strength in Field mode (`markerOpacityFor`). The Layers panel re-reads both on a mode switch (`LayoutLayerPanel::refreshOpacities`). A right-click in the list doesn't change the selected row (it would retarget the slider); Show / Hide All and Hide Unmapped (`setListedVisible`) emit one `layersVisibilityChanged` → `LayoutView::setLayersVisible` (one Iso3D rebuild). The Layers panel lists stackup layers from top to bottom (mid-Z; `refreshLayoutPreview` builds the entries), layers without Z after them, port / thermal markers last. The Layers panel's "All layers" row is a check box over the listed layers (`setAllVisible`, state from `updateAllLayersCheck`: checked / partly / unchecked). The Layers panel lists port / thermal marker layers without stackup layers (no Ports row with From/To or target, no thermal object with a target) as "<name> (not mapped)" (`LayoutLayerPanel::Entry::unmapped`): the preview then draws them at a guessed position. "EM only" (`setEmLayersOnly`, QSettings `LayoutPreview/emLayersOnly`) leaves unmapped entries out of the list and hides them in the view; it remembers what it hid (`m_hiddenByEmOnly`) and shows those again when they become mapped (`setLayers` on each preview refresh) or the box is unchecked. A marker layer is named "P<n>" only by a Ports row that uses it as source (n = the row's port number); otherwise it stays "L<layer>": nothing (name, click → Ports row, port direction) is derived from layer − 200. Iso3D: dense scenes are one pre-rendered pixmap, so style changes rebuild the scene (`rebuildIso3dForStyleChange`); the sceneRect is a fixed square around the orbit center so orbiting doesn't move the scrollbars; pitch < 0 draws bottom caps and reverses the stack order. Port marker layers are GDS 201–299 unless the stackup defines that number (e.g. a `SUBGND` sheet on 250: `LayoutView::isPortLayerNumber`). Iso3D ports are drawn as the surface gds2palace builds (in-plane: bounding box at the target metal's bottom; via: vertical sheet on the xmin or ymin edge between the metals); via arrows point From → To, and `-z` reverses them. Elmer Thermal: the markers come from the Thermal table (`PortInfo::thermalKind`, named "Heat … W" / "T … K"), drawn without arrows; in Iso3D a heat source is the bounding box through the target layer and a constant temperature the polygon at the target's zmin and zmax, as gds2palace builds them; unlike EM port surfaces (always on top) these surfaces are sorted into the layer faces by height (heat source: target mid-Z; constant temperature: the sheet's z), and the dense-scene pixmap is split into one pixmap per run of faces between them; labels stay on top; clicking one selects its Thermal row. Via layers follow the model's `merge_polygon_size` (`MainWindow::currentViaMergeSize` → `LayoutView::setViaMergeSize`): > 0 merges them in 2D and 3D exactly like gds2palace's `merge_via_array` (grow spacing/2 + 0.01 µm, unite, shrink; `mergeViaArray`, QRegion on a 1 nm grid), so the preview shows the simulated geometry; 0 shows every via; not set: 2D every via, Iso3D its own display-only merge of dense via layers. A via layer with more drawn polygons than preference `LAYOUT_MAX_VIA_POLYGONS` (default 100, `setMaxViaPolygonsPerLayer`) replaces the 2D / 3D layout with a message label (`denseViaLayers`); a Field heatmap is still drawn. Mouse wheel / drag mapping depends on `NavStyle` (`LayoutView::setNavigationStyle`); keys in `LayoutView::handleViewKey`. |
-| Navigation / key bindings | navigationstyle, keybindingsdialog | `NavStyle` EMStudio / setupEM, preference `VIEWER_NAV_STYLE` ("emstudio" / "setupem"). Setup → Key Bindings (`on_actionKeyBindings_triggered`) → `applyNavigationStyle()` sets the Layout preview and sends `{"nav_style": …}` to an open Field 3D viewer; new viewers get `--nav-style`. `NavigationStyle::bindingTable` is the one list of all bindings (dialog and tooltips): **change it together with LayoutView and `scripts/field_viewer.py`**. Window-wide shortcuts: menu actions in mainwindow.ui, F5 / Ctrl+1…7 in `setupGlobalShortcuts()`. |
+| Navigation / key bindings | navigationstyle, keybindingsdialog | `NavStyle` EMStudio / setupEM, preference `VIEWER_NAV_STYLE` ("emstudio" / "setupem"). Setup → Key Bindings (`on_actionKeyBindings_triggered`) → `applyNavigationStyle()` sets the Layout preview and sends `{"nav_style": …}` to an open Field 3D viewer; new viewers get `--nav-style`. `NavigationStyle::bindingTable` is the one list of all bindings (dialog and tooltips): **change it together with LayoutView and `scripts/field_viewer.py`**. Window-wide shortcuts: menu actions in mainwindow.ui, F5 / Ctrl+1…8 in `setupGlobalShortcuts()`. |
 | Layout Field | layoutview + mainwindow.cpp `*Field*` methods | All Python, run with host Python `FIELD_VIEWER_PYTHON`. `scripts/field_io.py` is the shared reader: discovery per source (`palace`, `elmer_em`, `elmer_thermal`, `openems` FD `_abs`/`_arg.vtr`), cycle-aware `.pvd` reading, frequency labels, units → µm, derived \|E\| magnitudes, grouped field list. EMStudio lists the run's files with `field_io.py --list` (`refreshFieldChoices` → the Field panel's file/cycle combo). The 2D slice is `field_slice_export.py --source --cycle` (Z-slice PNG plus meta JSON, no arrows; color limits in `_slice_clim`: `--log` spans the slice max down to the slice min, at most 40 dB). Field→3D starts `field_viewer.py --run-path --source --select-file --cycle --stdin-control`, a PySide6/pyvistaqt window ported from setupEM. A second 3D click sends JSON on the viewer's stdin, so the open window reloads / comes to the front. The viewer remaps mouse presses and swallows VTK's own letter keys in `FieldViewerWindow.eventFilter` (`--nav-style`, stdin `nav_style`). Status and error messages of the Fields page and viewers go to the Log window (`fieldLog`), not the simulation log, which holds solver output and is saved with the run. Spec: FIELD_VIEWER_SPEC.md (setupEM). |
 | Results | resultsviewer, touchstone, smithchartwidget, resultscalculator, exprparser | Scans the run folder for `.sNp`; dB/phase/Smith (`SmithChartWidget`: own QPainter chart with grid labels as setupEM's result_viewer, click marker (readout left of the chart when wide; no own legend, the viewer's legend covers all charts) with f / Γ / Z readout from `addTrace(..., freqHz, z0)`); Compare; RF calculator (`cser($1)`, `ydiff_cser($1,$2)`, …); Model Fit via `snp2le` |
+| Output (EmModel) | outputEmModel.cpp, emmodelwriter.cpp | Shown in `lstRunControl` when the model has `layout_room` or lives under `*.emsetup`. Autofill (`refreshOutputPage`): cell dir / variant from emsetup path or layout_room, newest `.sNp` under the variant, layout / model / substrate / tool / ports / Z0 from the GUI. **Create** writes `<cell>/<cell>.emmodel.room` via CommonDB (`ViewType::EmModel`); without ROOM at build time the button reports a rebuild-with-CommonDB error. Called after load, Output tab show, and end of openEMS / Palace runs. No auto-write on Run. |
 | Python editor | pythoneditor, pythonsyntaxhighlighter, finddialog | `editRunPythonScript` on the Python tab |
 | Preferences | preferences (+ preferences.ui) | Property-browser dialog over `m_preferences` |
 | About | about (+ about.ui) | Async version probes for tools; native on Linux, WSL on Windows |
@@ -335,7 +346,8 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   runtime script, it lives in `scripts/` and is found with
   `resolveModelTemplatePath()` or `applicationDirPath()/scripts`.
 - Python interpreters come from preferences: `Python Path` (openEMS),
-  `PALACE_PYTHON` (inside WSL on Windows), `ELMER_PYTHON`, `FIELD_VIEWER_PYTHON`
+  `PALACE_PYTHON` (Windows host Python for gds2palace; solver still uses WSL),
+  `ELMER_PYTHON`, `FIELD_VIEWER_PYTHON`
   (PyVista + Pillow; the Windows installer bundles one in `field_viewer_python/`,
   built by `scripts/stage_field_viewer_python.ps1` from `requirements-field-viewer.txt`).
 - Python packages for the workflows are listed in `requirements-python.txt`.
@@ -447,6 +459,11 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   you add or remove a source or header (anything with `Q_OBJECT` needs the header
   in HEADERS for moc), update emstudio_sources.pri and both CMake lists.** CI has
   failed several times over this.
+- **Optional CommonDB ROOM** (`cmake/OptionalRoom.cmake`): if a sibling
+  `../CommonDB` (or `-DEMSTUDIO_ROOM_SOURCE_DIR=…`) is present, CMake links
+  `ROOM::room`, defines `EMSTUDIO_HAS_ROOM`, and Output → Create can write
+  `.emmodel.room`. Without it the app still builds; Create shows a clear error.
+  qmake builds do not enable ROOM.
 - Version: `1.<commits since tag v1.0>` computed by qmake/CMake from git
   (`EMSTUDIO_VERSION_STR`, `EMSTUDIO_GIT_DATE_STR`).
 - Linux dev build: `qmake EMStudio.pro && make -j$(nproc) && ./EMStudio`.

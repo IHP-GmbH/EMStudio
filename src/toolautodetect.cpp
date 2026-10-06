@@ -272,17 +272,6 @@ QString findOpenemsInstallRoot()
     return {};
 }
 
-#ifdef Q_OS_WIN
-QString findWslPython(const QString &distro)
-{
-    const QString which = runWslCapture(
-        distro, {QStringLiteral("bash"), QStringLiteral("-lc"), QStringLiteral("command -v python3 || command -v python")});
-    if (which.startsWith(QLatin1Char('/')))
-        return which;
-    return {};
-}
-#endif
-
 int fillEmptyPreferences(QMap<QString, QVariant> &prefs)
 {
     int n = 0;
@@ -297,14 +286,12 @@ int fillEmptyPreferences(QMap<QString, QVariant> &prefs)
 
     const QString hostPy = findHostPython();
 #ifdef Q_OS_WIN
-    // OpenEMS / Elmer / Field Viewer are typically native Windows Pythons.
+    // OpenEMS / Elmer / Field Viewer / gds2palace are native Windows Pythons.
+    // Palace solver still uses WSL; only PALACE_INSTALL_PATH is a Linux tree.
     setIfEmpty(prefs, QStringLiteral("Python Path"), hostPy, &n);
     setIfEmpty(prefs, QStringLiteral("ELMER_PYTHON"), hostPy, &n);
     setIfEmpty(prefs, QStringLiteral("FIELD_VIEWER_PYTHON"), hostPy, &n);
-
-    const QString distro = prefs.value(QStringLiteral("WSL_DISTRO")).toString().trimmed();
-    const QString wslPy = findWslPython(distro);
-    setIfEmpty(prefs, QStringLiteral("PALACE_PYTHON"), wslPy.isEmpty() ? hostPy : wslPy, &n);
+    setIfEmpty(prefs, QStringLiteral("PALACE_PYTHON"), hostPy, &n);
 #else
     setIfEmpty(prefs, QStringLiteral("Python Path"), hostPy, &n);
     setIfEmpty(prefs, QStringLiteral("PALACE_PYTHON"), hostPy, &n);

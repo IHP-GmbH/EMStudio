@@ -152,6 +152,8 @@ void MainWindow::runOpenEMS(bool interactive)
             {
                 appendToSimulationLog(
                     QString("\n[Simulation finished with exit code %1]\n").arg(exitCode).toUtf8());
+                if (exitCode == 0)
+                    refreshOutputPage();
                 persistSimulationLogSnapshot();
                 restoreLayoutPathAfterRun();
 

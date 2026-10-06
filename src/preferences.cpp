@@ -247,10 +247,21 @@ void Preferences::setupPreferencesPanel()
     QtVariantProperty *pythonWslPathProp =
         m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("PALACE_PYTHON"));
     pythonWslPathProp->setWhatsThis("file");
-    pythonWslPathProp->setToolTip(tr("Path to the Python executable inside WSL used for Palace workflows.\n"
-                                     "Example:\n"
-                                     "  - /usr/bin/python3\n\n"
-                                     "This is typically needed when EMStudio runs Palace inside WSL."));
+#ifdef Q_OS_WIN
+    pythonWslPathProp->setToolTip(tr(
+        "Windows Python used for gds2palace (mesh / config.json).\n"
+        "Must have gds2palace installed. WSL paths (/home/...) are ignored;\n"
+        "the Palace solver itself still runs in WSL.\n"
+        "Examples:\n"
+        "  - C:\\\\Users\\\\…\\\\python.exe\n"
+        "  - py (via PATH)\n\n"
+        "If empty or WSL-only, EMStudio falls back to ELMER_PYTHON / Python Path."));
+#else
+    pythonWslPathProp->setToolTip(tr(
+        "Python executable used for Palace / gds2palace preprocessing.\n"
+        "Example:\n"
+        "  - /usr/bin/python3"));
+#endif
     pythonWslPathProp->setValue(m_preferences.value(QStringLiteral("PALACE_PYTHON"), QString()));
     palaceGroup->addSubProperty(pythonWslPathProp);
 

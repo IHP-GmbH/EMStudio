@@ -68,7 +68,9 @@ SOURCES += \
     $$TOP/src/assistantagent.cpp \
     $$TOP/src/assistantpromptblob.cpp \
     $$TOP/src/securestore.cpp \
-    $$TOP/src/resultsviewer.cpp
+    $$TOP/src/resultsviewer.cpp \
+    $$TOP/src/emmodelwriter.cpp \
+    $$TOP/src/outputEmModel.cpp
 
 HEADERS += \
     $$TOP/src/wslHelper.h \
@@ -122,4 +124,5 @@ HEADERS += \
     $$TOP/src/assistantagent.h \
     $$TOP/src/assistantpromptblob.h \
     $$TOP/src/securestore.h \
-    $$TOP/src/resultsviewer.h
+    $$TOP/src/resultsviewer.h \
+    $$TOP/src/emmodelwriter.h

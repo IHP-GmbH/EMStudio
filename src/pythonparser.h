@@ -47,6 +47,8 @@ public:
         QString                     cellName;
         QString                     gdsFilename;
         QString                     xmlFilename;
+        /*! Optional ROOM source for EMStudio Layout File; solvers use \c gdsFilename. */
+        QString                     layoutRoomFilename;
 
         QMap<QString, QVariant>     topLevel;
         QMap<QString, QString>      settingTips;

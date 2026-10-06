@@ -506,6 +506,208 @@
         </property>
        </layout>
       </widget>
+      <widget class="QWidget" name="tabOutput">
+       <attribute name="title">
+        <string>Output</string>
+       </attribute>
+       <layout class="QVBoxLayout" name="verticalLayoutOutput">
+        <item>
+         <widget class="QLabel" name="lblOutputHint">
+          <property name="text">
+           <string>Publish EmModel (.emmodel.room) for LibMan / schematic when this model is under emsetup.</string>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <layout class="QFormLayout" name="formLayoutOutput">
+          <item row="0" column="0">
+           <widget class="QLabel" name="lblOutputFile">
+            <property name="text">
+             <string>Output file</string>
+            </property>
+           </widget>
+          </item>
+          <item row="0" column="1">
+           <layout class="QHBoxLayout" name="horizontalLayoutOutputFile">
+            <item>
+             <widget class="QLineEdit" name="txtOutputEmModel"/>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnOutputEmModel">
+              <property name="text">
+               <string>...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="1" column="0">
+           <widget class="QLabel" name="lblOutputSnp">
+            <property name="text">
+             <string>Touchstone</string>
+            </property>
+           </widget>
+          </item>
+          <item row="1" column="1">
+           <layout class="QHBoxLayout" name="horizontalLayoutOutputSnp">
+            <item>
+             <widget class="QLineEdit" name="txtOutputSnp"/>
+            </item>
+            <item>
+             <widget class="QPushButton" name="btnOutputSnp">
+              <property name="text">
+               <string>...</string>
+              </property>
+             </widget>
+            </item>
+           </layout>
+          </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="lblOutputVariant">
+            <property name="text">
+             <string>Variant</string>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QLineEdit" name="txtOutputVariant"/>
+          </item>
+          <item row="3" column="0">
+           <widget class="QLabel" name="lblOutputTool">
+            <property name="text">
+             <string>Tool</string>
+            </property>
+           </widget>
+          </item>
+          <item row="3" column="1">
+           <widget class="QLineEdit" name="txtOutputTool"/>
+          </item>
+          <item row="4" column="0">
+           <widget class="QLabel" name="lblOutputZ0">
+            <property name="text">
+             <string>Z0</string>
+            </property>
+           </widget>
+          </item>
+          <item row="4" column="1">
+           <widget class="QDoubleSpinBox" name="spnOutputZ0">
+            <property name="decimals">
+             <number>3</number>
+            </property>
+            <property name="maximum">
+             <double>10000.000000000000000</double>
+            </property>
+            <property name="value">
+             <double>50.000000000000000</double>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="0">
+           <widget class="QLabel" name="lblOutputPorts">
+            <property name="text">
+             <string>Ports</string>
+            </property>
+           </widget>
+          </item>
+          <item row="5" column="1">
+           <widget class="QLineEdit" name="txtOutputPorts">
+            <property name="readOnly">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="6" column="0">
+           <widget class="QLabel" name="lblOutputLayout">
+            <property name="text">
+             <string>Layout</string>
+            </property>
+           </widget>
+          </item>
+          <item row="6" column="1">
+           <widget class="QLineEdit" name="txtOutputLayout"/>
+          </item>
+          <item row="7" column="0">
+           <widget class="QLabel" name="lblOutputModel">
+            <property name="text">
+             <string>Model</string>
+            </property>
+           </widget>
+          </item>
+          <item row="7" column="1">
+           <widget class="QLineEdit" name="txtOutputModel"/>
+          </item>
+          <item row="8" column="0">
+           <widget class="QLabel" name="lblOutputSubstrate">
+            <property name="text">
+             <string>Substrate</string>
+            </property>
+           </widget>
+          </item>
+          <item row="8" column="1">
+           <widget class="QLineEdit" name="txtOutputSubstrate"/>
+          </item>
+         </layout>
+        </item>
+        <item>
+         <widget class="QLabel" name="lblOutputStatus">
+          <property name="text">
+           <string/>
+          </property>
+          <property name="wordWrap">
+           <bool>true</bool>
+          </property>
+         </widget>
+        </item>
+        <item>
+         <spacer name="verticalSpacerOutput">
+          <property name="orientation">
+           <enum>Qt::Orientation::Vertical</enum>
+          </property>
+          <property name="sizeHint" stdset="0">
+           <size>
+            <width>20</width>
+            <height>40</height>
+           </size>
+          </property>
+         </spacer>
+        </item>
+        <item>
+         <layout class="QHBoxLayout" name="horizontalLayoutOutputButtons">
+          <item>
+           <spacer name="horizontalSpacerOutput">
+            <property name="orientation">
+             <enum>Qt::Orientation::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnOutputRefresh">
+            <property name="text">
+             <string>Refresh</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btnOutputCreate">
+            <property name="text">
+             <string>Create</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
+       </layout>
+      </widget>
+
      </widget>
     </item>
    </layout>
@@ -608,6 +810,11 @@
        <item>
         <property name="text">
          <string>Fields</string>
+        </property>
+       </item>
+       <item>
+        <property name="text">
+         <string>Output</string>
         </property>
        </item>
       </widget>

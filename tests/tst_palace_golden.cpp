@@ -665,7 +665,8 @@ void PalaceGolden::logPalaceStartupInfo_writesExpectedText()
                                "C:/tmp/palace_model/t1_data");
 
     const QString log = w.testSimulationLogText();
-    QVERIFY(log.contains("Starting Palace Python preprocessing"));
+    QVERIFY(log.contains("Starting Palace Python preprocessing")
+            || log.contains("Starting gds2palace Python preprocessing"));
     QVERIFY(log.contains("[Using Python: python3]"));
     QVERIFY(log.contains("[Initial Palace run directory guess:"));
     QVERIFY(log.contains("[Launcher script:"));

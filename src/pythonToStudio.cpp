@@ -124,17 +124,21 @@ bool MainWindow::applyPythonScriptFromEditor()
     QFileInfo fi(filePath);
     const QDir modelDir(fi.absolutePath());
 
-    if (!res.gdsFilename.isEmpty())
-    {
-        const QString gdsPath = resolveModelInputFile(res.gdsFilename, modelDir);
+    QString layoutUiPath;
+    if (!res.layoutRoomFilename.isEmpty())
+        layoutUiPath = resolveModelInputFile(res.layoutRoomFilename, modelDir);
+    else if (!res.gdsFilename.isEmpty())
+        layoutUiPath = resolveModelInputFile(res.gdsFilename, modelDir);
 
+    if (!layoutUiPath.isEmpty())
+    {
         {
             QSignalBlocker b(m_ui->txtGdsFile);
-            m_ui->txtGdsFile->setText(gdsPath);
+            m_ui->txtGdsFile->setText(layoutUiPath);
         }
 
-        m_simSettings["GdsFile"] = gdsPath;
-        m_sysSettings["GdsDir"]  = QFileInfo(gdsPath).absolutePath();
+        m_simSettings["GdsFile"] = layoutUiPath;
+        m_sysSettings["GdsDir"]  = QFileInfo(layoutUiPath).absolutePath();
 
         updateGdsUserInfo();
 
@@ -166,6 +170,7 @@ bool MainWindow::applyPythonScriptFromEditor()
     updateSimulationSettings();
     // The script may now read other GDS datatypes (purposelist).
     refreshLayoutPreviewIfPurposesChanged();
+    updateOutputPageVisibility();
 
     return true;
 }

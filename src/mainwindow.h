@@ -378,6 +378,11 @@ private slots:
     void                            on_btnRun_clicked();
     void                            on_btnStop_clicked();
 
+    void                            on_btnOutputRefresh_clicked();
+    void                            on_btnOutputCreate_clicked();
+    void                            on_btnOutputEmModel_clicked();
+    void                            on_btnOutputSnp_clicked();
+
     void                            on_cbSubLayerNames_stateChanged(int arg1);
     void                            on_btnGenDefaultPython_clicked();
     void                            on_cbxSimTool_currentIndexChanged(int index);
@@ -401,6 +406,12 @@ private:
     void                            updateResultsViewerFromModel(bool force = false);
     void                            syncResultsViewerHostPython();
     QString                         resolveResultsDirectory() const;
+    /*! Output page (EmModel publish): visible when layout_room / emsetup model. */
+    bool                            outputPageContextAvailable() const;
+    void                            updateOutputPageVisibility();
+    void                            refreshOutputPage();
+    QString                         resolveEmSetupCellDirectory(QString *cellNameOut = nullptr,
+                                                                QString *variantOut = nullptr) const;
     void                            updateSimulationSettings();
     void                            importPortsFromEditor();
     void                            hookPortCombo(QComboBox* box);
@@ -425,9 +436,13 @@ private:
     static QString                  gdsFileKey(const QString &filePath);
     static bool                     readGdsFileInfo(const QString &filePath, GdsFileInfo *info);
 
-    /*! Resolve Layout File to a GDS path (identity for .gds; room_to_gds cache for ROOM). */
+    /*! Resolve Layout File to a GDS path (identity for .gds; room_to_gds for ROOM). */
     QString                         resolveLayoutGdsPath(const QString &layoutPath, QString *errorMsg = nullptr) const;
-    /*! Before Run: convert ROOM→GDS and patch the on-disk model script; editor keeps ROOM. */
+    /*! Companion GDS beside the model: <modelDir>/<layoutOrCellStem>.gds (not the .py stem). */
+    QString                         companionLayoutGdsBesideModel() const;
+    /*! Stem for that GDS: ROOM basename (strip .layout.room), else Top Cell, else model stem. */
+    QString                         companionLayoutGdsStem() const;
+    /*! Before Run: if Layout File is ROOM, convert to companion GDS beside the model. */
     bool                            prepareLayoutForRun(QString *errorMsg = nullptr);
     void                            restoreLayoutPathAfterRun();
 
@@ -571,7 +586,7 @@ private:
     void                            placeLayoutPane(bool fieldsPage);
     /*! Opens a run control page by its list title (selects the list item too). */
     void                            showRunControlPage(const QString &title);
-    /*! F5 Run and Ctrl+1…7 page shortcuts (menu shortcuts are in mainwindow.ui). */
+    /*! F5 Run and Ctrl+1…8 page shortcuts (menu shortcuts are in mainwindow.ui). */
     void                            setupGlobalShortcuts();
     /*! Writes the Top Cell selection into the variable read_gds() uses (see pythonToEditor.cpp). */
     void                            applyTopCellToScript(QString &script, const QString &topCell);
@@ -723,6 +738,8 @@ private:
     QString                         buildElmerEnvShellPrefix() const;
     void                            applyElmerHomeToProcessEnv(QProcessEnvironment &env) const;
     bool                            resolveElmerPythonLaunch(QString &outExe, QStringList &outArgs) const;
+    /*! Windows-native Python for gds2palace (Palace); ignores WSL-style PALACE_PYTHON paths. */
+    bool                            resolvePalacePythonLaunch(QString &outExe, QStringList &outArgs) const;
     void                            patchElmerSifFilesNoMumps(const QString &runDir) const;
 
     void                            failPalaceSolver(const QString &message, bool showDialog);

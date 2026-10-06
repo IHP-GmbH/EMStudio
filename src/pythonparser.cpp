@@ -20,6 +20,8 @@
 
 #include "pythonparser.h"
 
+#include "layoutfile.h"
+
 #include <QDir>
 #include <QSet>
 #include <QFile>
@@ -135,6 +137,7 @@ static void parseTopLevelAssignments(const QString& script,
         static const QSet<QString> kSkip = {
             QStringLiteral("gds_filename"),
             QStringLiteral("XML_filename"),
+            QStringLiteral("layout_room"),
             QStringLiteral("cellname"),
             //QStringLiteral("gds_cellname"),
             QStringLiteral("layernumbers"),
@@ -222,7 +225,7 @@ static void inferExplicitGdsFromSettings(PythonParser::Result& result)
         return;
 
     const QString s = variantToStringIfString(result.settings.value(k));
-    if (!s.isEmpty() && endsWithCi(s, QStringLiteral(".gds"))) {
+    if (!s.isEmpty() && layoutFileKind(s) != LayoutFileKind::Unknown) {
         result.gdsFilename   = s;
         result.gdsSettingKey = k;
         result.gdsLegacyVar.clear();
@@ -299,7 +302,7 @@ static bool inferHeuristicFilesFromOneSetting(PythonParser::Result& result,
 
     bool changed = false;
 
-    if (result.gdsFilename.isEmpty() && endsWithCi(s, QStringLiteral(".gds"))) {
+    if (result.gdsFilename.isEmpty() && layoutFileKind(s) != LayoutFileKind::Unknown) {
         result.gdsFilename   = s;
         result.gdsSettingKey = key;
         result.gdsLegacyVar.clear();
@@ -515,7 +518,13 @@ static void parseLegacyFileVars(const QString& content, PythonParser::Result& re
         if (valueExpr.isEmpty())
             continue;
 
-        if (result.gdsFilename.trimmed().isEmpty() && endsWithCi(valueExpr, QStringLiteral(".gds"))) {
+        if (varName == QLatin1String("layout_room") && isRoomLayoutPath(valueExpr)) {
+            result.layoutRoomFilename = valueExpr;
+            continue;
+        }
+
+        if (result.gdsFilename.trimmed().isEmpty()
+            && layoutFileKind(valueExpr) != LayoutFileKind::Unknown) {
             result.gdsFilename  = valueExpr;
             result.gdsLegacyVar = varName;
             continue;

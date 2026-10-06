@@ -93,6 +93,12 @@ include_directories(
 )
 
 # -----------------------------------------------------------------------------
+# Optional CommonDB ROOM (EmModel Output → .emmodel.room)
+# -----------------------------------------------------------------------------
+
+include("${CMAKE_SOURCE_DIR}/cmake/OptionalRoom.cmake")
+
+# -----------------------------------------------------------------------------
 # Sources
 # -----------------------------------------------------------------------------
 
@@ -110,6 +116,8 @@ set(SOURCES
     src/sidebysidediff.cpp
     src/keybindingsdialog.cpp
     src/navigationstyle.cpp
+    src/emmodelwriter.cpp
+    src/outputEmModel.cpp
 
     QtPropertyBrowser/qtbuttonpropertybrowser.cpp
     QtPropertyBrowser/qteditorfactory.cpp
@@ -223,6 +231,7 @@ set(HEADERS
     src/assistantpromptblob.h
     src/securestore.h
     src/resultsviewer.h
+    src/emmodelwriter.h
 )
 
 set(FORMS
@@ -259,6 +268,18 @@ target_compile_definitions(EMStudio PRIVATE
     EMSTUDIO_MAJOR=${EMSTUDIO_MAJOR}
     EMSTUDIO_GIT_DATE_STR="${EMSTUDIO_GIT_DATE}"
 )
+
+if(EMSTUDIO_HAS_ROOM)
+    target_compile_definitions(EMStudio PRIVATE EMSTUDIO_HAS_ROOM=1)
+    target_include_directories(EMStudio PRIVATE
+        "${EMSTUDIO_ROOM_SOURCE_DIR}/src"
+        "${CMAKE_BINARY_DIR}/_deps/commondb-build/generated"
+    )
+    target_link_libraries(EMStudio PRIVATE ROOM::room)
+    if(TARGET ROOM::room_utils)
+        target_link_libraries(EMStudio PRIVATE ROOM::room_utils)
+    endif()
+endif()
 
 target_link_libraries(EMStudio PRIVATE
     Qt5::Core

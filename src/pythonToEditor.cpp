@@ -50,6 +50,7 @@
 #include "ui_mainwindow.h"
 #include "substrateview.h"
 #include "pythonparser.h"
+#include "layoutfile.h"
 
 #include <algorithm>
 #include <cmath>
@@ -923,9 +924,26 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
 
     if (m_simSettings.contains("GdsFile")) {
         const QString gdsGui = m_simSettings.value("GdsFile").toString();
-        QString gdsPath = makeScriptPathForPython(gdsGui, simKeyLower);
+        const bool layoutIsRoom = isRoomLayoutPath(gdsGui);
 
-        replacePath(QStringLiteral("gds_filename"), gdsGui, gdsPath);
+        // ROOM in the Layout File field → script keeps ./<layoutStem>.gds beside the model
+        // (same as RunDir when it is the model folder); layout_room remembers the ROOM source.
+        QString gdsPath;
+        QString gdsSameAs = gdsGui;
+        if (layoutIsRoom) {
+            const QString companion = companionLayoutGdsBesideModel();
+            if (!companion.isEmpty()) {
+                gdsSameAs = companion;
+                // ./name.gds — cwd / RunDir is typically the model directory.
+                gdsPath = QStringLiteral("./") + QFileInfo(companion).fileName();
+            } else {
+                gdsPath = makeScriptPathForPython(gdsGui, simKeyLower);
+            }
+        } else {
+            gdsPath = makeScriptPathForPython(gdsGui, simKeyLower);
+        }
+
+        replacePath(QStringLiteral("gds_filename"), gdsSameAs, gdsPath);
 
         // gds2palace / Elmer: settings['GdsFile'] (and model-specific key if different).
         QStringList gdsKeys{QStringLiteral("GdsFile")};
@@ -933,7 +951,43 @@ void MainWindow::applyGdsAndXmlPaths(QString &script, const QString &simKeyLower
             gdsKeys << m_modelGdsKey;
         gdsKeys.removeDuplicates();
         for (const QString &k : gdsKeys)
-            replaceDictStringAssign(k, gdsGui, gdsPath);
+            replaceDictStringAssign(k, gdsSameAs, gdsPath);
+
+        auto ensureLayoutRoomAssign = [&](const QString &value) {
+            const QRegularExpression reExisting(
+                QStringLiteral(R"((?m)^[ \t]*layout_room[ \t]*=)"));
+            if (reExisting.match(script).hasMatch()) {
+                // sameFile against ROOM path when present; otherwise force rewrite to "".
+                replacePath(QStringLiteral("layout_room"),
+                            layoutIsRoom ? gdsGui : QStringLiteral("__clear_layout_room__"),
+                            value);
+                return;
+            }
+            if (value.isEmpty())
+                return;
+            const QRegularExpression reGds(
+                QStringLiteral(R"((?m)^[ \t]*gds_filename[ \t]*=[ \t]*[^\n]*$)"));
+            const QRegularExpressionMatch m = reGds.match(script);
+            const QString line = QStringLiteral("layout_room = \"%1\"\n").arg(value);
+            if (m.hasMatch())
+                script.insert(m.capturedStart(), line);
+            else
+                script.prepend(line);
+        };
+
+        if (layoutIsRoom) {
+            QString roomForScript = QDir::fromNativeSeparators(QFileInfo(gdsGui).absoluteFilePath());
+            if (!modelDir.isEmpty()) {
+                const QString rel = QDir::fromNativeSeparators(
+                    QDir(modelDir).relativeFilePath(QFileInfo(gdsGui).absoluteFilePath()));
+                if (!rel.isEmpty())
+                    roomForScript = rel;
+            }
+            roomForScript.replace(QLatin1Char('\\'), QLatin1Char('/'));
+            ensureLayoutRoomAssign(roomForScript);
+        } else {
+            ensureLayoutRoomAssign(QString());
+        }
     }
 
     const QString topCell = m_ui->cbxTopCell->currentText().trimmed();

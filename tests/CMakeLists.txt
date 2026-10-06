@@ -71,6 +71,18 @@ target_compile_definitions(emstudio_golden_tests PRIVATE
     EMSTUDIO_GIT_DATE_STR="${EMSTUDIO_GIT_DATE}"
 )
 
+if(EMSTUDIO_HAS_ROOM)
+    target_compile_definitions(emstudio_golden_tests PRIVATE EMSTUDIO_HAS_ROOM=1)
+    target_include_directories(emstudio_golden_tests PRIVATE
+        "${EMSTUDIO_ROOM_SOURCE_DIR}/src"
+        "${CMAKE_BINARY_DIR}/_deps/commondb-build/generated"
+    )
+    target_link_libraries(emstudio_golden_tests PRIVATE ROOM::room)
+    if(TARGET ROOM::room_utils)
+        target_link_libraries(emstudio_golden_tests PRIVATE ROOM::room_utils)
+    endif()
+endif()
+
 target_link_libraries(emstudio_golden_tests PRIVATE
     Qt5::Test
     Qt5::Core

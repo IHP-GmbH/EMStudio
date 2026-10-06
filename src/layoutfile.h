@@ -29,12 +29,15 @@ bool           isGdsLayoutPath(const QString &path);
 QString layoutFileDialogFilter();
 
 /*!
- * Converts a ROOM layout to a cached GDS via \a roomToGdsExe (\c room_to_gds).
+ * Converts a ROOM layout to GDS via \a roomToGdsExe (\c room_to_gds).
+ * If \a outGdsPath is empty, writes to a content-hash cache under the app cache dir.
+ * Otherwise writes to \a outGdsPath (reused when it exists and is not older than the ROOM).
  * \return Absolute GDS path on success; empty on failure (\a errorMsg set).
  */
 QString materializeRoomLayoutGds(const QString &roomPath,
                                  const QString &roomToGdsExe,
-                                 QString *errorMsg = nullptr);
+                                 QString *errorMsg = nullptr,
+                                 const QString &outGdsPath = QString());
 
 /*! Replace layout path forms in a model script with \a toPath (for pre-run Room→GDS). */
 int rewriteLayoutPathInScript(QString *script, const QString &fromPath, const QString &toPath);

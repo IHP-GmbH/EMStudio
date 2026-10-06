@@ -14,6 +14,7 @@
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -71,7 +72,8 @@ static QString contentHashHex(const QString &filePath)
 
 QString materializeRoomLayoutGds(const QString &roomPath,
                                  const QString &roomToGdsExe,
-                                 QString *errorMsg)
+                                 QString *errorMsg,
+                                 const QString &outGdsPath)
 {
     const QFileInfo roomFi(roomPath);
     if (!roomFi.exists() || !roomFi.isFile()) {
@@ -89,17 +91,29 @@ QString materializeRoomLayoutGds(const QString &roomPath,
         return {};
     }
 
-    const QString hash = contentHashHex(roomFi.absoluteFilePath());
-    if (hash.isEmpty()) {
-        if (errorMsg)
-            *errorMsg = QObject::tr("Cannot read ROOM layout:\n%1").arg(roomPath);
-        return {};
+    QString outGds;
+    if (!outGdsPath.trimmed().isEmpty()) {
+        outGds = QFileInfo(outGdsPath).absoluteFilePath();
+        QDir().mkpath(QFileInfo(outGds).absolutePath());
+        const QFileInfo outFi(outGds);
+        if (outFi.exists() && outFi.isFile() && outFi.size() > 0
+            && outFi.lastModified() >= roomFi.lastModified()) {
+            return outFi.absoluteFilePath();
+        }
+    } else {
+        const QString hash = contentHashHex(roomFi.absoluteFilePath());
+        if (hash.isEmpty()) {
+            if (errorMsg)
+                *errorMsg = QObject::tr("Cannot read ROOM layout:\n%1").arg(roomPath);
+            return {};
+        }
+        outGds = QDir(layoutCacheDir()).filePath(hash + QLatin1String(".gds"));
+        const QFileInfo outFi(outGds);
+        if (outFi.exists() && outFi.isFile() && outFi.size() > 0)
+            return outFi.absoluteFilePath();
     }
 
-    const QString outGds = QDir(layoutCacheDir()).filePath(hash + QLatin1String(".gds"));
-    const QFileInfo outFi(outGds);
-    if (outFi.exists() && outFi.isFile() && outFi.size() > 0)
-        return outFi.absoluteFilePath();
+    QFile::remove(outGds);
 
     QProcess proc;
     proc.setProgram(roomToGdsExe);

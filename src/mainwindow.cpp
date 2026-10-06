@@ -418,11 +418,16 @@ MainWindow::MainWindow(QWidget *parent)
  **********************************************************************************************************************/
 MainWindow::~MainWindow()
 {
-    // A running model converter must not call back into a window that is being destroyed.
-    if (m_looseConverterProcess) {
-        m_looseConverterProcess->disconnect();
-        m_looseConverterProcess->kill();
-        m_looseConverterProcess->waitForFinished(2000);
+    // Child processes (converter, simulation, Field 3D viewer, field export / serve) are destroyed by
+    // ~QObject after this body has deleted m_ui. ~QProcess kills a running process and emits finished(),
+    // whose slots use m_ui: stop them here, without calling back into a window that is being destroyed.
+    const QList<QProcess *> processes = findChildren<QProcess *>(QString(), Qt::FindDirectChildrenOnly);
+    for (QProcess *proc : processes) {
+        proc->disconnect();
+        if (proc->state() != QProcess::NotRunning) {
+            proc->kill();
+            proc->waitForFinished(2000);
+        }
     }
     delete m_ui;
 }

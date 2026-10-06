@@ -506,7 +506,9 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
 7. **Vendored QtPropertyBrowser.** Fix bugs if needed, but keep its API; the app
    and Preferences rely on `QtVariantPropertyManager` signals.
 8. **No blocking UI.** Long work (solver runs, field export, version probes) runs
-   in `QProcess` with signals. Follow that pattern.
+   in `QProcess` with signals. Follow that pattern. Create the process as a direct child of
+   `MainWindow` (`new QProcess(this)`): `~MainWindow` disconnects and kills those before deleting
+   `m_ui`, because `~QProcess` would otherwise emit `finished()` into a half-destroyed window.
 9. **Assistant tools** run with the user's privileges (load models, run
    simulations, set preferences, edit GDS). Keep new tools narrowly scoped and
    describe them accurately in `registerTool`.

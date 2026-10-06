@@ -25,26 +25,42 @@
 #include <QDebug>
 #include <QString>
 #include <QFileInfo>
-#include <QDateTime>
+#include <QByteArray>
 #include <QStringList>
+#include <QCryptographicHash>
 
 #include "mainwindow.h"
 
+namespace {
+
+/*! Path + size + SHA-1 of the bytes. Size alone + mtime is not enough: FAT and some
+ *  network/sync filesystems keep the same mtime on a same-size rewrite (KLayout Save). */
+QString gdsContentKey(const QString &absolutePath, const QByteArray &data)
+{
+    QCryptographicHash hash(QCryptographicHash::Sha1);
+    hash.addData(data);
+    return absolutePath + QLatin1Char('|') + QString::number(data.size()) + QLatin1Char('|')
+            + QString::fromLatin1(hash.result().toHex());
+}
+
+} // namespace
+
 /*!*******************************************************************************************************************
- * \brief Identifies a version of a file: absolute path, size and modification time.
+ * \brief Identifies a version of a GDS file: absolute path, size and SHA-1 of its contents.
  *
- * Used to reuse what was read from a GDS file as long as the file is unchanged.
+ * Used to reuse what was read from a GDS file as long as the bytes are unchanged.
+ * Content hashing (not mtime) catches same-size rewrites on coarse filesystems.
  *
  * \param filePath Path to the file.
- * \return Key, or an empty string when the file doesn't exist.
+ * \return Key, or an empty string when the file can't be read.
  **********************************************************************************************************************/
 QString MainWindow::gdsFileKey(const QString &filePath)
 {
-    const QFileInfo fi(filePath);
-    if (!fi.exists())
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly))
         return QString();
-    return fi.absoluteFilePath() + QLatin1Char('|') + QString::number(fi.size()) + QLatin1Char('|')
-            + QString::number(fi.lastModified().toMSecsSinceEpoch());
+    const QString abs = QFileInfo(file).absoluteFilePath();
+    return gdsContentKey(abs, file.readAll());
 }
 
 /*!*******************************************************************************************************************

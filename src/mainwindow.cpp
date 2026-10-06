@@ -6490,6 +6490,11 @@ void MainWindow::clearModelInputs()
     m_ui->tblPorts->setRowCount(0);
     removeAllThermalObjectRows();
 
+    m_gdsInfoCache = GdsFileInfo{};
+    m_flatPolysKey.clear();
+    m_flatPolys.clear();
+    m_layoutPreviewKey.clear();
+
     rebuildLayerMapping();
     updateEditStackupButtonState();
     updateSubLayerNamesCheckboxState();

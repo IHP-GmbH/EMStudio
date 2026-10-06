@@ -83,7 +83,7 @@ several files by topic. Add a method to the file whose topic it belongs to:
 | convertloosemodel.cpp | File → Convert to Settings Dictionary: runs `scripts/convert_loose_to_settings.py`, confirmation dialog, verified backup, replace, reload |
 | sidebysidediff.cpp | `SideBySideDiff`: original and changed Python side by side for that dialog. Rows come aligned from the converter's report (`rows`: line per side, 0 = filler); synced scrolling, syntax highlighting, line-number gutter, Previous/Next change. `changeShown` (original lines of the shown change) selects the variables assigned there in the dialog's table; a table row calls `goToLeftLine` |
 | headless.cpp | `runHeadless()` for `-run -palace/-openems` |
-| gdsreader.cpp / xmlreader.cpp | GDS cells, top cells and layers in one pass over the file read into memory (`readGdsFileInfo`; `updateGdsUserInfo` caches it per `gdsFileKey`: path, size, modification time); stackup layer names for the port combos |
+| gdsreader.cpp / xmlreader.cpp | GDS cells, top cells and layers in one pass over the file read into memory (`readGdsFileInfo`; `updateGdsUserInfo` caches it per `gdsFileKey`: path, size, SHA-1 of contents — not mtime, so same-size rewrites on FAT/network FS are seen); stackup layer names for the port combos |
 | tips.cpp | Load `keywords/<tool>.csv` (description, topic, default) and `workflow_signatures.csv`; merge with `# @brief` tips from the model |
 | wslHelper.cpp | Path conversion and existence checks that work across Windows and WSL |
 | verification.cpp | `test*()` hooks, compiled only with `EMSTUDIO_TESTING` (see §6) |

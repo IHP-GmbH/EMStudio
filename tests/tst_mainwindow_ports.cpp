@@ -1133,8 +1133,8 @@ void MainWindowPortsTest::loadPythonModel_buildsLayoutPreviewOnce()
 }
 
 /*!*******************************************************************************************************************
- * \brief The GDS cells / layers and the flattened preview are cached per file version: a GDS changed on
- *        disk (same path, e.g. saved again in KLayout) is read again.
+ * \brief The GDS cells / layers and the flattened preview are cached per content hash: a same-size
+ *        rewrite on disk (e.g. KLayout Save, unchanged mtime) is read again.
  **********************************************************************************************************************/
 void MainWindowPortsTest::gdsCache_rereadsChangedFile()
 {
@@ -1179,17 +1179,20 @@ void MainWindowPortsTest::gdsCache_rereadsChangedFile()
     };
     QVERIFY(panelTexts().contains(QStringLiteral("L202 (not mapped)")));
 
-    // Same path and size, marker layer 202 → 203, newer time stamp.
+    // Same path, same size, same mtime: only the bytes change (layer 202 → 203).
+    // Content hashing must invalidate the cache (mtime alone would miss this on FAT).
     QFile f(gds);
     QVERIFY(f.open(QIODevice::ReadWrite));
     QByteArray bytes = f.readAll();
+    const QDateTime oldMtime = f.fileTime(QFileDevice::FileModificationTime);
     const QByteArray layer202("\x00\x06\x0d\x02\x00\xca", 6);
     const QByteArray layer203("\x00\x06\x0d\x02\x00\xcb", 6);
     QVERIFY(bytes.contains(layer202));
     bytes.replace(layer202, layer203);
     QVERIFY(f.seek(0));
     QCOMPARE(f.write(bytes), qint64(bytes.size()));
-    QVERIFY(f.setFileTime(QDateTime::currentDateTime().addSecs(10), QFileDevice::FileModificationTime));
+    if (oldMtime.isValid())
+        QVERIFY(f.setFileTime(oldMtime, QFileDevice::FileModificationTime));
     f.close();
 
     w.setGdsFile(gds);

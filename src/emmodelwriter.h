@@ -12,9 +12,21 @@
 
 #pragma once
 
+#include <QPointF>
+#include <QPolygonF>
 #include <QString>
 #include <QStringList>
 #include <QVector>
+
+/*! One EM port for EmModel + lookalike symbol (Touchstone index = i+1 when index unset). */
+struct EmModelPublishPort
+{
+    QString name;
+    int     index = 0; //!< 1-based; 0 → order in the list
+    double  xUm = 0.0;
+    double  yUm = 0.0;
+    bool    hasPosition = false;
+};
 
 /*! Fields collected on the Output page for ViewType::EmModel publish. */
 struct EmModelPublishFields
@@ -28,7 +40,18 @@ struct EmModelPublishFields
     QString     layoutPath;
     QString     substratePath;
     double      z0 = 50.0;
-    QStringList portNames;   //!< Ordered port names (Touchstone index = i+1)
+    QVector<EmModelPublishPort> ports;
+    /*! Optional lookalike body from GDS flatten (µm); used when layout.room load fails. */
+    QVector<QPolygonF> outlinePolysUm;
+    bool        writeLookalikeSymbol = true; //!< Also write `<cell>.symbol.room`
+};
+
+/*! Result of EmModel (+ optional lookalike symbol) publish. */
+struct EmModelPublishResult
+{
+    QString error;          //!< Empty on success
+    QString emmodelPath;
+    QString symbolPath;     //!< Set when a lookalike symbol was written
 };
 
 /*! True when EMStudio was built with CommonDB ROOM (can write .emmodel.room). */
@@ -36,6 +59,8 @@ bool emModelWriterAvailable();
 
 /*!
  * Writes \a fields to a ROOM EmModel file at \a fields.outputPath.
- * \return Empty string on success; otherwise an error message.
+ * When \a fields.writeLookalikeSymbol is true, also writes a layout-lookalike
+ * `<cell>.symbol.room` beside it (outline from layout.room or outlinePolysUm).
+ * \return result.error empty on success.
  */
-QString writeEmModelRoomFile(const EmModelPublishFields &fields);
+EmModelPublishResult writeEmModelRoomFile(const EmModelPublishFields &fields);

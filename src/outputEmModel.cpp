@@ -15,11 +15,13 @@
 #include "emmodelwriter.h"
 #include "layoutfile.h"
 
+#include <QComboBox>
 #include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QHash>
 #include <QRegularExpression>
 #include <QSignalBlocker>
 
@@ -293,6 +295,7 @@ void MainWindow::on_btnOutputCreate_clicked()
     f.layoutPath = m_ui->txtOutputLayout ? m_ui->txtOutputLayout->text().trimmed() : QString();
     f.substratePath = m_ui->txtOutputSubstrate ? m_ui->txtOutputSubstrate->text().trimmed() : QString();
     f.z0 = m_ui->spnOutputZ0 ? m_ui->spnOutputZ0->value() : 50.0;
+    f.writeLookalikeSymbol = true;
 
     QString cellName;
     resolveEmSetupCellDirectory(&cellName, nullptr);
@@ -306,22 +309,57 @@ void MainWindow::on_btnOutputCreate_clicked()
         cellName = m_ui->cbxTopCell ? m_ui->cbxTopCell->currentText().trimmed() : QString();
     f.cellName = cellName;
 
+    // Port XY from flattened GDS markers; outline fallback when layout.room is missing.
+    QHash<int, QRectF> portBoundsByGds;
+    constexpr int kMaxOutlinePolys = 200;
+    for (const GdsFlatPolygon &poly : qAsConst(m_flatPolys)) {
+        if (poly.pointsUm.size() < 2)
+            continue;
+        const bool portLayer = m_ui->layoutView && m_ui->layoutView->isPortLayerNumber(poly.layer);
+        if (portLayer) {
+            portBoundsByGds[poly.layer] |= poly.pointsUm.boundingRect();
+            continue;
+        }
+        if (f.outlinePolysUm.size() < kMaxOutlinePolys)
+            f.outlinePolysUm.append(poly.pointsUm);
+    }
+
     if (m_ui->tblPorts) {
         for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
             const auto *numItem = m_ui->tblPorts->item(r, 0);
             const int n = numItem ? numItem->text().trimmed().toInt() : (r + 1);
-            f.portNames << QStringLiteral("P%1").arg(n > 0 ? n : (r + 1));
+            EmModelPublishPort port;
+            port.index = n > 0 ? n : (r + 1);
+            port.name = QStringLiteral("P%1").arg(port.index);
+
+            auto *srcBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 3));
+            if (srcBox) {
+                const QString src = srcBox->currentText().trimmed();
+                bool ok = false;
+                int gds = src.toInt(&ok);
+                if (!ok)
+                    gds = m_subNameToGds.value(src, -1);
+                if (gds >= 0 && portBoundsByGds.contains(gds)) {
+                    const QRectF bb = portBoundsByGds.value(gds);
+                    port.xUm = bb.center().x();
+                    port.yUm = bb.center().y();
+                    port.hasPosition = true;
+                }
+            }
+            f.ports.append(port);
         }
     }
 
-    const QString err = writeEmModelRoomFile(f);
-    if (!err.isEmpty()) {
-        error(err, false);
+    const EmModelPublishResult pub = writeEmModelRoomFile(f);
+    if (!pub.error.isEmpty()) {
+        error(pub.error, false);
         if (m_ui->lblOutputStatus)
-            m_ui->lblOutputStatus->setText(err);
+            m_ui->lblOutputStatus->setText(pub.error);
         return;
     }
-    const QString msg = tr("Created EmModel:\n%1").arg(QDir::toNativeSeparators(f.outputPath));
+    QString msg = tr("Created EmModel:\n%1").arg(QDir::toNativeSeparators(pub.emmodelPath));
+    if (!pub.symbolPath.isEmpty())
+        msg += tr("\nLookalike symbol:\n%1").arg(QDir::toNativeSeparators(pub.symbolPath));
     info(msg);
     if (m_ui->lblOutputStatus)
         m_ui->lblOutputStatus->setText(msg);

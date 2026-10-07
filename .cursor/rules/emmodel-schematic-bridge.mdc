@@ -1,29 +1,31 @@
 ---
-description: Future EM→schematic emModel / layout-lookalike symbol plan
+description: EM→schematic emModel / layout-lookalike symbol plan
 alwaysApply: false
 globs: 
 ---
 
-# EM model view (ADS-like emModel) — future work
+# EM model view (ADS-like emModel)
 
-## Context (discussed with user)
+## Context
 
 Keysight ADS pattern after RF/EM:
 
-- **layout** + **emSetup** + **emModel** (S/Y container) + **symbol** (often layout look-alike with pins)
+- **layout** + **emSetup** + **emModel** (S/Y container) + **symbol** (layout look-alike with pins)
 - Schematic places the **symbol**; simulation resolves to **emModel**, not schematic of the same cell
 
 ## Decision for IHP stack (EMStudio / LibMan / CommonDB / Qucs-S)
 
 - Cell: **layout** + **emmodel** + layout-lookalike **symbol** (+ optional **emsetup** folder of variants)
-- **Do** add Room `ViewType::EmModel` + `EmModelViewData` (CommonDB schema) — first-class, not opaque-only
-- On disk: `<cell>.emmodel.room`; variants live under `<cell>.emsetup/<name>/` (not a ViewType)
+- Room `ViewType::EmModel` + `EmModelViewData` (CommonDB schema) — first-class
+- On disk: `<cell>.emmodel.room`; variants under `<cell>.emsetup/<name>/` (not a ViewType)
 - `emmodel.room` = published handle (default variant, port map, snp/ref, EMStudio `.py` path, topology/setup hashes)
 - Heavy artifacts (`.sNp`, fields, `.py`) stay as files under `emsetup/`; room holds structured meta + refs
 - EMStudio Layout File may be GDS or ROOM; **before Run**, ROOM is converted to GDS for the workflow
-- LibMan launches EMStudio like setupEM (`-libman-cell`); after a successful Run, EMStudio writes `<cell>.emmodel.room`
-- **Qucs-S** does **not** open `emmodel` natively; uses Touchstone via FileSP / `.lib` / netlist + **symbol**
+- LibMan launches EMStudio like setupEM (`-libman-cell`); Output → **Create** writes:
+  - `<cell>.emmodel.room`
+  - `<cell>.symbol.room` lookalike (`room::writeLookalikeSymbolRoom` in CommonDB `utils/em_lookalike_symbol.*`; property `em.lookalike=1`; pins = EM ports)
+- **Still TODO:** Qucs-S / ROOM export resolve of placed symbol → Touchstone from emmodel (`snpPath`), not empty subcircuit
 
 ## Fragile contract
 
-Port order: EM ports ↔ symbol pins ↔ Touchstone port index must stay consistent.
+Port order: EM ports ↔ symbol pins (`pinnumber`) ↔ Touchstone port index must stay consistent.

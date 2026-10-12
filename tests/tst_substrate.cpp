@@ -235,3 +235,54 @@ void SubstrateTest::resolve_dielectricAndLayerReferences()
     QVERIFY(foundM2);
     QCOMPARE(sub.computeMinimumSchemaVersion(), QStringLiteral("3.0"));
 }
+
+void SubstrateTest::resolve_dielectricReferencesApplySubstrateOffset()
+{
+    // Reference-chained dielectrics must use the same frame as legacy stacking:
+    // Layer Z is relative to the substrate top, so the substrate sits at -Offset.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("refs_offset.xml"));
+    {
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream(&f)
+            << "<Stackup schemaVersion=\"3.0\">\n"
+            << "  <Materials>\n"
+            << "    <Material Name=\"Si\" Type=\"Dielectric\" Color=\"ffffff\"/>\n"
+            << "    <Material Name=\"Met\" Type=\"Conductor\" Color=\"ff0000\"/>\n"
+            << "  </Materials>\n"
+            << "  <ELayers LengthUnit=\"um\">\n"
+            << "    <Dielectrics>\n"
+            << "      <Dielectric Name=\"Ox\" Material=\"Si\" Thickness=\"12\" "
+               "Reference=\"Sub\" ReferenceEdge=\"Top\" />\n"
+            << "      <Dielectric Name=\"Sub\" Material=\"Si\" Thickness=\"250\" />\n"
+            << "    </Dielectrics>\n"
+            << "    <Layers>\n"
+            << "      <Substrate Offset=\"250\" />\n"
+            << "      <Layer Name=\"M1\" Type=\"conductor\" Material=\"Met\" Layer=\"1\" "
+               "Zmin=\"0.6\" Zmax=\"1.0\" />\n"
+            << "    </Layers>\n"
+            << "  </ELayers>\n"
+            << "</Stackup>\n";
+    }
+
+    Substrate sub;
+    QVERIFY(sub.parseXmlFile(path));
+    QString err;
+    QVERIFY2(sub.resolve({}, &err), qPrintable(err));
+
+    int found = 0;
+    for (const Dielectric &d : sub.dielectrics()) {
+        if (d.name() == QLatin1String("Sub")) {
+            QCOMPARE(d.resolvedZmin(), -250.0);
+            QCOMPARE(d.resolvedZmax(), 0.0);
+            ++found;
+        } else if (d.name() == QLatin1String("Ox")) {
+            QCOMPARE(d.resolvedZmin(), 0.0);
+            QCOMPARE(d.resolvedZmax(), 12.0);
+            ++found;
+        }
+    }
+    QCOMPARE(found, 2);
+}

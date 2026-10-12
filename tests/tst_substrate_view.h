@@ -16,6 +16,7 @@ class SubstrateViewTest : public QObject
 
 private slots:
     void rendersStackup_andHandlesHighlightZoom();
+    void thickStackup_keepsProportions();
 };
 
 #endif // TST_SUBSTRATE_VIEW_H

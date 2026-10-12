@@ -401,7 +401,6 @@ void SubstrateView::drawSubstrate()
 
     const double dielWidth   = 300.0;
     const double depthOffset = 10.0;
-    const double pixelScale  = 20.0;
     const double rightGutterX= dielWidth + 24.0;
     const double leftMargin  = 10.0;
     const double inset       = 2.0;
@@ -449,6 +448,10 @@ void SubstrateView::drawSubstrate()
     for (const auto& d : dielectrics) thicks.push_back(d.thickness());
     double tMed = trimmedMedian(thicks, 0.10);
     if (tMed <= 0.0) tMed = 1.0;
+
+    // Scene units per visual µm, relative to tMed: the drawing depends on thickness ratios only,
+    // so thick stacks (interposer, 200 µm air) keep the proportions and label sizes of a thin BEOL.
+    const double pixelScale = dielWidth / tMed;
 
     const double emptyScale   = 0.30;
     const double busyBoostK   = 0.10;

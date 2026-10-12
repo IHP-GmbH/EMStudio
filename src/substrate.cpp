@@ -555,8 +555,10 @@ bool Substrate::resolveGeometry(const QHash<QString, QVariant> &vars, QString *e
                     continue;
 
                 if (d.reference().isEmpty()) {
-                    d.setResolvedZmin(0.0);
-                    d.setResolvedZmax(d.thickness());
+                    // Same frame as the legacy branch: Layer Z values are relative to the
+                    // substrate top (gds2palace adds Offset to the metals instead).
+                    d.setResolvedZmin(-m_substrateOffset);
+                    d.setResolvedZmax(-m_substrateOffset + d.thickness());
                     dielBounds.insert(d.name(), qMakePair(d.resolvedZmin(), d.resolvedZmax()));
                     placed.insert(d.name());
                     progress = true;

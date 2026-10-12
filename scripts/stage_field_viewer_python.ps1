@@ -82,9 +82,9 @@ if (Test-Path $addonsMarker) {
 }
 
 Write-Host "Smoke import (pyvista / Pillow / pyvistaqt / PySide6 Essentials)"
-$prevQtPlatform = $env:QT_QPA_PLATFORM
-$env:QT_QPA_PLATFORM = "offscreen"
-$smoke = @'
+# Write a temp script — PowerShell mangles multiline python -c strings.
+$SmokePy = Join-Path $env:TEMP "emstudio_field_viewer_smoke.py"
+@'
 import os
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pyvista as pv
@@ -92,14 +92,18 @@ import PIL  # noqa: F401
 from PySide6.QtWidgets import QApplication
 from PySide6.QtOpenGLWidgets import QOpenGLWidget  # noqa: F401
 from pyvistaqt import QtInteractor
+
 app = QApplication.instance() or QApplication([])
 interactor = QtInteractor(off_screen=True)
 print("field_viewer_python ok", pv.__version__, type(interactor).__name__)
-'@
-& $PythonExe -c $smoke
+'@ | Set-Content -Path $SmokePy -Encoding ascii
+$prevQtPlatform = $env:QT_QPA_PLATFORM
+$env:QT_QPA_PLATFORM = "offscreen"
+& $PythonExe $SmokePy
 $smokeCode = $LASTEXITCODE
 if ($null -ne $prevQtPlatform) { $env:QT_QPA_PLATFORM = $prevQtPlatform }
 else { Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue }
+Remove-Item -LiteralPath $SmokePy -Force -ErrorAction SilentlyContinue
 if ($smokeCode -ne 0) { throw "smoke import failed ($smokeCode)" }
 
 Write-Host "Removing build-only pip / setuptools / caches"

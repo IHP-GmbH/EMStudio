@@ -137,28 +137,67 @@ jobs:
           cp -a icons/logo.png dist/icons/ || true
           cp -a icons/logo.png dist/logo.png || true
 
-          # Qt shared libraries + ICU from the aqt install (not assumed on the target host).
-          cp -a "${QT_LIBS}"/libQt5*.so* dist/lib/
-          cp -a "${QT_LIBS}"/libicu*.so* dist/lib/ 2>/dev/null || true
-
-          # Plugins loaded at runtime (not visible via ldd of the main binary).
-          for plugindir in platforms imageformats xcbglintegrations platforminputcontexts iconengines styles; do
+          # Plugins actually used at runtime (avoid eglfs/webgl/vnc and their Qt deps).
+          # xcb + offscreen (CI smoke); wayland optional for Wayland desktops (#30).
+          mkdir -p dist/plugins/platforms
+          cp -a "${QT_PLUGINS}/platforms/libqxcb.so" dist/plugins/platforms/
+          cp -a "${QT_PLUGINS}/platforms/libqoffscreen.so" dist/plugins/platforms/
+          for f in "${QT_PLUGINS}/platforms"/libqwayland-*.so; do
+            [[ -f "${f}" ]] && cp -a "${f}" dist/plugins/platforms/
+          done
+          for plugindir in imageformats xcbglintegrations platforminputcontexts iconengines styles; do
             if [[ -d "${QT_PLUGINS}/${plugindir}" ]]; then
-              cp -a "${QT_PLUGINS}/${plugindir}" dist/plugins/
+              mkdir -p "dist/plugins/${plugindir}"
+              cp -a "${QT_PLUGINS}/${plugindir}"/*.so "dist/plugins/${plugindir}/"
             fi
           done
 
-          # Pull Qt-prefix deps of plugins into dist/lib as well.
-          while IFS= read -r -d '' plug; do
+          # Copy each Qt/ICU dependency once, under its soname only (cp -L).
+          # upload-artifact would otherwise store .so / .so.5 / .so.5.15* as full copies.
+          copy_qt_soname() {
+            local src="$1"
+            [[ -n "${src}" && -e "${src}" ]] || return 0
+            case "${src}" in
+              "${QT_PREFIX}"/*|"${QT_LIBS}"/*) ;;
+              *) return 0 ;;
+            esac
+            local base soname dest
+            base="$(basename "${src}")"
+            if [[ "${base}" =~ ^(lib.+\.so\.[0-9]+) ]]; then
+              soname="${BASH_REMATCH[1]}"
+            else
+              soname="${base}"
+            fi
+            dest="dist/lib/${soname}"
+            [[ -e "${dest}" ]] && return 0
+            cp -L "${src}" "${dest}"
+          }
+
+          collect_ldd_qt() {
+            local target="$1"
+            [[ -f "${target}" ]] || return 0
+            local lib
             while IFS= read -r lib; do
-              [[ -n "${lib}" && -f "${lib}" ]] || continue
-              case "${lib}" in
-                "${QT_PREFIX}"/*|"${QT_LIBS}"/*)
-                  cp -an "${lib}" dist/lib/
-                  ;;
-              esac
-            done < <(ldd "${plug}" | awk '/=>/{print $3}')
+              copy_qt_soname "${lib}"
+            done < <(ldd "${target}" | awk '/=>/{print $3}')
+          }
+
+          collect_ldd_qt dist/EMStudio.bin
+          while IFS= read -r -d '' plug; do
+            collect_ldd_qt "${plug}"
           done < <(find dist/plugins -type f -name '*.so' -print0)
+
+          # Closure: newly copied libs may need further Qt/ICU deps.
+          changed=1
+          while [[ "${changed}" -eq 1 ]]; do
+            changed=0
+            before="$(find dist/lib -type f | wc -l)"
+            while IFS= read -r -d '' so; do
+              collect_ldd_qt "${so}"
+            done < <(find dist/lib -type f -print0)
+            after="$(find dist/lib -type f | wc -l)"
+            [[ "${after}" -gt "${before}" ]] && changed=1
+          done
 
           # Deploy-only qt.conf: relative plugin/lib paths for the staged bundle.
           # Source-tree qt.conf intentionally has no [Paths] Plugins override
@@ -180,7 +219,8 @@ jobs:
           printf '%s\n' \
             "EMStudio Linux (${BUNDLE_LABEL}) CI build" \
             '' \
-            'Qt 5.15 runtime is bundled under ./lib and ./plugins.' \
+            'Qt 5.15 runtime is bundled under ./lib and ./plugins' \
+            '(needed libs/plugins only; see GitHub issue #30).' \
             'glibc is NOT bundled: use the ubuntu22 artifact on Ubuntu 22.04' \
             '(glibc 2.35), and ubuntu24 on Ubuntu 24.04+ (glibc ≥ 2.38).' \
             '' \
@@ -198,6 +238,8 @@ jobs:
           ls -la dist
           echo "=== Qt libs count ==="
           ls dist/lib | wc -l
+          echo "=== bundle size (unpacked) ==="
+          du -sh dist dist/lib dist/plugins
           echo "=== ldd (with bundled libs) ==="
           LD_LIBRARY_PATH="dist/lib" ldd dist/EMStudio.bin | tee /tmp/emstudio-ldd.txt
           if grep -E 'not found' /tmp/emstudio-ldd.txt | grep -E 'Qt5|icu'; then
@@ -436,10 +478,28 @@ jobs:
             -File "scripts\stage_field_viewer_python.ps1" `
             -DestDir "build\dist\field_viewer_python"
 
+      - name: Report Field viewer Python size
+        shell: pwsh
+        run: |
+          $dir = "build\dist\field_viewer_python"
+          if (Test-Path $dir) {
+            $bytes = (Get-ChildItem $dir -Recurse -File | Measure-Object Length -Sum).Sum
+            Write-Host ("field_viewer_python: {0:N1} MB, {1} files" -f ($bytes/1MB), `
+              (Get-ChildItem $dir -Recurse -File).Count)
+            if (Test-Path "$dir\Lib\site-packages\PySide6\QtWebEngineCore.pyd") {
+              throw "PySide6 Addons still present after staging"
+            }
+          }
+
       - name: Build Windows installer (Inno Setup)
         shell: pwsh
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer\EMStudio.iss" /O"build\installer"
+          $setup = "build\installer\EMStudio-Setup.exe"
+          if (Test-Path $setup) {
+            $mb = (Get-Item $setup).Length / 1MB
+            Write-Host ("EMStudio-Setup.exe: {0:N1} MB" -f $mb)
+          }
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4

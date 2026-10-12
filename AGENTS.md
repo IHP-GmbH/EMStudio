@@ -349,7 +349,10 @@ must go through these managers, not the stock `QtVariantEditorFactory`.
   `PALACE_PYTHON` (Windows host Python for gds2palace; solver still uses WSL),
   `ELMER_PYTHON`, `FIELD_VIEWER_PYTHON`
   (PyVista + Pillow; the Windows installer bundles one in `field_viewer_python/`,
-  built by `scripts/stage_field_viewer_python.ps1` from `requirements-field-viewer.txt`).
+  built by `scripts/stage_field_viewer_python.ps1` from `requirements-field-viewer.txt`
+  with `PySide6-Essentials`, then strips pip/setuptools — see issue #30).
+  Ubuntu portable CI bundles only the Qt libs/plugins needed (`ldd` + soname
+  copies), not every `libQt5*.so*` from aqt.
 - Python packages for the workflows are listed in `requirements-python.txt`.
 - On Linux Wayland desktops with XWayland, main.cpp sets
   `QT_QPA_PLATFORM=xcb;wayland` before creating the QApplication

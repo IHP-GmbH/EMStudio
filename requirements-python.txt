@@ -28,7 +28,7 @@ snp2le>=0.1.9
 # Windows installer bundles these via scripts/stage_field_viewer_python.ps1.
 # See requirements-field-viewer.txt for the installer pin set.
 #   python -m pip install -r requirements-field-viewer.txt
-# pyvista / pillow / scipy / pyvistaqt / PySide6
+# pyvista / pillow / scipy / pyvistaqt / PySide6-Essentials (#30)
 # --- Optional: Volker's GUI helpers (not required by EMStudio itself) -------
 # setupEM>=0.5.1          # stackupEditor / resultViewer / setupThermal (PySide6)
 # matplotlib              # only if you use setupEM Result Viewer externally

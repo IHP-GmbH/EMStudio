@@ -75,14 +75,60 @@ if ($LASTEXITCODE -ne 0) { throw "pip upgrade failed ($LASTEXITCODE)" }
 & $PythonExe -m pip install --no-warn-script-location -r $ReqFile
 if ($LASTEXITCODE -ne 0) { throw "pip install field viewer deps failed ($LASTEXITCODE)" }
 
-Write-Host "Smoke import"
-& $PythonExe -c "import pyvista, PIL; print('field_viewer_python ok', pyvista.__version__)"
-if ($LASTEXITCODE -ne 0) { throw "smoke import failed" }
+# Refuse accidental full PySide6 (Addons) — Essentials must be enough (#30).
+$addonsMarker = Join-Path $SitePackages "PySide6\QtWebEngineCore.pyd"
+if (Test-Path $addonsMarker) {
+    throw "PySide6 Addons present ($addonsMarker); use PySide6-Essentials only"
+}
+
+Write-Host "Smoke import (pyvista / Pillow / pyvistaqt / PySide6 Essentials)"
+$prevQtPlatform = $env:QT_QPA_PLATFORM
+$env:QT_QPA_PLATFORM = "offscreen"
+$smoke = @'
+import os
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+import pyvista as pv
+import PIL  # noqa: F401
+from PySide6.QtWidgets import QApplication
+from PySide6.QtOpenGLWidgets import QOpenGLWidget  # noqa: F401
+from pyvistaqt import QtInteractor
+app = QApplication.instance() or QApplication([])
+interactor = QtInteractor(off_screen=True)
+print("field_viewer_python ok", pv.__version__, type(interactor).__name__)
+'@
+& $PythonExe -c $smoke
+$smokeCode = $LASTEXITCODE
+if ($null -ne $prevQtPlatform) { $env:QT_QPA_PLATFORM = $prevQtPlatform }
+else { Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue }
+if ($smokeCode -ne 0) { throw "smoke import failed ($smokeCode)" }
+
+Write-Host "Removing build-only pip / setuptools / caches"
+$buildOnly = @(
+    "pip", "pip-*",
+    "setuptools", "setuptools-*",
+    "wheel", "wheel-*",
+    "pkg_resources",
+    "_distutils_hack", "distutils-precedence.pth"
+)
+foreach ($pat in $buildOnly) {
+    Get-ChildItem -Path $SitePackages -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like $pat } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+}
+$ScriptsDir = Join-Path $DestDir "Scripts"
+if (Test-Path $ScriptsDir) {
+    Get-ChildItem -Path $ScriptsDir -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match '^(pip|easy_install)' } |
+        ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
+}
+Get-ChildItem -Path $DestDir -Recurse -Directory -Filter "__pycache__" -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 
 $Readme = @"
 EMStudio bundled Python for Layout Field (2D) and Field 3D.
 Do not replace this folder; Preferences FIELD_VIEWER_PYTHON may point here.
-Packages: see requirements-field-viewer.txt in the EMStudio source tree.
+Packages: see requirements-field-viewer.txt in the EMStudio source tree
+(PySide6-Essentials, not the full PySide6 Addons wheel).
 "@
 [System.IO.File]::WriteAllText((Join-Path $DestDir "README.txt"), $Readme)
 

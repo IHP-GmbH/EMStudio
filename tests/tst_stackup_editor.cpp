@@ -202,6 +202,78 @@ void StackupEditorTest::addRemoveRow_andSave()
     QVERIFY(!loaded.materials().isEmpty());
 }
 
+void StackupEditorTest::moveDielectricRows_upDown()
+{
+    Substrate sub;
+    Material mat;
+    mat.setName(QStringLiteral("Si"));
+    mat.setType(QStringLiteral("Dielectric"));
+    sub.materials().append(mat);
+
+    Dielectric bottom;
+    bottom.setName(QStringLiteral("Bottom"));
+    bottom.setMaterial(QStringLiteral("Si"));
+    bottom.setThicknessRaw(QStringLiteral("10"));
+    Dielectric top;
+    top.setName(QStringLiteral("Top"));
+    top.setMaterial(QStringLiteral("Si"));
+    top.setThicknessRaw(QStringLiteral("1"));
+    sub.dielectrics().append(bottom);
+    sub.dielectrics().append(top);
+
+    StackupEditor ed;
+    ed.setAttribute(Qt::WA_DontShowOnScreen, true);
+    ed.show();
+    ed.setSubstrate(sub);
+
+    auto *tabs = ed.findChild<QTabWidget *>();
+    QVERIFY(tabs);
+    // Dielectrics tab
+    tabs->setCurrentIndex(2);
+
+    QTableWidget *diels = nullptr;
+    for (QTableWidget *t : ed.findChildren<QTableWidget *>()) {
+        if (t->horizontalHeaderItem(0)
+            && t->horizontalHeaderItem(0)->text() == QStringLiteral("Name")
+            && t->columnCount() >= 6
+            && t->horizontalHeaderItem(2)
+            && t->horizontalHeaderItem(2)->text().contains(QStringLiteral("Thickness"))) {
+            diels = t;
+            break;
+        }
+    }
+    QVERIFY(diels);
+    QCOMPARE(diels->rowCount(), 2);
+    QCOMPARE(diels->item(0, 0)->text(), QStringLiteral("Bottom"));
+    QCOMPARE(diels->item(1, 0)->text(), QStringLiteral("Top"));
+
+    QPushButton *up = findButtonByText(&ed, QStringLiteral("Move Up"));
+    QPushButton *down = findButtonByText(&ed, QStringLiteral("Move Down"));
+    QVERIFY(up);
+    QVERIFY(down);
+
+    diels->setCurrentCell(1, 0);
+    QVERIFY(up->isEnabled());
+    QTest::mouseClick(up, Qt::LeftButton);
+    QCOMPARE(diels->item(0, 0)->text(), QStringLiteral("Top"));
+    QCOMPARE(diels->item(1, 0)->text(), QStringLiteral("Bottom"));
+
+    QTest::mouseClick(down, Qt::LeftButton);
+    QCOMPARE(diels->item(0, 0)->text(), QStringLiteral("Bottom"));
+    QCOMPARE(diels->item(1, 0)->text(), QStringLiteral("Top"));
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString out = dir.filePath(QStringLiteral("moved.xml"));
+    QVERIFY(ed.testSaveToPath(out));
+
+    Substrate loaded;
+    QVERIFY(loaded.parseXmlFile(out));
+    QCOMPARE(loaded.dielectrics().size(), 2);
+    QCOMPARE(loaded.dielectrics().at(0).name(), QStringLiteral("Bottom"));
+    QCOMPARE(loaded.dielectrics().at(1).name(), QStringLiteral("Top"));
+}
+
 void StackupEditorTest::escape_emitsClearHighlight()
 {
     StackupEditor ed;

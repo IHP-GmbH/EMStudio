@@ -49,6 +49,12 @@
 
 namespace {
 
+/*!*******************************************************************************************************************
+ * \brief Formats a numeric calculator result with an optional unit suffix.
+ * \param v    Value.
+ * \param unit Optional unit string.
+ * \return Display text.
+ **********************************************************************************************************************/
 QString formatVal(double v, const QString &unit = QString())
 {
     if (!std::isfinite(v))
@@ -65,6 +71,11 @@ QString formatVal(double v, const QString &unit = QString())
     return s;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Magnitude of a complex value in dB.
+ * \param v Complex sample.
+ * \return 20·log10(|v|).
+ **********************************************************************************************************************/
 double toDb(const std::complex<double> &v)
 {
     const double mag = std::abs(v);
@@ -73,11 +84,20 @@ double toDb(const std::complex<double> &v)
     return 20.0 * std::log10(mag);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Phase of a complex value in degrees.
+ * \param v Complex sample.
+ * \return arg(v) in degrees.
+ **********************************************************************************************************************/
 double toPhaseDeg(const std::complex<double> &v)
 {
     return qRadiansToDegrees(std::arg(v));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Device pixel ratio used when baking calculator tool icons.
+ * \return At least 2.0 so glyphs stay sharp on HiDPI.
+ **********************************************************************************************************************/
 qreal iconDevicePixelRatio()
 {
     if (QScreen *screen = QGuiApplication::primaryScreen())
@@ -85,7 +105,12 @@ qreal iconDevicePixelRatio()
     return 2.0;
 }
 
-/*! Paint into a HiDPI pixmap using logical [0..logicalSize] coordinates. */
+/*!*******************************************************************************************************************
+ * \brief Renders a logical-size icon pixmap for the current device pixel ratio.
+ * \param logicalSize Icon edge in logical pixels.
+ * \param paint       Painter callback (logical [0..logicalSize] coordinates).
+ * \return HiDPI pixmap.
+ **********************************************************************************************************************/
 QPixmap makeHiDpiIconPixmap(int logicalSize, const std::function<void(QPainter &, int)> &paint)
 {
     const qreal dpr = iconDevicePixelRatio();
@@ -102,6 +127,12 @@ QPixmap makeHiDpiIconPixmap(int logicalSize, const std::function<void(QPainter &
     return pm;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Builds a multi-resolution QIcon via makeHiDpiIconPixmap.
+ * \param logicalSize Icon edge in logical pixels.
+ * \param paint       Painter callback.
+ * \return Icon for tool buttons.
+ **********************************************************************************************************************/
 QIcon makeMultiResIcon(int logicalSize, const std::function<void(QPainter &, int)> &paint)
 {
     QIcon icon;
@@ -111,6 +142,11 @@ QIcon makeMultiResIcon(int logicalSize, const std::function<void(QPainter &, int
     return icon;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Paints a monochrome clear/reset glyph.
+ * \param p    Painter.
+ * \param size Edge length.
+ **********************************************************************************************************************/
 void paintMonoClear(QPainter &p, int size)
 {
     const QColor ink(40, 40, 40);
@@ -120,6 +156,11 @@ void paintMonoClear(QPainter &p, int size)
     p.drawLine(QPointF(size - m, m), QPointF(m, size - m));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Paints a monochrome info glyph.
+ * \param p    Painter.
+ * \param size Edge length.
+ **********************************************************************************************************************/
 void paintMonoInfo(QPainter &p, int size)
 {
     const QColor ink(40, 40, 40);
@@ -141,6 +182,11 @@ void paintMonoInfo(QPainter &p, int size)
                       stemW * 0.35, stemW * 0.35);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Paints the calculator toggle glyph.
+ * \param p    Painter.
+ * \param size Edge length.
+ **********************************************************************************************************************/
 void paintCalculatorGlyph(QPainter &p, int size)
 {
     const QColor ink(40, 40, 40);
@@ -179,11 +225,21 @@ void paintCalculatorGlyph(QPainter &p, int size)
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Multi-resolution clear/reset icon for the calculator toolbar.
+ * \param size Edge length in logical pixels.
+ * \return Icon for tool buttons.
+ **********************************************************************************************************************/
 QIcon monoClearIcon(int size)
 {
     return makeMultiResIcon(size, paintMonoClear);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Multi-resolution info icon for the calculator toolbar.
+ * \param size Edge length in logical pixels.
+ * \return Icon for tool buttons.
+ **********************************************************************************************************************/
 QIcon monoInfoIcon(int size)
 {
     return makeMultiResIcon(size, paintMonoInfo);

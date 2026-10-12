@@ -40,6 +40,10 @@ constexpr qreal kPickRadiusPx = 25.0;     // a click this close to a trace sampl
 
 } // namespace
 
+/*!*******************************************************************************************************************
+ * \brief Constructs an empty Smith chart widget.
+ * \param parent Optional parent widget.
+ **********************************************************************************************************************/
 SmithChartWidget::SmithChartWidget(QWidget *parent)
     : QWidget(parent)
 {
@@ -50,6 +54,10 @@ SmithChartWidget::SmithChartWidget(QWidget *parent)
     setToolTip(tr("Click a trace for a marker · ←/→ step (Shift: 10 points) · Esc clears"));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Enables or disables zoomed Gamma view around the origin.
+ * \param zoomed True for the tight zoom range.
+ **********************************************************************************************************************/
 void SmithChartWidget::setZoomed(bool zoomed)
 {
     if (m_zoomed == zoomed)
@@ -58,6 +66,10 @@ void SmithChartWidget::setZoomed(bool zoomed)
     update();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Sets the title drawn above the chart.
+ * \param title Chart title text.
+ **********************************************************************************************************************/
 void SmithChartWidget::setChartTitle(const QString &title)
 {
     if (m_title == title)
@@ -66,6 +78,9 @@ void SmithChartWidget::setChartTitle(const QString &title)
     update();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Removes all traces and clears the marker.
+ **********************************************************************************************************************/
 void SmithChartWidget::clearTraces()
 {
     m_traces.clear();
@@ -73,6 +88,15 @@ void SmithChartWidget::clearTraces()
     update();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Appends a reflection-coefficient trace (optional frequency / Z0 for the marker).
+ * \param gamma  Γ samples.
+ * \param color  Pen color.
+ * \param style  Pen style.
+ * \param label  Legend / readout label.
+ * \param freqHz Optional frequency axis [Hz], same length as gamma.
+ * \param z0     Reference impedance for Z readout.
+ **********************************************************************************************************************/
 void SmithChartWidget::addTrace(const QVector<std::complex<double>> &gamma,
                                 const QColor &color,
                                 Qt::PenStyle style,
@@ -92,6 +116,11 @@ void SmithChartWidget::addTrace(const QVector<std::complex<double>> &gamma,
     update();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Places the click marker on a trace sample.
+ * \param trace Trace index, or -1 to clear.
+ * \param index Sample index on that trace.
+ **********************************************************************************************************************/
 void SmithChartWidget::setMarker(int trace, int index)
 {
     if (trace < 0 || trace >= m_traces.size() || m_traces.at(trace).gamma.isEmpty()) {
@@ -103,6 +132,10 @@ void SmithChartWidget::setMarker(int trace, int index)
     update();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Builds human-readable marker lines (f, |Γ|, angle, Z).
+ * \return Readout lines; empty when no marker is set.
+ **********************************************************************************************************************/
 QStringList SmithChartWidget::markerReadout() const
 {
     if (m_markerTrace < 0 || m_markerTrace >= m_traces.size())
@@ -134,16 +167,30 @@ QStringList SmithChartWidget::markerReadout() const
     return lines;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Preferred size for layouts.
+ * \return Suggested widget size.
+ **********************************************************************************************************************/
 QSize SmithChartWidget::sizeHint() const
 {
     return {280, 280};
 }
 
+/*!*******************************************************************************************************************
+ * \brief Minimum useful size for the chart.
+ * \return Minimum widget size.
+ **********************************************************************************************************************/
 QSize SmithChartWidget::minimumSizeHint() const
 {
     return {140, 140};
 }
 
+/*!*******************************************************************************************************************
+ * \brief Maps a Γ point into the plot rectangle.
+ * \param gamma    Reflection coefficient (Re, Im).
+ * \param plotRect Chart disk rectangle.
+ * \return Pixel coordinates.
+ **********************************************************************************************************************/
 QPointF SmithChartWidget::toPixel(const QPointF &gamma, const QRectF &plotRect) const
 {
     const double lim = m_zoomed ? ZOOM_GAMMA : 1.0;
@@ -153,6 +200,11 @@ QPointF SmithChartWidget::toPixel(const QPointF &gamma, const QRectF &plotRect) 
                    plotRect.top() + yNorm * plotRect.height());
 }
 
+/*!*******************************************************************************************************************
+ * \brief Draws constant-r / constant-x Smith grid circles and arcs.
+ * \param p        Painter.
+ * \param plotRect Chart disk rectangle.
+ **********************************************************************************************************************/
 void SmithChartWidget::drawGrid(QPainter &p, const QRectF &plotRect) const
 {
     const double lim = m_zoomed ? ZOOM_GAMMA : 1.0;
@@ -214,6 +266,11 @@ void SmithChartWidget::drawGrid(QPainter &p, const QRectF &plotRect) const
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Strokes all Γ traces into the plot rectangle.
+ * \param p        Painter.
+ * \param plotRect Chart disk rectangle.
+ **********************************************************************************************************************/
 void SmithChartWidget::drawTraces(QPainter &p, const QRectF &plotRect) const
 {
     for (const Trace &t : m_traces) {
@@ -249,6 +306,10 @@ void SmithChartWidget::drawTraces(QPainter &p, const QRectF &plotRect) const
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Paints grid, traces, labels, and marker.
+ * \param event Paint event (unused).
+ **********************************************************************************************************************/
 void SmithChartWidget::paintEvent(QPaintEvent * /*event*/)
 {
     QPainter p(this);
@@ -297,7 +358,10 @@ void SmithChartWidget::paintEvent(QPaintEvent * /*event*/)
     drawMarker(p, plotRect);
 }
 
-/*! Square chart area below the title (the Results viewer shows the legend for all charts). */
+/*!*******************************************************************************************************************
+ * \brief Computes the square plot rect below the title (legend lives in ResultsViewer).
+ * \return Chart disk in widget coordinates.
+ **********************************************************************************************************************/
 QRectF SmithChartWidget::plotRectForSize() const
 {
     const int titleH = m_title.isEmpty() ? 0 : 22;
@@ -306,7 +370,11 @@ QRectF SmithChartWidget::plotRectForSize() const
     return QRectF(area.center().x() - side / 2.0, area.center().y() - side / 2.0, side, side);
 }
 
-/*! r values on the real axis and ±xj where the reactance arcs cross the imaginary axis (as setupEM). */
+/*!*******************************************************************************************************************
+ * \brief Draws r ticks on the real axis and ±xj where reactance arcs cross the imag axis (as setupEM).
+ * \param p        Painter.
+ * \param plotRect Chart disk rectangle.
+ **********************************************************************************************************************/
 void SmithChartWidget::drawGridLabels(QPainter &p, const QRectF &plotRect) const
 {
     const double lim = m_zoomed ? ZOOM_GAMMA : 1.0;
@@ -343,8 +411,11 @@ void SmithChartWidget::drawGridLabels(QPainter &p, const QRectF &plotRect) const
     }
 }
 
-/*! Marker dot on the chosen sample, plus the readout box: left of the chart when there is room
- *  (wide charts), else in its top-left corner. */
+/*!*******************************************************************************************************************
+ * \brief Draws the marker and readout (left of the chart when wide, else top-left).
+ * \param p        Painter.
+ * \param plotRect Chart disk rectangle.
+ **********************************************************************************************************************/
 void SmithChartWidget::drawMarker(QPainter &p, const QRectF &plotRect) const
 {
     const QStringList lines = markerReadout();
@@ -378,6 +449,10 @@ void SmithChartWidget::drawMarker(QPainter &p, const QRectF &plotRect) const
     p.setBrush(Qt::NoBrush);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Selects the nearest sample under the mouse as the marker.
+ * \param event Mouse press.
+ **********************************************************************************************************************/
 void SmithChartWidget::mousePressEvent(QMouseEvent *event)
 {
     setFocus(Qt::MouseFocusReason);
@@ -405,6 +480,10 @@ void SmithChartWidget::mousePressEvent(QMouseEvent *event)
     event->accept();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Moves or clears the marker with the keyboard.
+ * \param event Key event.
+ **********************************************************************************************************************/
 void SmithChartWidget::keyPressEvent(QKeyEvent *event)
 {
     if (m_markerTrace >= 0 && (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right)) {

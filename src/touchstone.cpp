@@ -30,6 +30,11 @@
 
 namespace {
 
+/*!*******************************************************************************************************************
+ * \brief Converts a Touchstone frequency-unit token to a Hz multiplier.
+ * \param unit HZ/KHZ/MHZ/GHZ/THZ (case-insensitive).
+ * \return Factor to multiply file frequencies by.
+ **********************************************************************************************************************/
 double freqUnitToHz(const QString &unit)
 {
     const QString u = unit.toUpper();
@@ -46,6 +51,11 @@ double freqUnitToHz(const QString &unit)
     return 1e9; // Touchstone default is GHz when unit omitted/unknown
 }
 
+/*!*******************************************************************************************************************
+ * \brief Infers port count from an .sNp file name.
+ * \param fileName Base name (e.g. model.s2p).
+ * \return Port count, or 0 when unknown.
+ **********************************************************************************************************************/
 int nportsFromFileName(const QString &fileName)
 {
     static const QRegularExpression re(
@@ -57,6 +67,11 @@ int nportsFromFileName(const QString &fileName)
     return m.captured(1).toInt();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Splits a Touchstone data line into whitespace tokens.
+ * \param line One file line.
+ * \return Non-empty tokens.
+ **********************************************************************************************************************/
 QStringList tokenizeLine(const QString &line)
 {
     // Strip inline ! comments after option/data tokens
@@ -70,6 +85,13 @@ QStringList tokenizeLine(const QString &line)
 
 } // namespace
 
+/*!*******************************************************************************************************************
+ * \brief Builds a complex S value from a Touchstone format pair.
+ * \param format RI, MA, or DB.
+ * \param a      First number on the line.
+ * \param b      Second number on the line.
+ * \return Complex S-parameter.
+ **********************************************************************************************************************/
 std::complex<double> TouchstoneNetwork::toComplex(Format format, double a, double b)
 {
     switch (format) {
@@ -88,16 +110,34 @@ std::complex<double> TouchstoneNetwork::toComplex(Format format, double a, doubl
     return {};
 }
 
+/*!*******************************************************************************************************************
+ * \brief Flat index of S[m,n] at a frequency sample.
+ * \param freqIndex Frequency index.
+ * \param m         Load port (0-based).
+ * \param n         Source port (0-based).
+ * \return Index into the packed S vector.
+ **********************************************************************************************************************/
 int TouchstoneNetwork::indexOf(int freqIndex, int m, int n) const
 {
     return freqIndex * m_nports * m_nports + m * m_nports + n;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Base file name of the loaded path.
+ * \return File name without directory.
+ **********************************************************************************************************************/
 QString TouchstoneNetwork::fileName() const
 {
     return QFileInfo(m_path).fileName();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns one S-parameter sample.
+ * \param freqIndex Frequency index.
+ * \param m         Load port (0-based).
+ * \param n         Source port (0-based).
+ * \return Complex S, or 0 if out of range.
+ **********************************************************************************************************************/
 std::complex<double> TouchstoneNetwork::s(int freqIndex, int m, int n) const
 {
     if (freqIndex < 0 || freqIndex >= m_freqHz.size()
@@ -107,6 +147,12 @@ std::complex<double> TouchstoneNetwork::s(int freqIndex, int m, int n) const
     return m_s.at(indexOf(freqIndex, m, n));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns S[m,n] versus frequency.
+ * \param m Load port (0-based).
+ * \param n Source port (0-based).
+ * \return One complex value per frequency sample.
+ **********************************************************************************************************************/
 QVector<std::complex<double>> TouchstoneNetwork::sParam(int m, int n) const
 {
     QVector<std::complex<double>> out;
@@ -118,6 +164,12 @@ QVector<std::complex<double>> TouchstoneNetwork::sParam(int m, int n) const
     return out;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Parses a Touchstone .sNp file into this object.
+ * \param path  Absolute or relative file path.
+ * \param error Optional error message sink.
+ * \return True on successful load.
+ **********************************************************************************************************************/
 bool TouchstoneNetwork::load(const QString &path, QString *error)
 {
     m_path.clear();

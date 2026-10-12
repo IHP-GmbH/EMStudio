@@ -18,6 +18,7 @@ private slots:
     void colorDelegate_parseAndIcon();
     void loadGolden_roundTripAndSelect();
     void addRemoveRow_andSave();
+    void moveDielectricRows_upDown();
     void escape_emitsClearHighlight();
     void visitAllTabs_addRowsAndComboDelegate();
     void importXmlViaTestingHook_andResolveAdsScript();

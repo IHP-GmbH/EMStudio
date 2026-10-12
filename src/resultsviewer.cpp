@@ -92,6 +92,11 @@ const QRegularExpression kTouchstoneRe(
     QStringLiteral(R"(\.s(\d+)p$)"),
     QRegularExpression::CaseInsensitiveOption);
 
+/*!*******************************************************************************************************************
+ * \brief Magnitude of a complex S sample in dB (clamped for |v| = 0).
+ * \param v Complex sample.
+ * \return 20·log10(|v|), or -200 when |v| is zero.
+ **********************************************************************************************************************/
 double toDb(const std::complex<double> &v)
 {
     const double mag = std::abs(v);
@@ -100,11 +105,22 @@ double toDb(const std::complex<double> &v)
     return 20.0 * std::log10(mag);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Phase of a complex S sample in degrees.
+ * \param v Complex sample.
+ * \return arg(v) in degrees.
+ **********************************************************************************************************************/
 double toPhaseDeg(const std::complex<double> &v)
 {
     return qRadiansToDegrees(std::arg(v));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Builds a zoomable Qt Charts view (Ctrl+drag, wheel/pinch, arrows, F, Esc).
+ * \param chart Chart to host.
+ * \param owner Results viewer (Esc clears calculator selection).
+ * \return Owned chart view widget.
+ **********************************************************************************************************************/
 QChartView *makeChartView(QChart *chart, ResultsViewer *owner)
 {
     // Zoom: rubber-band drag, wheel / trackpad pinch toward cursor; F resets.
@@ -348,12 +364,20 @@ QChartView *makeChartView(QChart *chart, ResultsViewer *owner)
     return new ZoomableChartView(chart, owner);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Configures a frequency axis for dB/Phase charts (GHz labels).
+ * \param axis Value axis to style.
+ **********************************************************************************************************************/
 void configureFreqAxis(QValueAxis *axis)
 {
     axis->setTitleText(QStringLiteral("Frequency (GHz)"));
     axis->setLabelFormat(QStringLiteral("%.3g"));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Adds a line series to a Qt Charts chart with the given pen.
+ * \param chart Target chart.
+ **********************************************************************************************************************/
 void addSeriesToChart(QChart *chart,
                       const QVector<QPointF> &pts,
                       const QColor &color,
@@ -389,6 +413,10 @@ void addSeriesToChart(QChart *chart,
 
 } // namespace
 
+/*!*******************************************************************************************************************
+ * \brief Constructs the embeddable S-parameter results viewer.
+ * \param parent Optional parent widget.
+ **********************************************************************************************************************/
 ResultsViewer::ResultsViewer(QWidget *parent)
     : QWidget(parent)
 {
@@ -396,6 +424,9 @@ ResultsViewer::ResultsViewer(QWidget *parent)
     buildUi();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Restores Results display preferences from QSettings.
+ **********************************************************************************************************************/
 void ResultsViewer::loadResultsSettings()
 {
     QSettings settings = emstudioSettings();
@@ -424,6 +455,9 @@ void ResultsViewer::loadResultsSettings()
     settings.endGroup();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Persists Results display preferences to QSettings.
+ **********************************************************************************************************************/
 void ResultsViewer::saveResultsSettings() const
 {
     QSettings settings = emstudioSettings();
@@ -441,6 +475,11 @@ void ResultsViewer::saveResultsSettings() const
     settings.endGroup();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns preferred S-parameter indices for an n-port network.
+ * \param n Number of ports.
+ * \return Set of 1-based (m,k) pairs to check by default.
+ **********************************************************************************************************************/
 QSet<QPair<int, int>> ResultsViewer::preferredParamsForPorts(int n) const
 {
     QSet<QPair<int, int>> out;
@@ -453,6 +492,10 @@ QSet<QPair<int, int>> ResultsViewer::preferredParamsForPorts(int n) const
     return out;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Sets the directory scanned for Touchstone files and refreshes the UI.
+ * \param dir Absolute path to the results / run folder.
+ **********************************************************************************************************************/
 void ResultsViewer::setTargetDirectory(const QString &dir)
 {
     const QString cleaned = dir.isEmpty() ? QString() : QDir::cleanPath(dir);
@@ -477,21 +520,34 @@ void ResultsViewer::setTargetDirectory(const QString &dir)
     rescanFiles();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns the current results target directory.
+ * \return Absolute path, or empty when unset.
+ **********************************************************************************************************************/
 QString ResultsViewer::targetDirectory() const
 {
     return m_targetDir;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Rescans the target directory and rebuilds the file tree.
+ **********************************************************************************************************************/
 void ResultsViewer::rescan()
 {
     rescanFiles();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Public slot: rescan files and redraw the plot.
+ **********************************************************************************************************************/
 void ResultsViewer::refresh()
 {
     rescanFiles();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Builds the file tree, parameter grid, mode radios, and plot host.
+ **********************************************************************************************************************/
 void ResultsViewer::buildUi()
 {
     auto *mainLayout = new QVBoxLayout(this);
@@ -677,6 +733,11 @@ void ResultsViewer::buildUi()
     showEmptyMessage(tr("Check a file and at least one S-parameter to plot"));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Lists Touchstone .sNp files under a directory.
+ * \param targetDir Root to search.
+ * \return Absolute file paths.
+ **********************************************************************************************************************/
 QStringList ResultsViewer::findTouchstoneFiles(const QString &targetDir) const
 {
     QStringList matches;
@@ -705,6 +766,11 @@ QStringList ResultsViewer::findTouchstoneFiles(const QString &targetDir) const
     return matches;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Applies DC / de-embedded include filters to a file list.
+ * \param files Candidate absolute paths.
+ * \return Filtered paths for the tree and plot.
+ **********************************************************************************************************************/
 QStringList ResultsViewer::filteredFiles(const QStringList &files) const
 {
     const bool includeDc = m_includeDcCb && m_includeDcCb->isChecked();
@@ -721,6 +787,11 @@ QStringList ResultsViewer::filteredFiles(const QStringList &files) const
     return out;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Relative path of \a path under the target directory, or the file name.
+ * \param path Absolute file path.
+ * \return Display path for the tree / legend.
+ **********************************************************************************************************************/
 QString ResultsViewer::relPathFor(const QString &path) const
 {
     if (m_targetDir.isEmpty())
@@ -728,6 +799,11 @@ QString ResultsViewer::relPathFor(const QString &path) const
     return QDir::fromNativeSeparators(QDir(m_targetDir).relativeFilePath(path));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Short legend label for a Touchstone path.
+ * \param path Absolute file path.
+ * \return Label shown in the plot legend.
+ **********************************************************************************************************************/
 QString ResultsViewer::legendLabelFor(const QString &path) const
 {
     if (isComparePath(path)) {
@@ -743,6 +819,11 @@ QString ResultsViewer::legendLabelFor(const QString &path) const
     return rel.left(10) + QLatin1String("..") + rel.right(20);
 }
 
+/*!*******************************************************************************************************************
+ * \brief True when \a path is an extra Compare overlay (not under the target dir alone).
+ * \param path Absolute file path.
+ * \return True for compare-only entries.
+ **********************************************************************************************************************/
 bool ResultsViewer::isComparePath(const QString &path) const
 {
     const QString clean = QDir::cleanPath(path);
@@ -753,11 +834,17 @@ bool ResultsViewer::isComparePath(const QString &path) const
     return false;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Reacts to DC / de-embedded filter checkbox changes.
+ **********************************************************************************************************************/
 void ResultsViewer::onFilterChanged()
 {
     rescanFiles();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Rebuilds the master file list and the tree widget contents.
+ **********************************************************************************************************************/
 void ResultsViewer::rescanFiles()
 {
     m_fileList->blockSignals(true);
@@ -879,6 +966,10 @@ void ResultsViewer::rescanFiles()
     onControlChanged();
 }
 
+/*!*******************************************************************************************************************
+ * \brief True when Palace/Elmer CSV results exist that can be converted to Touchstone.
+ * \return True if convertPalaceCsv can run.
+ **********************************************************************************************************************/
 bool ResultsViewer::hasPalaceCsv() const
 {
     if (m_targetDir.isEmpty() || !QDir(m_targetDir).exists())
@@ -896,6 +987,10 @@ bool ResultsViewer::hasPalaceCsv() const
     return false;
 }
 
+/*!*******************************************************************************************************************
+ * \brief True when at least one Touchstone file is available after filtering.
+ * \return True if the plot can show S-parameters.
+ **********************************************************************************************************************/
 bool ResultsViewer::hasTouchstoneFiles() const
 {
     if (m_targetDir.isEmpty() || !QDir(m_targetDir).exists())
@@ -903,6 +998,10 @@ bool ResultsViewer::hasTouchstoneFiles() const
     return !findTouchstoneFiles(m_targetDir).isEmpty();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Locates scripts/combine_extend_snp.py next to the application.
+ * \return Absolute script path, or empty when missing.
+ **********************************************************************************************************************/
 QString ResultsViewer::resolveCombineScript() const
 {
     const QString appDir = QCoreApplication::applicationDirPath();
@@ -921,16 +1020,28 @@ QString ResultsViewer::resolveCombineScript() const
     return nearExe;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Sets which Preferences key supplies the host Python for CSV→Touchstone / snp2le.
+ * \param prefKey Preference map key (e.g. Python Path).
+ **********************************************************************************************************************/
 void ResultsViewer::setPreferredPythonPreferenceKey(const QString &prefKey)
 {
     m_preferredPythonPrefKey = prefKey.trimmed();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns the Preferences key used for host Python.
+ * \return Preference key string.
+ **********************************************************************************************************************/
 QString ResultsViewer::preferredPythonPreferenceKey() const
 {
     return m_preferredPythonPrefKey;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Ordered list of host Python interpreters to try.
+ * \return Candidate executable paths.
+ **********************************************************************************************************************/
 QStringList ResultsViewer::hostPythonCandidates() const
 {
     QSettings settings = emstudioSettings();
@@ -1003,12 +1114,21 @@ QStringList ResultsViewer::hostPythonCandidates() const
     return out;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Picks the first usable host Python from the candidate list.
+ * \return Interpreter path, or empty when none work.
+ **********************************************************************************************************************/
 QString ResultsViewer::resolveHostPython() const
 {
     const QStringList cands = hostPythonCandidates();
     return cands.isEmpty() ? QStringLiteral("python3") : cands.first();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Finds a host Python that can import snp2le for Model Fit.
+ * \param detailOut Optional failure detail.
+ * \return Interpreter path, or empty on failure.
+ **********************************************************************************************************************/
 QString ResultsViewer::resolvePythonWithSnp2le(QString *detailOut) const
 {
     QString lastDetail;
@@ -1027,6 +1147,11 @@ QString ResultsViewer::resolvePythonWithSnp2le(QString *detailOut) const
     return {};
 }
 
+/*!*******************************************************************************************************************
+ * \brief Extra CLI args needed when launching \a python (e.g. Windows py launcher).
+ * \param python Interpreter path.
+ * \return Argument prefix before the script.
+ **********************************************************************************************************************/
 QStringList ResultsViewer::hostPythonArgs(const QString &python) const
 {
     QStringList args;
@@ -1038,12 +1163,21 @@ QStringList ResultsViewer::hostPythonArgs(const QString &python) const
     return args;
 }
 
+/*!*******************************************************************************************************************
+ * \brief True when the file name looks like a raw solver Touchstone (not de-embedded).
+ * \param fileName Base file name.
+ * \return True for raw .sNp names preferred by Model Fit.
+ **********************************************************************************************************************/
 bool ResultsViewer::isRawTouchstoneName(const QString &fileName) const
 {
     return !fileName.contains(QLatin1String("_dc"))
         && !fileName.contains(QLatin1String("_deembedded"));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Chooses a Touchstone path for Model Fit from checked / available files.
+ * \return Absolute path, or empty when none suitable.
+ **********************************************************************************************************************/
 QString ResultsViewer::pickModelFitFile() const
 {
     auto newestOf = [](const QStringList &paths) -> QString {
@@ -1083,6 +1217,12 @@ QString ResultsViewer::pickModelFitFile() const
     return newestOf(m_masterFiles);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Probes whether \a python can import the snp2le package.
+ * \param python    Interpreter path.
+ * \param detailOut Optional error text.
+ * \return True when import succeeds.
+ **********************************************************************************************************************/
 bool ResultsViewer::snp2leImportOk(const QString &python, QString *detailOut) const
 {
     if (python.isEmpty()) {
@@ -1121,6 +1261,9 @@ bool ResultsViewer::snp2leImportOk(const QString &python, QString *detailOut) co
     return true;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Starts snp2le Model Fit on the selected Touchstone file.
+ **********************************************************************************************************************/
 void ResultsViewer::launchModelFit()
 {
     const QString snpPath = pickModelFitFile();
@@ -1178,6 +1321,10 @@ void ResultsViewer::launchModelFit()
                              QDir::toNativeSeparators(python)));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Adds absolute Touchstone paths to the Compare overlay set.
+ * \param paths Files to overlay on the plot.
+ **********************************************************************************************************************/
 void ResultsViewer::appendComparePaths(const QStringList &paths)
 {
     bool added = false;
@@ -1196,6 +1343,9 @@ void ResultsViewer::appendComparePaths(const QStringList &paths)
     rescanFiles();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Rebuilds the Compare group in the file tree from m_extraComparePaths.
+ **********************************************************************************************************************/
 void ResultsViewer::rebuildCompareTreeGroup()
 {
     if (m_extraComparePaths.isEmpty())
@@ -1212,6 +1362,9 @@ void ResultsViewer::rebuildCompareTreeGroup()
     groupItem->setExpanded(true);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Opens a file dialog and adds one Touchstone file to Compare.
+ **********************************************************************************************************************/
 void ResultsViewer::compareFile()
 {
     const QString path = QFileDialog::getOpenFileName(
@@ -1230,6 +1383,9 @@ void ResultsViewer::compareFile()
     emit logMessage(tr("\n[Compare] Added file: %1\n").arg(QDir::toNativeSeparators(path)));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Opens a folder dialog and adds all Touchstone files under it to Compare.
+ **********************************************************************************************************************/
 void ResultsViewer::compareFolder()
 {
     const QString dir = QFileDialog::getExistingDirectory(
@@ -1251,6 +1407,9 @@ void ResultsViewer::compareFolder()
                         .arg(QDir::toNativeSeparators(dir)));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Clears all Compare overlay paths and refreshes the tree.
+ **********************************************************************************************************************/
 void ResultsViewer::clearCompare()
 {
     if (m_extraComparePaths.isEmpty())
@@ -1262,6 +1421,9 @@ void ResultsViewer::clearCompare()
     emit logMessage(tr("\n[Compare] Cleared overlay files.\n"));
 }
 
+/*!*******************************************************************************************************************
+ * \brief UI slot: converts Palace/Elmer CSV to Touchstone and logs the result.
+ **********************************************************************************************************************/
 void ResultsViewer::convertPalaceCsv()
 {
     QString log;
@@ -1283,6 +1445,11 @@ void ResultsViewer::convertPalaceCsv()
                         .arg(log.isEmpty() ? tr("(ok)") : log));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Runs combine_extend_snp.py on Palace/Elmer CSV in the target directory.
+ * \param logOut Optional log text sink.
+ * \return True on successful conversion.
+ **********************************************************************************************************************/
 bool ResultsViewer::tryConvertPalaceCsv(QString *logOut)
 {
     auto setLog = [&](const QString &msg) {
@@ -1341,6 +1508,11 @@ bool ResultsViewer::tryConvertPalaceCsv(QString *logOut)
     return true;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Creates a checkable tree item for one Touchstone file.
+ * \param path Absolute file path.
+ * \return New tree item (caller inserts into the tree).
+ **********************************************************************************************************************/
 QTreeWidgetItem *ResultsViewer::makeFileItem(const QString &path)
 {
     const QFileInfo fi(path);
@@ -1355,6 +1527,11 @@ QTreeWidgetItem *ResultsViewer::makeFileItem(const QString &path)
     return item;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Handles check-state changes in the file tree.
+ * \param item   Changed tree item.
+ * \param column Column index.
+ **********************************************************************************************************************/
 void ResultsViewer::onFileItemChanged(QTreeWidgetItem *item, int /*column*/)
 {
     if (m_updatingChecks || !item)
@@ -1388,6 +1565,10 @@ void ResultsViewer::onFileItemChanged(QTreeWidgetItem *item, int /*column*/)
     onControlChanged();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Updates a group item's check state from its children.
+ * \param groupItem Tree group (folder / Compare).
+ **********************************************************************************************************************/
 void ResultsViewer::refreshGroupCheckState(QTreeWidgetItem *groupItem)
 {
     if (!groupItem || groupItem->childCount() == 0)
@@ -1409,6 +1590,11 @@ void ResultsViewer::refreshGroupCheckState(QTreeWidgetItem *groupItem)
         groupItem->setCheckState(0, Qt::PartiallyChecked);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Loads a Touchstone network with mtime-based caching.
+ * \param path Absolute .sNp path.
+ * \return Cached network pointer, or nullptr on failure.
+ **********************************************************************************************************************/
 const TouchstoneNetwork *ResultsViewer::loadNetworkCached(const QString &path)
 {
     QFileInfo fi(path);
@@ -1429,6 +1615,10 @@ const TouchstoneNetwork *ResultsViewer::loadNetworkCached(const QString &path)
     return it->ok ? &it->network : nullptr;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Builds plot traces for all checked files in the tree.
+ * \return Traces with network pointers and legend labels.
+ **********************************************************************************************************************/
 QVector<ResultsViewer::PlottedTrace> ResultsViewer::getCheckedPlotted()
 {
     QStringList checkedInOrder;
@@ -1470,6 +1660,10 @@ QVector<ResultsViewer::PlottedTrace> ResultsViewer::getCheckedPlotted()
     return out;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Common port count of checked networks, or 0 if mixed/empty.
+ * \return Port count used for the S-parameter grid.
+ **********************************************************************************************************************/
 int ResultsViewer::currentCommonNports()
 {
     const auto plotted = getCheckedPlotted();
@@ -1481,6 +1675,10 @@ int ResultsViewer::currentCommonNports()
     return n;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Rebuilds the Sij button grid for an n-port network.
+ * \param n Number of ports.
+ **********************************************************************************************************************/
 void ResultsViewer::rebuildParameterGrid(int n)
 {
     while (QLayoutItem *child = m_paramGrid->takeAt(0)) {
@@ -1516,6 +1714,10 @@ void ResultsViewer::rebuildParameterGrid(int n)
     redrawPlot();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Reacts to an S-parameter toggle button.
+ * \param checked New button state.
+ **********************************************************************************************************************/
 void ResultsViewer::onParamToggled(bool checked)
 {
     auto *btn = qobject_cast<QPushButton *>(sender());
@@ -1537,6 +1739,10 @@ void ResultsViewer::onParamToggled(bool checked)
     redrawPlot();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Reacts to dB / Phase / Smith / Zoom mode radio changes.
+ * \param checked Ignored; mode is read from the radios.
+ **********************************************************************************************************************/
 void ResultsViewer::onModeChanged(bool checked)
 {
     if (!checked)
@@ -1552,6 +1758,9 @@ void ResultsViewer::onModeChanged(bool checked)
     redrawPlot();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Common handler: redraw after filter, mode, or selection changes.
+ **********************************************************************************************************************/
 void ResultsViewer::onControlChanged()
 {
     const int n = currentCommonNports();
@@ -1563,6 +1772,9 @@ void ResultsViewer::onControlChanged()
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Removes all widgets from the plot host layout.
+ **********************************************************************************************************************/
 void ResultsViewer::clearPlotArea()
 {
     while (QLayoutItem *child = m_plotHostLayout->takeAt(0)) {
@@ -1572,6 +1784,10 @@ void ResultsViewer::clearPlotArea()
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Shows a centred placeholder message in the plot area.
+ * \param text User-facing status text.
+ **********************************************************************************************************************/
 void ResultsViewer::showEmptyMessage(const QString &text)
 {
     clearPlotArea();
@@ -1582,6 +1798,10 @@ void ResultsViewer::showEmptyMessage(const QString &text)
     m_legendLabel->clear();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Updates the legend label from the plotted traces.
+ * \param plotted Active traces.
+ **********************************************************************************************************************/
 void ResultsViewer::setLegend(const QVector<PlottedTrace> &plotted)
 {
     if (plotted.isEmpty()) {
@@ -1605,6 +1825,9 @@ void ResultsViewer::setLegend(const QVector<PlottedTrace> &plotted)
     m_legendLabel->setText(parts.join(QLatin1String("&nbsp;&nbsp;&nbsp;")));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Clears and redraws dB/Phase or Smith charts from the current selection.
+ **********************************************************************************************************************/
 void ResultsViewer::redrawPlot()
 {
     const bool restorePlotFocus = m_plotHost
@@ -1663,6 +1886,10 @@ void ResultsViewer::redrawPlot()
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Shows or hides the RF calculator panel.
+ * \param on True to show the calculator.
+ **********************************************************************************************************************/
 void ResultsViewer::toggleCalculator(bool on)
 {
     if (!m_calcPanel)
@@ -1681,6 +1908,10 @@ void ResultsViewer::toggleCalculator(bool on)
     saveResultsSettings();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Registers a curve click as \$1/\$2 for the RF calculator.
+ * \param path Touchstone path of the clicked series.
+ **********************************************************************************************************************/
 void ResultsViewer::onCalcTraceClicked(const QString &path)
 {
     if (path.isEmpty())
@@ -1698,6 +1929,9 @@ void ResultsViewer::onCalcTraceClicked(const QString &path)
     refreshCalcSelectionUi();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Clears the calculator's \$1/\$2 file selection.
+ **********************************************************************************************************************/
 void ResultsViewer::clearCalcSelection()
 {
     if (m_calcSelectedPaths.isEmpty())
@@ -1706,6 +1940,9 @@ void ResultsViewer::clearCalcSelection()
     refreshCalcSelectionUi();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Refreshes calculator UI labels for the current \$1/\$2 selection.
+ **********************************************************************************************************************/
 void ResultsViewer::refreshCalcSelectionUi()
 {
     // Update pens via chart()->series() so selection is visible without recreating charts.
@@ -1746,6 +1983,9 @@ void ResultsViewer::refreshCalcSelectionUi()
     syncCalculatorTraces();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Pushes currently plotted networks into the calculator panel.
+ **********************************************************************************************************************/
 void ResultsViewer::syncCalculatorTraces()
 {
     if (!m_calcPanel || !m_calcPanel->isVisible())
@@ -1789,6 +2029,13 @@ void ResultsViewer::syncCalculatorTraces()
     m_calcPanel->setTraces(refs, !m_calcSelectedPaths.isEmpty());
 }
 
+/*!*******************************************************************************************************************
+ * \brief Draws dB and/or Phase charts for the selected parameters.
+ * \param plotted Active traces.
+ * \param params  1-based (m,k) pairs to plot.
+ * \param showDb  Draw magnitude in dB.
+ * \param showPhase Draw phase in degrees.
+ **********************************************************************************************************************/
 void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
                                 const QVector<std::pair<int, int>> &params,
                                 bool showDb,
@@ -1875,6 +2122,12 @@ void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
     m_plotHostLayout->addWidget(row, 1);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Draws Smith-chart reflection traces.
+ * \param plotted           Active traces.
+ * \param reflectionParams  1-based (m,k) reflection pairs.
+ * \param zoomed            Tight zoom around the data.
+ **********************************************************************************************************************/
 void ResultsViewer::drawSmith(const QVector<PlottedTrace> &plotted,
                               const QVector<std::pair<int, int>> &reflectionParams,
                               bool zoomed)

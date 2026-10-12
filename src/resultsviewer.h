@@ -68,19 +68,24 @@ public:
     QString                         preferredPythonPreferenceKey() const;
 
     /*!*******************************************************************************************************************
+     * \brief Result of evaluateRf(): value, display text, or error.
+     **********************************************************************************************************************/
+    struct RfEvalResult {
+        bool                        ok = false;
+        double                      value = 0.0;
+        QString                     expression;
+        QString                     resultText;
+        QString                     error;
+        QStringList                 selectedLabels;
+    };
+
+    /*!*******************************************************************************************************************
      * \brief Shows the calculator, auto-selects \$1 if needed, evaluates \a expression, updates the Result pane.
      *
      * \param expression RF calculator expression or shorthand (e.g. \c S21 → \c db(S21,$1)).
      * \param frequencyGHz Optional default frequency; &lt;= 0 keeps the spinbox value.
+     * \return Evaluation outcome with value or error text.
      **********************************************************************************************************************/
-    struct RfEvalResult {
-        bool        ok = false;
-        double      value = 0.0;
-        QString     expression;
-        QString     resultText;
-        QString     error;
-        QStringList selectedLabels;
-    };
     RfEvalResult                    evaluateRf(const QString &expression, double frequencyGHz = -1.0);
 
 #ifdef EMSTUDIO_TESTING
@@ -134,9 +139,9 @@ private:
     bool                            isComparePath(const QString &path) const;
     void                            appendComparePaths(const QStringList &paths);
     void                            rebuildCompareTreeGroup();
-    QTreeWidgetItem                *makeFileItem(const QString &path);
+    QTreeWidgetItem *               makeFileItem(const QString &path);
     void                            refreshGroupCheckState(QTreeWidgetItem *groupItem);
-    const TouchstoneNetwork        *loadNetworkCached(const QString &path);
+    const TouchstoneNetwork *       loadNetworkCached(const QString &path);
     QVector<PlottedTrace>           getCheckedPlotted();
     int                             currentCommonNports();
     void                            rebuildParameterGrid(int n);
@@ -170,37 +175,37 @@ private:
     QString                         m_targetDir;
     QString                         m_preferredPythonPrefKey;
     QStringList                     m_masterFiles;
-    QStringList                     m_extraComparePaths;   // absolute paths outside / in addition to target dir
+    QStringList                     m_extraComparePaths;   //!< Absolute paths outside / in addition to target dir
     QSet<QString>                   m_checkedPaths;
-    QSet<QPair<int, int>>           m_checkedParams;       // 1-based (m,k) currently applied to grid
-    QSet<QPair<int, int>>           m_preferredParams;     // last user choice (QSettings); may not fit current n
+    QSet<QPair<int, int>>           m_checkedParams;       //!< 1-based (m,k) currently applied to grid
+    QSet<QPair<int, int>>           m_preferredParams;     //!< Last user choice (QSettings); may not fit current n
     QHash<QString, CachedNetwork>   m_networkCache;
     int                             m_lastN = -1;
     DisplayMode                     m_mode = DisplayMode::Db;
     bool                            m_updatingChecks = false;
     bool                            m_calcVisiblePref = false;
 
-    QLineEdit                      *m_pathEdit = nullptr;
-    QCheckBox                      *m_includeDcCb = nullptr;
-    QCheckBox                      *m_includeDeembeddedCb = nullptr;
-    QTreeWidget                    *m_fileList = nullptr;
-    QGridLayout                    *m_paramGrid = nullptr;
-    QRadioButton                   *m_dbRadio = nullptr;
-    QRadioButton                   *m_phaseRadio = nullptr;
-    QRadioButton                   *m_smithRadio = nullptr;
-    QRadioButton                   *m_zoomRadio = nullptr;
-    QLabel                         *m_warningLabel = nullptr;
-    QLabel                         *m_legendLabel = nullptr;
-    QPushButton                    *m_convertBtn = nullptr;
-    QPushButton                    *m_modelFitBtn = nullptr;
-    QPushButton                    *m_compareBtn = nullptr;
-    QPushButton                    *m_clearCompareBtn = nullptr;
-    QToolButton                    *m_calcToggleBtn = nullptr;
-    ResultsCalculatorPanel         *m_calcPanel = nullptr;
-    QSplitter                      *m_plotCalcSplit = nullptr;
-    QStringList                     m_calcSelectedPaths;   // click order → $1, $2, …
-    QWidget                        *m_plotHost = nullptr;
-    QVBoxLayout                    *m_plotHostLayout = nullptr;
+    QLineEdit *                     m_pathEdit = nullptr;
+    QCheckBox *                     m_includeDcCb = nullptr;
+    QCheckBox *                     m_includeDeembeddedCb = nullptr;
+    QTreeWidget *                   m_fileList = nullptr;
+    QGridLayout *                   m_paramGrid = nullptr;
+    QRadioButton *                  m_dbRadio = nullptr;
+    QRadioButton *                  m_phaseRadio = nullptr;
+    QRadioButton *                  m_smithRadio = nullptr;
+    QRadioButton *                  m_zoomRadio = nullptr;
+    QLabel *                        m_warningLabel = nullptr;
+    QLabel *                        m_legendLabel = nullptr;
+    QPushButton *                   m_convertBtn = nullptr;
+    QPushButton *                   m_modelFitBtn = nullptr;
+    QPushButton *                   m_compareBtn = nullptr;
+    QPushButton *                   m_clearCompareBtn = nullptr;
+    QToolButton *                   m_calcToggleBtn = nullptr;
+    ResultsCalculatorPanel *        m_calcPanel = nullptr;
+    QSplitter *                     m_plotCalcSplit = nullptr;
+    QStringList                     m_calcSelectedPaths;   //!< Click order → $1, $2, …
+    QWidget *                       m_plotHost = nullptr;
+    QVBoxLayout *                   m_plotHostLayout = nullptr;
 };
 
 #endif // RESULTSVIEWER_H

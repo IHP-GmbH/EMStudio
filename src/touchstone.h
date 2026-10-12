@@ -38,30 +38,30 @@ class TouchstoneNetwork
 public:
     TouchstoneNetwork() = default;
 
-    bool load(const QString &path, QString *error = nullptr);
+    bool                            load(const QString &path, QString *error = nullptr);
 
-    int nports() const { return m_nports; }
-    QVector<double> frequencyHz() const { return m_freqHz; }
-    std::complex<double> s(int freqIndex, int m, int n) const;
-    QVector<std::complex<double>> sParam(int m, int n) const;
+    int                             nports() const { return m_nports; }
+    QVector<double>                 frequencyHz() const { return m_freqHz; }
+    std::complex<double>            s(int freqIndex, int m, int n) const;
+    QVector<std::complex<double>>   sParam(int m, int n) const;
 
-    QString path() const { return m_path; }
-    QString fileName() const;
-    double referenceImpedance() const { return m_z0; }
-    bool isValid() const { return m_nports > 0 && !m_freqHz.isEmpty(); }
-    int frequencyCount() const { return m_freqHz.size(); }
+    QString                         path() const { return m_path; }
+    QString                         fileName() const;
+    double                          referenceImpedance() const { return m_z0; }
+    bool                            isValid() const { return m_nports > 0 && !m_freqHz.isEmpty(); }
+    int                             frequencyCount() const { return m_freqHz.size(); }
 
 private:
     enum class Format { RI, MA, DB };
 
-    static std::complex<double> toComplex(Format format, double a, double b);
-    int indexOf(int freqIndex, int m, int n) const;
+    static std::complex<double>     toComplex(Format format, double a, double b);
+    int                             indexOf(int freqIndex, int m, int n) const;
 
-    QString m_path;
-    int m_nports = 0;
-    double m_z0 = 50.0;
-    QVector<double> m_freqHz;
-    QVector<std::complex<double>> m_s; // nfreq * nports * nports, row-major per freq
+    QString                         m_path;
+    int                             m_nports = 0;
+    double                          m_z0 = 50.0;
+    QVector<double>                 m_freqHz;
+    QVector<std::complex<double>>   m_s; //!< nfreq * nports * nports, row-major per freq
 };
 
 #endif // TOUCHSTONE_H

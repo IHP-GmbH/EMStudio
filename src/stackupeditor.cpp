@@ -2,7 +2,7 @@
  *  EMStudio – GUI tool for setting up, running and analysing
  *  electromagnetic simulations with IHP PDKs.
  *
- *  Copyright (C) 2023–2025 IHP Authors
+ *  Copyright (C) 2023–2026 IHP Authors
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -21,51 +21,22 @@
 #include "stackupeditor.h"
 #include "appsettings.h"
 
-#include <QVBoxLayout>
-#include <QHBoxLayout>
-#include <QTabWidget>
-#include <QTableWidget>
-#include <QHeaderView>
-#include <QAbstractItemView>
-#include <QPushButton>
-#include <QDialogButtonBox>
-#include <QLineEdit>
-#include <QPlainTextEdit>
-#include <QLabel>
-#include <QSizePolicy>
-#include <QFileDialog>
-#include <QMessageBox>
-#include <QHash>
-#include <QColorDialog>
-#include <QPainter>
-#include <QEvent>
-#include <QMouseEvent>
-#include <QCloseEvent>
-#include <QPixmap>
-#include <QApplication>
-#include <QFileInfo>
-#include <QInputDialog>
+#include <QtWidgets>
 #include <QProcess>
 #include <QSettings>
-#include <QTemporaryDir>
-#include <QCoreApplication>
-#include <QMenuBar>
-#include <QMenu>
-#include <QAction>
 #include <QStandardPaths>
-#include <QKeySequence>
-#include <QDir>
-#include <QKeyEvent>
-#include <QComboBox>
-#include <QFont>
-#include <QApplication>
-#include <QSet>
+#include <QTemporaryDir>
 
 namespace {
 
 constexpr int kColorCol = 8;
 constexpr int kNameCol = 0;
 
+/*!*******************************************************************************************************************
+ * \brief Creates an empty editable table with the given column headers.
+ * \param headers Column titles for the new QTableWidget.
+ * \return Owned table widget ready to insert into the tab stack.
+ **********************************************************************************************************************/
 QTableWidget *makeTable(const QStringList &headers)
 {
     auto *t = new QTableWidget;
@@ -85,6 +56,13 @@ QTableWidget *makeTable(const QStringList &headers)
     return t;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns the text of a table cell, or an empty string when the item is missing.
+ * \param t   Table widget.
+ * \param row Row index.
+ * \param col Column index.
+ * \return Cell text.
+ **********************************************************************************************************************/
 QString itemText(QTableWidget *t, int row, int col)
 {
     if (auto *it = t->item(row, col))
@@ -92,6 +70,14 @@ QString itemText(QTableWidget *t, int row, int col)
     return {};
 }
 
+/*!*******************************************************************************************************************
+ * \brief Sets a table cell's text, creating the item when needed.
+ * \param t        Table widget.
+ * \param row      Row index.
+ * \param col      Column index.
+ * \param text     Cell contents.
+ * \param readOnly When true, the cell is not editable.
+ **********************************************************************************************************************/
 void setItem(QTableWidget *t, int row, int col, const QString &text, bool readOnly = false)
 {
     auto *it = new QTableWidgetItem(text);
@@ -100,6 +86,11 @@ void setItem(QTableWidget *t, int row, int col, const QString &text, bool readOn
     t->setItem(row, col, it);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Wires item/row changes on \a t to StackupEditor::markModified.
+ * \param t  Table to watch.
+ * \param ed Editor that owns the modified flag.
+ **********************************************************************************************************************/
 void connectTableModified(QTableWidget *t, StackupEditor *ed)
 {
     QObject::connect(t, &QTableWidget::itemChanged, ed, &StackupEditor::markModified);
@@ -111,16 +102,30 @@ void connectTableModified(QTableWidget *t, StackupEditor *ed)
 // StackupColorDelegate
 // -------------------------------------------------------------------------------------------------
 
+/*!*******************************************************************************************************************
+ * \brief Constructs the Materials color-column delegate.
+ * \param parent Optional QObject parent.
+ **********************************************************************************************************************/
 StackupColorDelegate::StackupColorDelegate(QObject *parent)
     : QStyledItemDelegate(parent)
 {
 }
 
+/*!*******************************************************************************************************************
+ * \brief True when \a raw looks like a stackup color expression (starts with '=').
+ * \param raw Color cell text.
+ * \return True for expression colors that should not be parsed as hex.
+ **********************************************************************************************************************/
 bool StackupColorDelegate::isExpression(const QString &raw)
 {
     return raw.trimmed().startsWith(QLatin1Char('='));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Parses a hex or named color string for the Materials Color column.
+ * \param raw Color text from the table.
+ * \return Valid QColor, or invalid when empty/expression/unparseable.
+ **********************************************************************************************************************/
 QColor StackupColorDelegate::parseColor(const QString &raw)
 {
     QString h = raw.trimmed();
@@ -137,6 +142,11 @@ QColor StackupColorDelegate::parseColor(const QString &raw)
     return c.isValid() ? c : QColor();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Builds a small swatch icon for a material color.
+ * \param c Fill color (invalid yields a placeholder swatch).
+ * \return Icon for the table cell.
+ **********************************************************************************************************************/
 QIcon StackupColorDelegate::colorIcon(const QColor &c)
 {
     QPixmap pm(14, 14);
@@ -154,6 +164,9 @@ QIcon StackupColorDelegate::colorIcon(const QColor &c)
     return QIcon(pm);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Paints the color cell with swatch styling from the item data.
+ **********************************************************************************************************************/
 void StackupColorDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
                                  const QModelIndex &index) const
 {
@@ -184,6 +197,10 @@ void StackupColorDelegate::paint(QPainter *painter, const QStyleOptionViewItem &
     QStyledItemDelegate::paint(painter, opt, index);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Creates a line editor for hex/expression color text.
+ * \return Editor widget for the color cell.
+ **********************************************************************************************************************/
 QWidget *StackupColorDelegate::createEditor(QWidget *parent, const QStyleOptionViewItem &,
                                             const QModelIndex &index) const
 {
@@ -200,12 +217,18 @@ QWidget *StackupColorDelegate::createEditor(QWidget *parent, const QStyleOptionV
     return ed;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Loads the current color string into the cell editor.
+ **********************************************************************************************************************/
 void StackupColorDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
 {
     if (auto *ed = qobject_cast<QLineEdit *>(editor))
         ed->setText(index.data(Qt::EditRole).toString());
 }
 
+/*!*******************************************************************************************************************
+ * \brief Writes the edited color string back into the model.
+ **********************************************************************************************************************/
 void StackupColorDelegate::setModelData(QWidget *editor, QAbstractItemModel *model,
                                         const QModelIndex &index) const
 {
@@ -217,6 +240,10 @@ void StackupColorDelegate::setModelData(QWidget *editor, QAbstractItemModel *mod
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Opens a color dialog on double-click / activation of the color cell.
+ * \return True when the event was handled.
+ **********************************************************************************************************************/
 bool StackupColorDelegate::editorEvent(QEvent *event, QAbstractItemModel *model,
                                        const QStyleOptionViewItem &option,
                                        const QModelIndex &index)
@@ -245,6 +272,13 @@ bool StackupColorDelegate::editorEvent(QEvent *event, QAbstractItemModel *model,
 // StackupComboDelegate
 // -------------------------------------------------------------------------------------------------
 
+/*!*******************************************************************************************************************
+ * \brief Constructs a combo delegate with a dynamic item list.
+ * \param itemsFn    Callback that returns current combo choices.
+ * \param parent     Optional QObject parent.
+ * \param editable   When true, the user may type a value not in the list.
+ * \param allowEmpty When true, an empty entry is offered.
+ **********************************************************************************************************************/
 StackupComboDelegate::StackupComboDelegate(ItemsFn itemsFn, QObject *parent,
                                            bool editable, bool allowEmpty)
     : QStyledItemDelegate(parent)
@@ -254,6 +288,10 @@ StackupComboDelegate::StackupComboDelegate(ItemsFn itemsFn, QObject *parent,
 {
 }
 
+/*!*******************************************************************************************************************
+ * \brief Creates a QComboBox filled from the current items callback.
+ * \return Combo editor for the cell.
+ **********************************************************************************************************************/
 QWidget *StackupComboDelegate::createEditor(QWidget *parent, const QStyleOptionViewItem &,
                                             const QModelIndex &) const
 {
@@ -274,6 +312,9 @@ QWidget *StackupComboDelegate::createEditor(QWidget *parent, const QStyleOptionV
     return cb;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Selects the combo entry matching the current cell text.
+ **********************************************************************************************************************/
 void StackupComboDelegate::setEditorData(QWidget *editor, const QModelIndex &index) const
 {
     auto *cb = qobject_cast<QComboBox *>(editor);
@@ -291,6 +332,9 @@ void StackupComboDelegate::setEditorData(QWidget *editor, const QModelIndex &ind
         cb->setEditText(cur);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Writes the combo's current text into the model.
+ **********************************************************************************************************************/
 void StackupComboDelegate::setModelData(QWidget *editor, QAbstractItemModel *model,
                                         const QModelIndex &index) const
 {
@@ -300,6 +344,9 @@ void StackupComboDelegate::setModelData(QWidget *editor, QAbstractItemModel *mod
     model->setData(index, cb->currentText().trimmed(), Qt::EditRole);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Positions the combo editor over the cell rect.
+ **********************************************************************************************************************/
 void StackupComboDelegate::updateEditorGeometry(QWidget *editor, const QStyleOptionViewItem &option,
                                                 const QModelIndex &) const
 {
@@ -310,6 +357,10 @@ void StackupComboDelegate::updateEditorGeometry(QWidget *editor, const QStyleOpt
 // StackupEditor
 // -------------------------------------------------------------------------------------------------
 
+/*!*******************************************************************************************************************
+ * \brief Builds the Stackup Editor dialog (tabs, row buttons, Save/Close).
+ * \param parent Optional parent widget.
+ **********************************************************************************************************************/
 StackupEditor::StackupEditor(QWidget *parent)
     : QDialog(parent)
 {
@@ -379,11 +430,17 @@ StackupEditor::StackupEditor(QWidget *parent)
     auto *rowBtns = new QHBoxLayout;
     auto *btnAdd = new QPushButton(tr("Add row"));
     auto *btnRemove = new QPushButton(tr("Remove row"));
+    m_btnMoveUp = new QPushButton(tr("Move Up"));
+    m_btnMoveDown = new QPushButton(tr("Move Down"));
+    m_btnMoveUp->setToolTip(tr("Move the selected row one position up (XML / stack order)."));
+    m_btnMoveDown->setToolTip(tr("Move the selected row one position down (XML / stack order)."));
     auto *btnRefresh = new QPushButton(tr("Recompute"));
     auto *btnPickColor = new QPushButton(tr("Pick Color..."));
     btnPickColor->setToolTip(tr("Open color selector for the selected Materials row"));
     connect(btnAdd, &QPushButton::clicked, this, &StackupEditor::onAddRow);
     connect(btnRemove, &QPushButton::clicked, this, &StackupEditor::onRemoveRow);
+    connect(m_btnMoveUp, &QPushButton::clicked, this, &StackupEditor::onMoveRowUp);
+    connect(m_btnMoveDown, &QPushButton::clicked, this, &StackupEditor::onMoveRowDown);
     connect(btnRefresh, &QPushButton::clicked, this, &StackupEditor::refreshResolvedColumns);
     connect(btnPickColor, &QPushButton::clicked, this, [this]() {
         if (m_tabs->currentWidget() != m_tblMats)
@@ -417,12 +474,24 @@ StackupEditor::StackupEditor(QWidget *parent)
 
     rowBtns->addWidget(btnAdd);
     rowBtns->addWidget(btnRemove);
+    rowBtns->addWidget(m_btnMoveUp);
+    rowBtns->addWidget(m_btnMoveDown);
     rowBtns->addWidget(btnRefresh);
     rowBtns->addWidget(btnPickColor);
     rowBtns->addStretch();
     rowBtns->addWidget(btnImportSubst);
     rowBtns->addWidget(btnExportSubst);
     root->addLayout(rowBtns);
+
+    connect(m_tabs, &QTabWidget::currentChanged, this, &StackupEditor::updateMoveRowButtons);
+    for (QTableWidget *tbl : {m_tblVars, m_tblMats, m_tblDiels, m_tblLayers, m_tblDerived, m_tblTables}) {
+        connect(tbl, &QTableWidget::currentCellChanged, this, [this](int, int, int, int) {
+            updateMoveRowButtons();
+        });
+        connect(tbl->model(), &QAbstractItemModel::rowsInserted, this, &StackupEditor::updateMoveRowButtons);
+        connect(tbl->model(), &QAbstractItemModel::rowsRemoved, this, &StackupEditor::updateMoveRowButtons);
+    }
+    updateMoveRowButtons();
 
     m_buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Close);
     auto *btnSaveAs = m_buttons->addButton(tr("Save As..."), QDialogButtonBox::ActionRole);
@@ -456,12 +525,19 @@ StackupEditor::StackupEditor(QWidget *parent)
     applyUniformFonts();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Sets the XML path shown in the window title without loading the file.
+ * \param path Absolute or relative stackup XML path.
+ **********************************************************************************************************************/
 void StackupEditor::setFilePath(const QString &path)
 {
     m_filePath = path;
     updateWindowTitle();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Refreshes the dialog title from the file path and modified flag.
+ **********************************************************************************************************************/
 void StackupEditor::updateWindowTitle()
 {
     QString title = tr("Stackup Editor");
@@ -472,6 +548,10 @@ void StackupEditor::updateWindowTitle()
     setWindowTitle(title);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Sets the dirty flag and updates the window title.
+ * \param modified True when the document has unsaved edits.
+ **********************************************************************************************************************/
 void StackupEditor::setModified(bool modified)
 {
     if (m_modified == modified)
@@ -480,6 +560,9 @@ void StackupEditor::setModified(bool modified)
     updateWindowTitle();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Marks the document dirty (table/description edits).
+ **********************************************************************************************************************/
 void StackupEditor::markModified()
 {
     if (m_blockChangeSignals)
@@ -487,6 +570,10 @@ void StackupEditor::markModified()
     setModified(true);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Loads a Substrate into the tables and clears the modified flag.
+ * \param substrate Parsed stackup model to display.
+ **********************************************************************************************************************/
 void StackupEditor::setSubstrate(const Substrate &substrate)
 {
     m_substrate = substrate;
@@ -523,11 +610,18 @@ void StackupEditor::focusUsefulTab()
         m_tabs->setCurrentWidget(m_tblTables);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns a Substrate collected from the current table contents.
+ * \return Model reflecting the editor tables (resolved where possible).
+ **********************************************************************************************************************/
 Substrate StackupEditor::substrate() const
 {
     return m_substrate;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Applies a consistent font to all stackup tables.
+ **********************************************************************************************************************/
 void StackupEditor::applyUniformFonts()
 {
     // Intentionally empty: widgets inherit the HiDPI-normalized application
@@ -536,6 +630,10 @@ void StackupEditor::applyUniformFonts()
     // follows Windows display scaling (e.g. 150% on 4K).
 }
 
+/*!*******************************************************************************************************************
+ * \brief Lists material names from the Materials table for combo delegates.
+ * \return Name column values, skipping empty rows.
+ **********************************************************************************************************************/
 QStringList StackupEditor::materialNames() const
 {
     QStringList names;
@@ -557,6 +655,10 @@ QStringList StackupEditor::materialNames() const
     return names;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Lists dielectric names from the Dielectrics table for Reference combos.
+ * \return Name column values, skipping empty rows.
+ **********************************************************************************************************************/
 QStringList StackupEditor::dielectricNames() const
 {
     QStringList names;
@@ -578,6 +680,10 @@ QStringList StackupEditor::dielectricNames() const
     return names;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Lists layer names from the Layers table for Reference combos.
+ * \return Name column values, skipping empty rows.
+ **********************************************************************************************************************/
 QStringList StackupEditor::layerNames() const
 {
     QStringList names;
@@ -599,6 +705,10 @@ QStringList StackupEditor::layerNames() const
     return names;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Combined dielectric and layer names usable as Reference targets.
+ * \return Unique candidate names for Reference combo boxes.
+ **********************************************************************************************************************/
 QStringList StackupEditor::referenceCandidates() const
 {
     QStringList names = dielectricNames();
@@ -608,6 +718,9 @@ QStringList StackupEditor::referenceCandidates() const
     return names;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Installs StackupComboDelegate editors on Materials / Dielectrics / Layers columns.
+ **********************************************************************************************************************/
 void StackupEditor::installComboDelegates()
 {
     auto fixed = [this](const QStringList &items, bool editable = false, bool allowEmpty = true) {
@@ -676,11 +789,20 @@ void StackupEditor::installComboDelegates()
     openComboOnClick(m_tblDerived, {2});
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns the QTableWidget of the currently selected tab, or nullptr.
+ * \return Active table, or nullptr when the tab is not a table.
+ **********************************************************************************************************************/
 QTableWidget *StackupEditor::currentTable() const
 {
     return qobject_cast<QTableWidget *>(m_tabs->currentWidget());
 }
 
+/*!*******************************************************************************************************************
+ * \brief Updates icon, foreground and background of a Materials Color cell.
+ * \param row Row in the Materials table.
+ * \param raw Color text (hex or expression).
+ **********************************************************************************************************************/
 void StackupEditor::styleColorCell(int row, const QString &raw)
 {
     auto *it = m_tblMats->item(row, kColorCol);
@@ -703,6 +825,11 @@ void StackupEditor::styleColorCell(int row, const QString &raw)
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Tints the Materials name cell from the material color.
+ * \param row      Materials row.
+ * \param colorRaw Color string used for the swatch.
+ **********************************************************************************************************************/
 void StackupEditor::styleMaterialNameCell(int row, const QString &colorRaw)
 {
     auto *it = m_tblMats->item(row, kNameCol);
@@ -712,6 +839,10 @@ void StackupEditor::styleMaterialNameCell(int row, const QString &colorRaw)
     it->setIcon(StackupColorDelegate::colorIcon(c));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Styles Variables cells that hold color-typed values.
+ * \param row Variables table row.
+ **********************************************************************************************************************/
 void StackupEditor::styleVariableColorCells(int row)
 {
     auto paintIfHex = [this](QTableWidgetItem *it) {
@@ -731,6 +862,11 @@ void StackupEditor::styleVariableColorCells(int row)
     paintIfHex(m_tblVars->item(row, 3));
 }
 
+/*!*******************************************************************************************************************
+ * \brief Reacts to Materials table edits (color/name styling).
+ * \param row    Changed row.
+ * \param column Changed column.
+ **********************************************************************************************************************/
 void StackupEditor::onMaterialsCellChanged(int row, int column)
 {
     if (m_blockChangeSignals)
@@ -744,6 +880,10 @@ void StackupEditor::onMaterialsCellChanged(int row, int column)
     markModified();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Opens the color picker for the activated Materials Color cell.
+ * \param index Model index of the color cell.
+ **********************************************************************************************************************/
 void StackupEditor::onColorCellActivated(const QModelIndex &index)
 {
     if (!index.isValid() || index.column() != kColorCol)
@@ -774,6 +914,9 @@ void StackupEditor::onColorCellActivated(const QModelIndex &index)
     markModified();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Rebuilds all tables from m_substrate (after load or recompute).
+ **********************************************************************************************************************/
 void StackupEditor::rebuildTablesFromModel()
 {
     m_blockChangeSignals = true;
@@ -908,6 +1051,9 @@ void StackupEditor::rebuildTablesFromModel()
     m_blockChangeSignals = false;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Reads all tables into m_substrate and resolves expressions.
+ **********************************************************************************************************************/
 void StackupEditor::collectModelFromTables()
 {
     m_substrate.setDescription(m_edDescription->toPlainText().trimmed());
@@ -1004,6 +1150,9 @@ void StackupEditor::collectModelFromTables()
         QMessageBox::warning(this, tr("Resolve"), err);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Collects the model, resolves Z/values, and rebuilds read-only result columns.
+ **********************************************************************************************************************/
 void StackupEditor::refreshResolvedColumns()
 {
     collectModelFromTables();
@@ -1011,14 +1160,21 @@ void StackupEditor::refreshResolvedColumns()
     markModified();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Appends an empty row to the current tab's table.
+ **********************************************************************************************************************/
 void StackupEditor::onAddRow()
 {
     if (auto *t = currentTable()) {
         t->insertRow(t->rowCount());
         markModified();
+        updateMoveRowButtons();
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Removes the selected row from the current tab's table.
+ **********************************************************************************************************************/
 void StackupEditor::onRemoveRow()
 {
     if (auto *t = currentTable()) {
@@ -1026,10 +1182,100 @@ void StackupEditor::onRemoveRow()
         if (r >= 0) {
             t->removeRow(r);
             markModified();
+            updateMoveRowButtons();
         }
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Moves the selected row one position up (legacy stack XML order).
+ **********************************************************************************************************************/
+void StackupEditor::onMoveRowUp()
+{
+    moveCurrentRow(-1);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Moves the selected row one position down (legacy stack XML order).
+ **********************************************************************************************************************/
+void StackupEditor::onMoveRowDown()
+{
+    moveCurrentRow(+1);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Swaps the selected table row with the neighbour at \a delta (-1 = up, +1 = down).
+ *
+ * Used for Dielectrics (and other tabs): legacy stackups without Reference place layers by
+ * XML order, so a newly added row must be movable to the desired stack position.
+ *
+ * \param delta Row offset: -1 moves up, +1 moves down.
+ **********************************************************************************************************************/
+void StackupEditor::moveCurrentRow(int delta)
+{
+    QTableWidget *t = currentTable();
+    if (!t || delta == 0)
+        return;
+
+    const int row = t->currentRow();
+    if (row < 0)
+        return;
+    const int dest = row + delta;
+    if (dest < 0 || dest >= t->rowCount())
+        return;
+
+    const int col = qMax(0, t->currentColumn());
+    const int cols = t->columnCount();
+    QString movedName;
+    if (const QTableWidgetItem *nameItem = t->item(row, 0))
+        movedName = nameItem->text().trimmed();
+
+    m_blockChangeSignals = true;
+    for (int c = 0; c < cols; ++c) {
+        QTableWidgetItem *a = t->takeItem(row, c);
+        QTableWidgetItem *b = t->takeItem(dest, c);
+        t->setItem(row, c, b);
+        t->setItem(dest, c, a);
+    }
+    m_blockChangeSignals = false;
+
+    markModified();
+    // Dielectrics / Layers: resulting Z depends on list order when Reference is empty.
+    if (t == m_tblDiels || t == m_tblLayers) {
+        refreshResolvedColumns();
+        if (!movedName.isEmpty())
+            selectStackItem(movedName, t == m_tblDiels ? QStringLiteral("dielectric")
+                                                       : QStringLiteral("layer"));
+        else {
+            t->setCurrentCell(dest, col);
+            t->selectRow(dest);
+        }
+    } else {
+        t->setCurrentCell(dest, col);
+        t->selectRow(dest);
+    }
+    updateMoveRowButtons();
+}
+
+/*!*******************************************************************************************************************
+ * \brief Enables or disables Move Up / Move Down from the current selection.
+ **********************************************************************************************************************/
+void StackupEditor::updateMoveRowButtons()
+{
+    if (!m_btnMoveUp || !m_btnMoveDown)
+        return;
+    QTableWidget *t = currentTable();
+    const int row = t ? t->currentRow() : -1;
+    const int rows = t ? t->rowCount() : 0;
+    m_btnMoveUp->setEnabled(t && row > 0);
+    m_btnMoveDown->setEnabled(t && row >= 0 && row + 1 < rows);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Writes the current model to path and clears the modified flag.
+ * \param path Destination XML file.
+ * \return True on success.
+ **********************************************************************************************************************/
 bool StackupEditor::saveToPath(const QString &path)
 {
     collectModelFromTables();
@@ -1044,6 +1290,9 @@ bool StackupEditor::saveToPath(const QString &path)
     return true;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Saves to the current file path, or runs Save As when none is set.
+ **********************************************************************************************************************/
 void StackupEditor::onSave()
 {
     if (m_filePath.isEmpty()) {
@@ -1053,6 +1302,9 @@ void StackupEditor::onSave()
     saveToPath(m_filePath);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Asks for a path and saves the stackup XML.
+ **********************************************************************************************************************/
 void StackupEditor::onSaveAs()
 {
     const QString path = QFileDialog::getSaveFileName(
@@ -1062,6 +1314,10 @@ void StackupEditor::onSaveAs()
     saveToPath(path);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Prompts to save when the document is modified before close.
+ * \return False when the user cancels; true otherwise.
+ **********************************************************************************************************************/
 bool StackupEditor::maybeSave()
 {
     if (!m_modified)
@@ -1082,6 +1338,10 @@ bool StackupEditor::maybeSave()
     return true;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Offers to save unsaved changes before accepting the close.
+ * \param event Close event (ignored when the user cancels).
+ **********************************************************************************************************************/
 void StackupEditor::closeEvent(QCloseEvent *event)
 {
     if (maybeSave())
@@ -1090,6 +1350,11 @@ void StackupEditor::closeEvent(QCloseEvent *event)
         event->ignore();
 }
 
+/*!*******************************************************************************************************************
+ * \brief Selects a Dielectrics or Layers row by name (from SubstrateView click).
+ * \param name Layer / dielectric name.
+ * \param kind "dielectric" or layer kind string.
+ **********************************************************************************************************************/
 void StackupEditor::selectStackItem(const QString &name, const QString &kind)
 {
     if (name.isEmpty())
@@ -1130,6 +1395,9 @@ void StackupEditor::selectStackItem(const QString &name, const QString &kind)
         return;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Clears selection on Dielectrics and Layers tables.
+ **********************************************************************************************************************/
 void StackupEditor::clearTableSelection()
 {
     const QList<QTableWidget *> tables = {
@@ -1143,6 +1411,10 @@ void StackupEditor::clearTableSelection()
     }
 }
 
+/*!*******************************************************************************************************************
+ * \brief Esc clears stack highlight without closing; other keys use QDialog default.
+ * \param event Key event.
+ **********************************************************************************************************************/
 void StackupEditor::keyPressEvent(QKeyEvent *event)
 {
     if (event->key() == Qt::Key_Escape) {
@@ -1154,6 +1426,10 @@ void StackupEditor::keyPressEvent(QKeyEvent *event)
     QDialog::keyPressEvent(event);
 }
 
+/*!*******************************************************************************************************************
+ * \brief Locates scripts/ads conversion helper next to the application.
+ * \return Absolute script path, or empty when missing.
+ **********************************************************************************************************************/
 QString StackupEditor::resolveAdsConvertScript() const
 {
     const QString appDir = QCoreApplication::applicationDirPath();
@@ -1173,6 +1449,10 @@ QString StackupEditor::resolveAdsConvertScript() const
     return nearExe;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Returns a host Python suitable for ADS convert scripts.
+ * \return Interpreter path from preferences or PATH.
+ **********************************************************************************************************************/
 QString StackupEditor::resolveHostPython() const
 {
     QSettings settings = emstudioSettings();
@@ -1214,6 +1494,13 @@ QString StackupEditor::resolveHostPython() const
 #endif
 }
 
+/*!*******************************************************************************************************************
+ * \brief Runs the ADS convert script with args and captures stdout/stderr.
+ * \param args       Arguments after the script path.
+ * \param stdoutText Optional stdout sink.
+ * \param stderrText Optional stderr sink.
+ * \return True when the process exits with code 0.
+ **********************************************************************************************************************/
 bool StackupEditor::runAdsConvert(const QStringList &args, QString *stdoutText, QString *stderrText)
 {
     const QString script = resolveAdsConvertScript();
@@ -1263,6 +1550,12 @@ bool StackupEditor::runAdsConvert(const QStringList &args, QString *stdoutText, 
     return true;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Loads an imported stackup XML into the editor.
+ * \param xmlPath     Path to the XML file.
+ * \param sourceLabel Label for error/status messages.
+ * \return True on successful parse and display.
+ **********************************************************************************************************************/
 bool StackupEditor::loadImportedXml(const QString &xmlPath, const QString &sourceLabel)
 {
     Substrate imported;
@@ -1286,6 +1579,9 @@ bool StackupEditor::loadImportedXml(const QString &xmlPath, const QString &sourc
     return true;
 }
 
+/*!*******************************************************************************************************************
+ * \brief Imports ADS Momentum *.subst (+ materials.matdb) via the convert script.
+ **********************************************************************************************************************/
 void StackupEditor::onImportAdsSubst()
 {
     // GCOVR_EXCL_START — QFileDialog / QMessageBox interactive ADS import
@@ -1344,6 +1640,9 @@ void StackupEditor::onImportAdsSubst()
     // GCOVR_EXCL_STOP
 }
 
+/*!*******************************************************************************************************************
+ * \brief Imports ADS Momentum *.ltd via the convert script.
+ **********************************************************************************************************************/
 void StackupEditor::onImportAdsLtd()
 {
     // GCOVR_EXCL_START — QFileDialog / QMessageBox interactive ADS import
@@ -1392,6 +1691,9 @@ void StackupEditor::onImportAdsLtd()
     // GCOVR_EXCL_STOP
 }
 
+/*!*******************************************************************************************************************
+ * \brief Exports the current stackup to ADS *.subst + materials.matdb.
+ **********************************************************************************************************************/
 void StackupEditor::onExportAdsSubst()
 {
     // GCOVR_EXCL_START — QFileDialog / QMessageBox interactive ADS export

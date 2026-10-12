@@ -42,8 +42,15 @@ Navigation (--nav-style, EMStudio Setup -> Key Bindings):
               Alt+left pan.
 Keys (plot focused): R/F/Home reset camera, I isometric, X/Y/Z axis views
 (Shift: negative side), +/- zoom, arrows pan, O parallel projection,
-M find max., A arrows, PgUp/PgDn clip plane, Ctrl+C copy. VTK's own
+M find max., A arrows, P probe, PgUp/PgDn clip plane, Ctrl+C copy. VTK's own
 letter keys (w, s, 3, q, e, ...) are disabled.
+
+Value markers: with Probe on, a left click without drag picks the rendered
+surface (any angle; clipped solid, cut face or 2D plane) and adds a numbered
+marker with the field value interpolated from the full mesh. The right-click
+menu adds "Jump to Maximum in Cut Plane" (clip on) and "... on Surface of
+Body N" (Elmer GeometryIds; whole shown surface without them). Markers are
+re-read when the field, file or cycle changes.
 """
 
 from __future__ import annotations
@@ -62,10 +69,14 @@ try:
         QApplication, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QGroupBox,
         QLabel, QPushButton, QRadioButton, QButtonGroup, QCheckBox, QWidget,
         QSlider, QComboBox, QLineEdit, QStyleFactory, QColorDialog, QMenu,
+        QSplitter, QTableWidget, QTableWidgetItem, QAbstractItemView, QHeaderView,
     )
     from PySide6.QtCore import Qt, QObject, QThread, QTimer, Signal, QEvent, QPoint
     from PySide6.QtGui import QShortcut, QKeySequence, QColor, QIcon, QMouseEvent
     from pyvistaqt import QtInteractor
+    from vtkmodules.vtkRenderingCore import (
+        vtkActor2D, vtkCellPicker, vtkCoordinate, vtkPolyDataMapper2D,
+    )
 except ImportError as _exc:  # pragma: no cover - depends on the host Python
     print(f"field_viewer: missing Python package ({_exc}).\n"
           f"  Install into {sys.executable}:\n"
@@ -89,6 +100,12 @@ _LOG_RANGE_DB_DEFAULT = 70
 _OPACITY_SETTLE_MS = 300
 # Right press that moves less than this is a click (context menu), not a drag.
 _CLICK_SLOP_PX = 6
+# Right-click this close to a marker (pixels) offers "Remove marker N".
+_MARKER_HIT_PX = 12
+# Temperature readout of the markers: (combo text, key).
+_TEMP_UNITS = (("K", "K"), ("°C", "C"), ("ΔT to model min.", "dT"))
+# Marker dots: a dark ring around a bright dot, drawn over the model.
+_MARKER_DOT_STYLE = ((13, (0.0, 0.0, 0.0)), (9, (1.0, 0.0, 1.0)))
 
 # Fine enough that "Find max." lands within a nanometre on mm-scale domains.
 _SLIDER_STEPS = 1_000_000
@@ -147,6 +164,14 @@ def _exact_clip_by_axis(mesh, axis, position, sign, slice_only=False):
         # hotspot): keep the other side rather than show nothing.
         kept = mesh.clip(normal=tuple(-n * sign for n in base_normal), origin=origin)
     return kept
+
+
+def _outer_surface(mesh):
+    """Outer surface with point data (pyvista < 0.47 has no algorithm keyword)."""
+    try:
+        return mesh.extract_surface(algorithm="dataset_surface")
+    except TypeError:
+        return mesh.extract_surface()
 
 
 def _same_extent(a, b, tolerance=0.01):
@@ -221,6 +246,7 @@ class FieldViewerWindow(QDialog):
         self.setAttribute(Qt.WA_DeleteOnClose)
         self.nav_style = nav_style if nav_style in NAV_STYLES else "setupem"
         self._right_press_pos = None
+        self._left_press_pos = None
         self._icon_path = icon_path
         if icon_path:
             self.setWindowIcon(QIcon(icon_path))
@@ -267,6 +293,14 @@ class FieldViewerWindow(QDialog):
         self._clipped_mesh_cache = None
         self._clipped_mesh_cache_key = None
         self._redraw_scheduled = False
+
+        # Value markers: {"id", "pos" (native coords), "value"}; ids restart after Clear.
+        self._markers = []
+        self._next_marker_id = 1
+        self._marker_actors = []
+        self._temp_unit = "K"
+        self._model_min_cache = (None, None)
+        self.marker_table = None
 
         self._build_ui()
         self._load_mesh()
@@ -494,6 +528,11 @@ class FieldViewerWindow(QDialog):
             "instead of the remaining 3D solid. Requires Clip enabled.")
         self.slice_only_cb.toggled.connect(self._on_redraw_needed)
         view_layout.addWidget(self.slice_only_cb)
+        self.probe_cb = QCheckBox("Probe")
+        self.probe_cb.setToolTip(
+            "Click the model to place a value marker (dragging still rotates). "
+            "Right-click for jump to maximum and marker options. Key: P")
+        view_layout.addWidget(self.probe_cb)
         view_layout.addStretch()
         view_group.setLayout(view_layout)
         controls_layout.addWidget(view_group, 1)
@@ -511,7 +550,12 @@ class FieldViewerWindow(QDialog):
             self.plotter = pv.Plotter(off_screen=True, window_size=_SCREENSHOT_WINDOW_SIZE)
         else:
             self.plotter = QtInteractor(self)
-            main_layout.addWidget(self.plotter, 1)
+            self.plot_splitter = QSplitter(Qt.Horizontal)
+            self.plot_splitter.addWidget(self.plotter)
+            self.plot_splitter.addWidget(self._build_marker_panel())
+            self.plot_splitter.setStretchFactor(0, 1)
+            self.plot_splitter.setStretchFactor(1, 0)
+            main_layout.addWidget(self.plot_splitter, 1)
             # Right *drag* navigates; a right *click* opens the menu (eventFilter).
             self.plotter.setContextMenuPolicy(Qt.PreventContextMenu)
             self.plotter.installEventFilter(self)
@@ -524,10 +568,372 @@ class FieldViewerWindow(QDialog):
 
     def _show_plotter_context_menu(self, pos):
         menu = QMenu(self)
-        menu.addAction("Copy to Clipboard")
-        if menu.exec(self.plotter.mapToGlobal(pos)):
-            self._copy_view()
+        hit = self._pick_at(pos)
+        name = self._current_array()
+        has_field = self._full_mesh is not None and bool(name) \
+            and name in self._full_mesh.point_data
+        if hit is not None and has_field:
+            menu.addAction("Add Marker Here",
+                           lambda p=hit[0]: self._add_marker(p))
+        if has_field:
+            act = menu.addAction("Jump to Maximum in Cut Plane", self._jump_to_cut_plane_max)
+            act.setEnabled(self.clip_enabled_cb.isChecked())
+            if not self.clip_enabled_cb.isChecked():
+                act.setToolTip("Enable the clip plane first")
+        if hit is not None and has_field:
+            body = self._body_id(hit[1], hit[2])
+            text = (f"Jump to Maximum on Surface of Body {body}" if body is not None
+                    else "Jump to Maximum on Visible Surface")
+            menu.addAction(text, lambda h=hit: self._jump_to_surface_max(h[1], h[2]))
+        near = self._marker_near(pos)
+        if near is not None or self._markers:
+            menu.addSeparator()
+        if near is not None:
+            menu.addAction(f"Remove Marker {near['id']}",
+                           lambda m=near: self._remove_markers([m["id"]]))
+        if self._markers:
+            menu.addAction("Clear Markers", self._clear_markers)
+        menu.addSeparator()
+        menu.addAction("Copy to Clipboard", self._copy_view)
+        menu.setToolTipsVisible(True)
+        menu.exec(self.plotter.mapToGlobal(pos))
 
+
+    # ---------- Value markers (Probe) ----------
+
+    def _build_marker_panel(self):
+        """Marker list beside the plot; hidden while there are no markers."""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(4, 0, 0, 0)
+        header = QHBoxLayout()
+        header.addWidget(QLabel("Markers"))
+        header.addStretch()
+        self.temp_unit_combo = QComboBox()
+        for text, key in _TEMP_UNITS:
+            self.temp_unit_combo.addItem(text, key)
+        self.temp_unit_combo.setToolTip(
+            "Temperature in kelvin, in degrees Celsius, or as the rise above the "
+            "lowest temperature of the model (ΔT, in K)")
+        self.temp_unit_combo.currentIndexChanged.connect(self._on_temp_unit_changed)
+        header.addWidget(self.temp_unit_combo)
+        layout.addLayout(header)
+        self.marker_table = QTableWidget(0, 5)
+        self.marker_table.verticalHeader().setVisible(False)
+        self.marker_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.marker_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.marker_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        layout.addWidget(self.marker_table, 1)
+        buttons = QHBoxLayout()
+        remove_btn = self._plain_button("Remove")
+        remove_btn.setToolTip("Remove the selected markers")
+        remove_btn.clicked.connect(self._remove_selected_markers)
+        clear_btn = self._plain_button("Clear")
+        clear_btn.clicked.connect(self._clear_markers)
+        copy_btn = self._plain_button("Copy")
+        copy_btn.setToolTip("Copy the marker list (tab-separated, for spreadsheets)")
+        copy_btn.clicked.connect(self._copy_markers)
+        for b in (remove_btn, clear_btn, copy_btn):
+            buttons.addWidget(b)
+        layout.addLayout(buttons)
+        panel.setVisible(False)
+        self.marker_panel = panel
+        return panel
+
+    def _pick_at(self, widget_pos):
+        """(world position, cell id, picked dataset) of the shown model under a
+        plot-widget position, or None. Works from any angle, on clipped solids,
+        cut faces and the 2D plane alike, since it picks what is rendered."""
+        if self._off_screen or self._mesh_actor is None:
+            return None
+        width, height = self.plotter.render_window.GetSize()
+        ratio = width / max(1, self.plotter.width())
+        picker = vtkCellPicker()
+        picker.SetTolerance(0.0005)
+        picker.PickFromListOn()
+        picker.AddPickList(self._mesh_actor)
+        if not picker.Pick(widget_pos.x() * ratio, height - 1 - widget_pos.y() * ratio,
+                           0, self.plotter.renderer):
+            return None
+        cell = picker.GetCellId()
+        dataset = picker.GetDataSet()
+        if cell < 0 or dataset is None:
+            return None
+        return np.array(picker.GetPickPosition(), dtype=float), cell, pv.wrap(dataset)
+
+    def _world_to_widget(self, pos):
+        ren = self.plotter.renderer
+        ren.SetWorldPoint(float(pos[0]), float(pos[1]), float(pos[2]), 1.0)
+        ren.WorldToDisplay()
+        x, y, _ = ren.GetDisplayPoint()
+        width, height = self.plotter.render_window.GetSize()
+        ratio = width / max(1, self.plotter.width())
+        return QPoint(round(x / ratio), round((height - 1 - y) / ratio))
+
+    def _marker_near(self, widget_pos):
+        """Marker drawn within _MARKER_HIT_PX of a plot-widget position, or None."""
+        if self._off_screen:
+            return None
+        best, best_dist = None, _MARKER_HIT_PX
+        for m in self._markers:
+            dist = (self._world_to_widget(m["pos"]) - widget_pos).manhattanLength()
+            if dist <= best_dist:
+                best, best_dist = m, dist
+        return best
+
+    def _values_at(self, points):
+        """Selected field (magnitude) interpolated from the full mesh at native
+        points; a point the probe misses (outside, or on a face within rounding)
+        takes the nearest node's value. NaN without a field."""
+        points = np.asarray(points, dtype=float).reshape(-1, 3)
+        name = self._current_array()
+        mesh = self._full_mesh
+        if mesh is None or not name or name not in mesh.point_data or len(points) == 0:
+            return np.full(len(points), np.nan)
+        sampled = pv.PolyData(points).sample(mesh, tolerance=1e-5 * mesh.length)
+        values = np.asarray(field_io.array_magnitudes(sampled.point_data[name]), dtype=float)
+        valid = np.asarray(sampled.point_data["vtkValidPointMask"]).astype(bool)
+        if not valid.all():
+            node_values = field_io.array_magnitudes(mesh.point_data[name])
+            for i in np.flatnonzero(~valid):
+                values[i] = float(node_values[mesh.find_closest_point(points[i])])
+        return values
+
+    def _is_temperature(self):
+        entry = self._entries.get(self._current_array() or "")
+        return bool(entry and entry.symbol == "temperature")
+
+    def _on_temp_unit_changed(self, _index=None):
+        self._temp_unit = self.temp_unit_combo.currentData() or "K"
+        self._markers_changed()
+
+    def _model_min(self):
+        """Lowest value of the selected field in the whole model (this file / cycle)."""
+        name = self._current_array()
+        key = (self._mesh_generation, name)
+        if self._model_min_cache[0] != key:
+            value = None
+            if self._full_mesh is not None and name and name in self._full_mesh.point_data:
+                mags = field_io.array_magnitudes(self._full_mesh.point_data[name])
+                value = float(np.min(mags)) if mags.size else None
+            self._model_min_cache = (key, value)
+        return self._model_min_cache[1]
+
+    def _marker_unit(self):
+        """Unit of the marker readout: K / °C / K (ΔT) for temperature, else the field's."""
+        if self._is_temperature():
+            return "°C" if self._temp_unit == "C" else "K"
+        entry = self._entries.get(self._current_array() or "")
+        return entry.unit if entry and entry.unit else ""
+
+    def _display_value(self, value):
+        """Marker value in the chosen readout (temperature: K, °C or ΔT), or None."""
+        if value is None or not np.isfinite(value):
+            return None
+        if self._is_temperature():
+            if self._temp_unit == "C":
+                return value - 273.15
+            if self._temp_unit == "dT":
+                low = self._model_min()
+                return value - low if low is not None else None
+        return value
+
+    def _format_number(self, value):
+        shown = self._display_value(value)
+        if shown is None:
+            return "-"
+        return f"{shown:.2f}" if self._is_temperature() else f"{shown:.4g}"
+
+    def _format_marker_value(self, value):
+        text = self._format_number(value)
+        if text == "-":
+            return text
+        unit = self._marker_unit()
+        prefix = "ΔT " if self._is_temperature() and self._temp_unit == "dT" else ""
+        return f"{prefix}{text}{' ' + unit if unit else ''}"
+
+    def _value_header(self):
+        unit = self._marker_unit()
+        name = "ΔT" if self._is_temperature() and self._temp_unit == "dT" else "Value"
+        return f"{name} [{unit}]" if unit else name
+
+    def _add_marker_at_widget_pos(self, widget_pos):
+        hit = self._pick_at(widget_pos)
+        if hit is not None:
+            self._add_marker(hit[0])
+
+    def _add_marker(self, pos):
+        """Add a numbered marker at a native position; returns it."""
+        pos = np.asarray(pos, dtype=float)
+        marker = {"id": self._next_marker_id, "pos": pos,
+                  "value": float(self._values_at([pos])[0])}
+        self._next_marker_id += 1
+        self._markers.append(marker)
+        self._markers_changed()
+        return marker
+
+    def _remove_markers(self, ids):
+        ids = set(ids)
+        self._markers = [m for m in self._markers if m["id"] not in ids]
+        self._markers_changed()
+
+    def _remove_selected_markers(self):
+        rows = {i.row() for i in self.marker_table.selectedIndexes()}
+        self._remove_markers([self._markers[r]["id"] for r in rows if r < len(self._markers)])
+
+    def _clear_markers(self):
+        self._markers = []
+        self._next_marker_id = 1
+        self._markers_changed()
+
+    def _refresh_marker_values(self):
+        """Re-read every marker from the current field / file / cycle; markers
+        outside the new model are dropped."""
+        if not self._markers:
+            return
+        if self._full_mesh is None:
+            self._markers = []
+        else:
+            b = np.asarray(self._full_mesh.bounds, dtype=float)
+            pad = 1e-6 * self._full_mesh.length
+            self._markers = [m for m in self._markers
+                             if np.all(m["pos"] >= b[0::2] - pad) and np.all(m["pos"] <= b[1::2] + pad)]
+            values = self._values_at([m["pos"] for m in self._markers])
+            for m, v in zip(self._markers, values):
+                m["value"] = float(v)
+        self._markers_changed()
+
+    def _marker_label(self, marker):
+        return f"{marker['id']}: {self._format_marker_value(marker['value'])}"
+
+    def _markers_changed(self):
+        self._update_marker_actor()
+        self._update_marker_table()
+
+    def _update_marker_actor(self):
+        """One label actor per marker (a shared one would hide overlapping labels),
+        then the dots as a 2D overlay at world positions, so a marker stays
+        visible inside the model and on its faces."""
+        for actor in self._marker_actors:
+            self.plotter.remove_actor(actor, render=False)
+        self._marker_actors = []
+        for m in self._markers:
+            # Leading blanks keep the text clear of the dot at the label's corner.
+            text = "    " + self._marker_label(m)
+            kwargs = dict(font_size=14, bold=True, text_color="black", shape_color="white",
+                          shape_opacity=0.8, show_points=False, always_visible=True,
+                          pickable=False, reset_camera=False, render=False)
+            try:
+                actor = self.plotter.add_point_labels(
+                    np.array([m["pos"]]), [text],
+                    justification_horizontal="left", justification_vertical="bottom", **kwargs)
+            except TypeError:  # pyvista < 0.44: no justification keywords
+                actor = self.plotter.add_point_labels(np.array([m["pos"]]), [text], **kwargs)
+            self._marker_actors.append(actor)
+        if self._markers:
+            dots = pv.PolyData(np.array([m["pos"] for m in self._markers], dtype=float))
+            for size, color in _MARKER_DOT_STYLE:
+                world = vtkCoordinate()
+                world.SetCoordinateSystemToWorld()
+                mapper = vtkPolyDataMapper2D()
+                mapper.SetInputData(dots)
+                mapper.SetTransformCoordinate(world)
+                actor = vtkActor2D()
+                actor.SetMapper(mapper)
+                actor.GetProperty().SetPointSize(size)
+                actor.GetProperty().SetColor(*color)
+                self.plotter.add_actor(actor, reset_camera=False, pickable=False, render=False)
+                self._marker_actors.append(actor)
+        self.plotter.render()
+
+    def _update_marker_table(self):
+        if self.marker_table is None:
+            return
+        table = self.marker_table
+        self.temp_unit_combo.setVisible(self._is_temperature())
+        table.setHorizontalHeaderLabels(["#", self._value_header(), "x [µm]", "y [µm]", "z [µm]"])
+        table.setRowCount(len(self._markers))
+        for row, m in enumerate(self._markers):
+            um = m["pos"] * self._scale_um
+            cells = [str(m["id"]), self._format_number(m["value"]),
+                     f"{um[0]:.3f}", f"{um[1]:.3f}", f"{um[2]:.3f}"]
+            for col, text in enumerate(cells):
+                item = QTableWidgetItem(text)
+                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                table.setItem(row, col, item)
+        # Wide enough for every column, so the list never needs a horizontal scrollbar.
+        table.resizeColumnsToContents()
+        needed = (table.horizontalHeader().length() + 2 * table.frameWidth()
+                  + table.verticalScrollBar().sizeHint().width() + 8)
+        self.marker_panel.setMinimumWidth(needed)
+        opening = bool(self._markers) and self.marker_panel.isHidden()
+        self.marker_panel.setVisible(bool(self._markers))
+        if opening:
+            total = sum(self.plot_splitter.sizes())
+            self.plot_splitter.setSizes([max(1, total - needed), needed])
+
+    def _copy_markers(self):
+        lines = [f"#\t{self._value_header()}\tx [um]\ty [um]\tz [um]"]
+        for m in self._markers:
+            um = m["pos"] * self._scale_um
+            shown = self._display_value(m["value"])
+            value = f"{shown:.6g}" if shown is not None else ""
+            lines.append(f"{m['id']}\t{value}\t{um[0]:.6g}\t{um[1]:.6g}\t{um[2]:.6g}")
+        QApplication.clipboard().setText("\n".join(lines))
+
+    def _max_point(self, mesh):
+        """(position, value) of the selected field's largest point value on mesh."""
+        name = self._current_array()
+        if mesh is None or mesh.n_points == 0 or not name or name not in mesh.point_data:
+            return None
+        mags = field_io.array_magnitudes(mesh.point_data[name])
+        i = int(np.argmax(mags))
+        return np.array(mesh.points[i], dtype=float), float(mags[i])
+
+    def _cut_plane_mesh(self):
+        """2D section at the clip plane (the cut face of the clipped solid)."""
+        if self._full_mesh is None or not self.clip_enabled_cb.isChecked():
+            return None
+        key = self._current_clip_key()
+        if self.slice_only_cb.isChecked() and key == self._clipped_mesh_cache_key:
+            return self._clipped_mesh_cache
+        return _exact_clip_by_axis(self._full_mesh, self._current_axis,
+                                   self._slider_value_to_position(), 1, slice_only=True)
+
+    def _jump_to_cut_plane_max(self):
+        self.setCursor(Qt.WaitCursor)
+        try:
+            found = self._max_point(self._cut_plane_mesh())
+        finally:
+            self.unsetCursor()
+        if found is None:
+            self.warning_label.setText("The clip plane does not cut the model.")
+            return None
+        return self._add_marker(found[0])
+
+    @staticmethod
+    def _geometry_ids(mesh):
+        for key in mesh.cell_data.keys():
+            if key.lower() == "geometryids":
+                return np.asarray(mesh.cell_data[key])
+        return None
+
+    def _body_id(self, cell, mesh):
+        ids = self._geometry_ids(mesh)
+        return int(ids[cell]) if ids is not None and 0 <= cell < len(ids) else None
+
+    def _jump_to_surface_max(self, cell, mesh):
+        """Marker on the largest value of the clicked body's outer surface, as
+        shown (with the clip plane on, its cut face counts too); the whole
+        shown surface when the file has no body ids."""
+        ids = self._geometry_ids(mesh)
+        part = mesh
+        if ids is not None and 0 <= cell < len(ids):
+            part = mesh.extract_cells(np.flatnonzero(ids == ids[cell]))
+        found = self._max_point(_outer_surface(part))
+        if found is None:
+            return None
+        return self._add_marker(found[0])
 
     # ---------- Navigation (mouse style, keys) ----------
 
@@ -551,15 +957,26 @@ class FieldViewerWindow(QDialog):
             return super().eventFilter(obj, event)
         etype = event.type()
         if etype in (QEvent.MouseButtonPress, QEvent.MouseButtonDblClick):
+            mods = event.modifiers() & ~Qt.KeypadModifier
             if event.button() == Qt.RightButton:
                 self._right_press_pos = event.position().toPoint()
-            mods = event.modifiers() & ~Qt.KeypadModifier
+            self._left_press_pos = (event.position().toPoint()
+                                    if event.button() == Qt.LeftButton and mods == Qt.NoModifier
+                                    else None)
             button, new_mods = self._mapped_press(event.button(), mods)
             if (button, new_mods) != (event.button(), mods):
                 self.plotter.mousePressEvent(QMouseEvent(
                     etype, event.position(), event.globalPosition(),
                     button, button, new_mods))
                 return True
+            return False
+        if etype == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+            # Probe: a left click without drag places a marker; VTK still ends its orbit.
+            start, self._left_press_pos = self._left_press_pos, None
+            pos = event.position().toPoint()
+            if (start is not None and self.probe_cb.isChecked()
+                    and (pos - start).manhattanLength() < _CLICK_SLOP_PX):
+                QTimer.singleShot(0, lambda p=pos: self._add_marker_at_widget_pos(p))
             return False
         if etype == QEvent.MouseButtonRelease and event.button() == Qt.RightButton:
             self.plotter.mouseReleaseEvent(event)
@@ -656,6 +1073,7 @@ class FieldViewerWindow(QDialog):
             Qt.Key_Down: lambda: self._pan_camera(0.0, -0.2),
             Qt.Key_O: self.orthographic_cb.toggle,
             Qt.Key_M: self._move_slider_to_max,
+            Qt.Key_P: self.probe_cb.toggle,
             Qt.Key_A: lambda: self.show_vectors_cb.isEnabled() and self.show_vectors_cb.toggle(),
             Qt.Key_PageUp: lambda: self._step_clip(1),
             Qt.Key_PageDown: lambda: self._step_clip(-1),
@@ -684,6 +1102,7 @@ class FieldViewerWindow(QDialog):
         self.warning_label.setText("")
         self._cycle_index = None
         self._load_mesh(keep_field=True)
+        self._refresh_marker_values()
         same_extent = (old_bounds is not None and self._full_mesh is not None
                        and _same_extent(old_bounds, self._full_mesh.bounds))
         self._camera_needs_reset = not same_extent
@@ -701,6 +1120,7 @@ class FieldViewerWindow(QDialog):
             return
         self._cycle_index = index
         self._load_mesh(preserve_selection=True)
+        self._refresh_marker_values()
         self._schedule_redraw()
 
     def _on_include_iterations_toggled(self, checked):
@@ -963,6 +1383,7 @@ class FieldViewerWindow(QDialog):
     # ---------- Field picker ----------
 
     def _on_array_changed(self, _index=None):
+        self._refresh_marker_values()
         self._reset_clim_range()
         self._update_vector_checkbox_state()
         self._schedule_redraw()

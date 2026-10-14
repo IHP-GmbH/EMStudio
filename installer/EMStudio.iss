@@ -39,6 +39,10 @@ Source: "{#KLayoutIco}"; DestDir: "{app}"; Flags: ignoreversion
 ; Logo used by KLayout action (used by the Python macro)
 Source: "..\icons\logo.png"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
+; Licence texts shipped with the install
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\THIRD_PARTY_NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
+
 [Icons]
 ; Main EMStudio shortcut (Start Menu)
 Name: "{group}\EMStudio"; \

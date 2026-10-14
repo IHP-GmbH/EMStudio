@@ -2,7 +2,7 @@
  *  EMStudio – GUI tool for setting up, running and analysing
  *  electromagnetic simulations with IHP PDKs.
  *
- *  Copyright (C) 2023–2025 IHP Authors
+ *  Copyright (C) 2023–2026 IHP Authors
  *
  *  This program is free software: you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -16,6 +16,8 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ *  Property-browser editors maintained as part of EMStudio (GPL-3.0-or-later).
  ************************************************************************/
 
 #include "fileedit.h"

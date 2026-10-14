@@ -633,6 +633,14 @@ either version 3 of the License, or (at your option) any later version.
 
 See the [LICENSE](LICENSE) file for details.
 
-This project also includes third-party components:
+### Third-party components
 
-- QtPropertyBrowser – from the Qt Solutions package, licensed under BSD-like terms
+Full inventory (source tree and shipped binaries): [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+**In the source tree**
+
+- **QtPropertyBrowser** (`QtPropertyBrowser/`) — Nokia Qt Solutions; LGPL-2.1 + Nokia Qt LGPL Exception 1.1, or GPL-3.0 (see `QtPropertyBrowser/LICENSE.*`). Not “BSD-like”.
+- **Property editors** (`extension/`) — maintained with EMStudio under GPL-3.0-or-later (historically based on a Qt Quarterly sample; see the notices file).
+- **Icons** — KLayout / Doxygen artwork where noted in the notices file.
+
+**Shipped with CI / installer binaries** (not exhaustive): Qt 5.15 (LGPL) and Qt Charts (GPL), ICU on Linux portable builds, Windows ANGLE/Mesa/`D3Dcompiler`/MinGW runtime, and on Windows the bundled Field viewer Python (`PySide6-Essentials`, VTK, PyVista, NumPy, SciPy, …). Solver tools (openEMS, Palace, Elmer, …) are not shipped.

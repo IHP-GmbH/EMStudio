@@ -1,25 +1,24 @@
-/****************************************************************************
-**
-** Copyright (C) 2006 Trolltech ASA. All rights reserved.
-**
-** This file is part of the documentation of Qt. It was originally
-** published as part of Qt Quarterly.
-**
-** This file may be used under the terms of the GNU General Public License
-** version 2.0 as published by the Free Software Foundation or under the
-** terms of the Qt Commercial License Agreement. The respective license
-** texts for these are provided with the open source and commercial
-** editions of Qt.
-**
-** If you are unsure which license is appropriate for your use, please
-** review the following information:
-** http://www.trolltech.com/products/qt/licensing.html or contact the
-** sales department at sales@trolltech.com.
-**
-** This file is provided AS IS with NO WARRANTY OF ANY KIND, INCLUDING THE
-** WARRANTY OF DESIGN, MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
-**
-****************************************************************************/
+/************************************************************************
+ *  EMStudio – GUI tool for setting up, running and analysing
+ *  electromagnetic simulations with IHP PDKs.
+ *
+ *  Copyright (C) 2023–2026 IHP Authors
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ *  Property-browser editors maintained as part of EMStudio (GPL-3.0-or-later).
+ ************************************************************************/
 
 #ifndef FILEEDIT_H
 #define FILEEDIT_H

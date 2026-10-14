@@ -1,0 +1,28 @@
+Nokia Qt LGPL Exception version 1.1
+
+As an additional permission to the GNU Lesser General Public License version
+2.1, the object code form of a "work that uses the Library" may incorporate
+material from a header file that is part of the Library. You may distribute
+such object code under terms of your choice, provided that:
+    (i) the header files of the Library have not been modified; and
+    (ii) the incorporated material is limited to numerical parameters, data
+         structure layouts, accessors, macros, inline functions and
+         templates; and
+    (iii) you comply with the terms of Section 6 of the GNU Lesser General
+          Public License version 2.1.
+
+Moreover, you may distribute such object code with a copy of the
+corresponding machine-readable source code under terms of your choice,
+provided that the object code and source code are distributed under
+identical terms, and you comply with the terms of Section 6 of the GNU
+Lesser General Public License version 2.1.
+
+If you modify the header files of the Library, then this exception does
+not apply to your modified versions of such header files.
+
+The following notice applies to the Qt Solutions QtPropertyBrowser module:
+
+Copyright (C) 2009 Nokia Corporation and/or its subsidiary(-ies).
+All rights reserved.
+
+Contact: Nokia Corporation (qt-info@nokia.com)

@@ -21,6 +21,7 @@ private slots:
     void computeMinimumSchemaVersion_detectsFeatures();
     void parseMissingFile_fails();
     void resolve_dielectricAndLayerReferences();
+    void resolve_dielectricReferencesApplySubstrateOffset();
 };
 
 #endif // TST_SUBSTRATE_H

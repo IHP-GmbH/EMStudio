@@ -190,6 +190,7 @@ QVector<BindingRow> bindingTable(NavStyle style)
          << BindingRow{viewer, tr("Parallel / perspective projection"), QStringLiteral("O")}
          << BindingRow{viewer, tr("Find max."), QStringLiteral("M")}
          << BindingRow{viewer, tr("Arrows on/off"), QStringLiteral("A")}
+         << BindingRow{viewer, tr("Probe on/off (click places a value marker)"), QStringLiteral("P")}
          << BindingRow{viewer, tr("Move the clip plane"), QStringLiteral("PgUp · PgDn")}
          << BindingRow{viewer, tr("Copy view as image"), QStringLiteral("Ctrl+C")};
 

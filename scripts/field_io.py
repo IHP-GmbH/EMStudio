@@ -827,6 +827,23 @@ def list_run(run_dir: str, source: str, files=None) -> dict:
     return out
 
 
+def _write_json_stdout(data) -> None:
+    """Emit one JSON object on stdout as UTF-8.
+
+    Labels may contain volume/boundary icons (e.g. U+1F9CA). On Windows the
+    default stdout encoding is often cp1252, which cannot encode those and
+    raises UnicodeEncodeError when EMStudio reads ``field_io.py --list``.
+    Writing UTF-8 bytes keeps the icons and matches QJsonDocument.
+    """
+    line = json.dumps(data, ensure_ascii=False) + "\n"
+    buf = getattr(sys.stdout, "buffer", None)
+    if buf is not None:
+        buf.write(line.encode("utf-8"))
+        buf.flush()
+    else:  # pragma: no cover - exotic stdout without a buffer
+        sys.stdout.write(line)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="EMStudio field-result discovery")
     ap.add_argument("--list", action="store_true", help="print candidate files as JSON")
@@ -837,7 +854,7 @@ def main(argv=None) -> int:
     if not args.list:
         ap.error("nothing to do (use --list)")
     data = list_run(args.run_path, args.source, args.files or None)
-    sys.stdout.write(json.dumps(data, ensure_ascii=False) + "\n")
+    _write_json_stdout(data)
     return 0
 
 

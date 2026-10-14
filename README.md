@@ -393,7 +393,7 @@ Keys (click the view first): **F** fit, **Home** everything, **+ / −** zoom, a
 5. **Value markers**: check **Probe** (View box, key **P**) and click the model to place a numbered marker with the value at that point, from any angle, on the clipped solid, its cut face or the 2D plane. Dragging still rotates. The **Markers** list beside the view shows the marker number, the value and x / y / z in µm; for temperatures a dropdown switches the list and the labels between K, °C and ΔT (rise above the lowest temperature of the model, in K). **Remove**, **Clear** and **Copy** (tab-separated, for spreadsheets). Right-click the model for **Jump to Maximum in Cut Plane** (with the clip plane on) and **Jump to Maximum on Surface of Body N** (the body you clicked, e.g. the chip; the whole shown surface for results without body IDs), **Add Marker Here**, **Remove Marker N** and **Clear Markers**. Markers update when you change the field, file or cycle.
 6. Positions are shown in µm for every solver (Elmer Thermal and openEMS dumps are in meters and are scaled).
 7. Same **FIELD_VIEWER_PYTHON** as the 2D exporter; it needs `pyvistaqt` and `PySide6`.
-7. The viewer also runs on its own and headless, e.g. `python scripts/field_viewer.py --run-path <..._data> --source palace --clip-axis Z --clip-max --screenshot out.png`; see `--help`.
+8. The viewer also runs on its own and headless, e.g. `python scripts/field_viewer.py --run-path <..._data> --source palace --clip-axis Z --clip-max --screenshot out.png`; see `--help`.
 
 Set **Preferences → Layout Field → FIELD_VIEWER_PYTHON** to a Windows `python.exe` that has:
 

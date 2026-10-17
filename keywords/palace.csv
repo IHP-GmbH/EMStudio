@@ -33,6 +33,5 @@ solver_tol	Relative residual tolerance of the linear solver	Linear solver (Palac
 margin	Oversize of dielectric layers relative to the drawn geometry, in project units	Simulation boundary		yes
 boundary	Boundary at xmin,xmax,ymin,ymax,zmin,zmax: ABC/PML, PEC or PMC	Simulation boundary	['ABC','ABC','ABC','ABC','ABC','ABC']
 air_around	Air spacing around the dielectrics, single value or list of 6. Default: same as margin	Simulation boundary
-filled_metals	True|False, conductors as solid volumes with bulk conductivity instead of surface impedance	Conductor modelling	False
+conductor_model	'surface'|'solve_inside'|'solve_inside_skin': surface impedance on all conductor faces (fastest; accurate for L, k, resonances, match), conductors meshed as volumes (Q and loss while designing), or volumes with thin skin layers along the faces (final Q and loss numbers)	Conductor modelling	'surface'
 fill_factor_correction	True|False, scale merged via conductivity by the via fill factor (needs merge_polygon_size > 0)	Conductor modelling	False
-z_thickness_factor	Factor for the metal thickness on vertical side walls, see user guide	Conductor modelling	1

@@ -294,6 +294,11 @@ void MainWindow::applySimSettingsToScript(QString &script, const QString &simKey
         applyPalaceSettings(script);
     }
     
+    // gds2palace 0.9.0 stops when filled_metals and conductor_model disagree; write only conductor_model.
+    // Older gds2palace doesn't know conductor_model: keep filled_metals there.
+    if (script.contains(QLatin1String("filled_metals"))
+        && supportsConductorModel(simKeyLower, QFileInfo(currentPythonScriptPath()).absolutePath()))
+        migrateFilledMetals(script);
     forceStartSimulationOff(script);
 }
 
@@ -315,6 +320,50 @@ void MainWindow::forceStartSimulationOff(QString &script) const
     static const QRegularExpression reDict(
         QStringLiteral(R"((\w+\s*\[\s*['"]start_simulation['"]\s*\]\s*=\s*)(\S+))"));
     script.replace(reDict, QStringLiteral("\\1False"));
+}
+
+/*!*******************************************************************************************************************
+ * \brief Rewrites gds2palace's old \c filled_metals setting as \c conductor_model (gds2palace 0.9.0).
+ *
+ * \c dict['filled_metals'] = True / False becomes \c dict['conductor_model'] = 'solve_inside' / 'surface',
+ * keeping indentation and a trailing comment. If the script already sets \c conductor_model, the
+ * \c filled_metals statement is removed: gds2palace stops when both keys disagree. Other forms (an
+ * expression, a top-level variable) stay as written.
+ *
+ * \param script Python script text, modified in place.
+ * \return Number of statements rewritten or removed.
+ **********************************************************************************************************************/
+int MainWindow::migrateFilledMetals(QString &script)
+{
+    static const QRegularExpression reFilled(
+        QStringLiteral(R"((?m)^([ \t]*\w+\s*\[\s*)(['"])filled_metals\2(\s*\]\s*=\s*)(True|False)([ \t]*(?:#.*)?)$\n?)"));
+    static const QRegularExpression reModel(
+        QStringLiteral(R"((?m)^[ \t]*\w+\s*\[\s*['"]conductor_model['"]\s*\]\s*=)"));
+
+    const bool hasModel = script.contains(reModel);
+    int count = 0;
+    QString out;
+    int last = 0;
+    QRegularExpressionMatchIterator it = reFilled.globalMatch(script);
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        out += script.mid(last, m.capturedStart() - last);
+        last = m.capturedEnd();
+        ++count;
+        if (hasModel)
+            continue;
+        const QString value = m.captured(4) == QLatin1String("True") ? QStringLiteral("'solve_inside'")
+                                                                     : QStringLiteral("'surface'");
+        out += m.captured(1) + m.captured(2) + QStringLiteral("conductor_model") + m.captured(2)
+               + m.captured(3) + value + m.captured(5);
+        if (m.captured(0).endsWith(QLatin1Char('\n')))
+            out += QLatin1Char('\n');
+    }
+    if (count == 0)
+        return 0;
+    out += script.mid(last);
+    script = out;
+    return count;
 }
 
 /*!*******************************************************************************************************************

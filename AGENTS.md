@@ -225,6 +225,14 @@ regular expressions. It never regenerates the whole script.
   `applySubLayerNamesToPorts` sets `m_blockPortChanges`): numbers ↔ names select the same layers.
   GDS/XML paths go through `resolveModelInputFile`: if the written path doesn't exist, a
   file with the same name next to the model is used (and written back on Save).
+  gds2palace 0.9.0 replaced `filled_metals` by `conductor_model`: `migrateFilledMetals` (pythonToEditor.cpp)
+  rewrites a literal `dict['filled_metals'] = True/False` as `conductor_model = 'solve_inside'/'surface'`
+  (not for openEMS models), or drops it when the script already sets `conductor_model` (gds2palace stops
+  when both disagree). Only when the model's gds2palace is ≥ 0.9.0 (`supportsConductorModel`,
+  runPalace.cpp: `gds2palaceVersion` runs the tool's model Python in the model folder, so a local
+  `gds2palace/` wins, and reads `__version__` from its `__init__.py` without importing; cached per
+  interpreter + folder, re-probed on load). Load then re-parses the converted text; every GUI → script sync
+  converts again, so only `conductor_model` is written. Older gds2palace: `filled_metals` stays, with a Log note.
 - **Ports**: GUI table `tblPorts` ↔ `simulation_ports.add_port(simulation_setup.simulation_port(...))`
   lines, which may span several lines (`findPortBlocks` balances parentheses).
   `PortInfo` holds one port. In-plane ports use only `to_layername`; via ports use

@@ -1883,6 +1883,104 @@ QByteArray fileBytes(const QString &path)
 }
 } // namespace
 
+/*!*******************************************************************************************************************
+ * \brief gds2palace 0.9.0: filled_metals True / False becomes conductor_model 'solve_inside' / 'surface'; with
+ *        conductor_model already set, filled_metals is dropped (gds2palace stops when the two disagree).
+ **********************************************************************************************************************/
+void MainWindowPortsTest::migrateFilledMetals_rewritesOrDrops()
+{
+    MainWindow w;
+    const QString out = w.testMigrateFilledMetals(QStringLiteral(
+        "settings['filled_metals'] = True  # volumes\n"
+        "    cfg[\"filled_metals\"] = False\n"
+        "settings['filled_metals'] = use_volumes\n"
+        "settings['margin'] = 50\n"));
+    QCOMPARE(out, QStringLiteral(
+        "settings['conductor_model'] = 'solve_inside'  # volumes\n"
+        "    cfg[\"conductor_model\"] = 'surface'\n"
+        "settings['filled_metals'] = use_volumes\n"
+        "settings['margin'] = 50\n"));
+
+    const QString both = w.testMigrateFilledMetals(QStringLiteral(
+        "settings['conductor_model'] = 'solve_inside_skin'\n"
+        "settings['filled_metals'] = False\n"
+        "settings['margin'] = 50"));
+    QCOMPARE(both, QStringLiteral(
+        "settings['conductor_model'] = 'solve_inside_skin'\n"
+        "settings['margin'] = 50"));
+}
+
+/*! A Palace model with filled_metals loads as conductor_model when its gds2palace is 0.9.0 or newer, and Save
+ *  writes only conductor_model; with an older gds2palace the model keeps filled_metals. The gds2palace folder
+ *  next to the model stands in for the package (it wins over an installed one, as when the model runs). */
+void MainWindowPortsTest::loadModel_showsFilledMetalsAsConductorModel()
+{
+    if (testPython().isEmpty())
+        QSKIP("no Python for the gds2palace version probe");
+
+    auto writeFile = [](const QString &path, const QByteArray &bytes) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly | QIODevice::Text) && f.write(bytes) == bytes.size();
+    };
+    auto readFile = [](const QString &path) {
+        QFile f(path);
+        return f.open(QIODevice::ReadOnly | QIODevice::Text) ? QString::fromUtf8(f.readAll()) : QString();
+    };
+    auto makeModel = [&](const QTemporaryDir &dir, const QByteArray &version) {
+        QDir(dir.path()).mkdir(QStringLiteral("gds2palace"));
+        const QString model = dir.filePath(QStringLiteral("filled.py"));
+        const bool ok = writeFile(dir.filePath(QStringLiteral("gds2palace/__init__.py")),
+                                  "__version__ = \"" + version + "\"   # version of gds2palace\n")
+                        && writeFile(model, "from gds2palace import *\nsettings = {}\n"
+                                            "settings['filled_metals'] = True  # Q study\n"
+                                            "config_name, data_dir = simulation_setup.create_palace "
+                                            "(excite_ports, settings)\n");
+        return ok ? model : QString();
+    };
+
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString model = makeModel(dir, "0.9.0");
+        QVERIFY(!model.isEmpty());
+
+        MainWindow w;
+        w.setAttribute(Qt::WA_DontShowOnScreen, true);
+        w.testSetPreference(QStringLiteral("PALACE_PYTHON"), testPython());
+        QVERIFY(w.loadPythonModel(model));
+        QVERIFY2(w.testEditorText().contains(QStringLiteral("settings['conductor_model'] = 'solve_inside'  # Q study")),
+                 qPrintable(w.testEditorText()));
+        QVERIFY(w.testSettingPropertyType(QStringLiteral("conductor_model")) != QVariant::Invalid);
+        QVERIFY(w.testSettingPropertyType(QStringLiteral("filled_metals")) == QVariant::Invalid);
+        QVERIFY(w.testMainLogText().contains(QStringLiteral("gds2palace 0.9.0")));
+
+        w.testTriggerSave();
+        const QString saved = readFile(model);
+        QVERIFY2(saved.contains(QStringLiteral("settings['conductor_model'] = 'solve_inside'  # Q study")),
+                 qPrintable(saved));
+        QVERIFY2(!saved.contains(QStringLiteral("filled_metals")), qPrintable(saved));
+    }
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString model = makeModel(dir, "0.8.2");
+        QVERIFY(!model.isEmpty());
+
+        MainWindow w;
+        w.setAttribute(Qt::WA_DontShowOnScreen, true);
+        w.testSetPreference(QStringLiteral("PALACE_PYTHON"), testPython());
+        QVERIFY(w.loadPythonModel(model));
+        QVERIFY(w.testSettingPropertyType(QStringLiteral("filled_metals")) != QVariant::Invalid);
+        QVERIFY(w.testSettingPropertyType(QStringLiteral("conductor_model")) == QVariant::Invalid);
+        QVERIFY(w.testMainLogText().contains(QStringLiteral("gds2palace 0.8.2 has no conductor_model")));
+
+        w.testTriggerSave();
+        const QString saved = readFile(model);
+        QVERIFY2(saved.contains(QStringLiteral("settings['filled_metals'] = True  # Q study")), qPrintable(saved));
+        QVERIFY2(!saved.contains(QStringLiteral("conductor_model")), qPrintable(saved));
+    }
+}
+
 /*! File → Convert to settings dictionary: verified backup, converted model on disk, reloaded, and
  *  Add setting works afterwards. */
 void MainWindowPortsTest::convertLooseModel_backsUpConvertsAndReloads()

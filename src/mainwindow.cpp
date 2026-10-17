@@ -7339,6 +7339,33 @@ bool MainWindow::loadPythonModel(const QString &fileName)
         return false;
     }
 
+    QString simKey = detectPythonModelSimKey(textRaw, &res);
+    if (simKey == QLatin1String("unknown"))
+        simKey = QStringLiteral("palace");
+
+    // gds2palace 0.9.0 replaced filled_metals by conductor_model: with that version, show and save the new
+    // key (the file on disk changes only on Save). Older versions don't know conductor_model.
+    QString textMigrated = textRaw;
+    QString filledMetalsNote;
+    if (simKey != QLatin1String("openems") && migrateFilledMetals(textMigrated) > 0) {
+        QString version;
+        if (supportsConductorModel(simKey, fi.absolutePath(), &version, true)) {
+            res = PythonParser::parseSettingsFromText(textMigrated, fi.absolutePath(), fi.completeBaseName());
+            filledMetalsNote = tr("filled_metals is shown as conductor_model (gds2palace %1; True = 'solve_inside', "
+                                  "False = 'surface'). Save writes conductor_model.")
+                                   .arg(version);
+        } else {
+            textMigrated = textRaw;
+            filledMetalsNote = version.isEmpty()
+                ? tr("filled_metals is kept: no gds2palace found to check for conductor_model (needs 0.9.0).")
+                : tr("filled_metals is kept: gds2palace %1 has no conductor_model (needs 0.9.0).").arg(version);
+        }
+    }
+    if (!res.ok) {
+        error(tr("Failed to parse Python model file:\n%1").arg(res.error));
+        return false;
+    }
+
     // From here on the new model replaces the previous one. The preview is built once, when GDS, stackup
     // and ports are in: earlier builds would show the port markers without their Ports rows ("not mapped").
     LayoutPreviewHold previewHold(this);
@@ -7351,8 +7378,10 @@ bool MainWindow::loadPythonModel(const QString &fileName)
     m_preferences["PALACE_MODEL_DIR"]  = fi.absolutePath();
     m_preferences["PALACE_MODEL_FILE"] = fileName;
 
-    QString text = textRaw;
+    QString text = textMigrated;
     forceStartSimulationOff(text);
+    if (!filledMetalsNote.isEmpty())
+        info(filledMetalsNote, false);
 
     loadVariableOverridesFromScript(text);
 
@@ -7362,10 +7391,6 @@ bool MainWindow::loadPythonModel(const QString &fileName)
         res.topLevel.insert(QStringLiteral("start_simulation"), false);
 
     m_curPythonData = res;
-
-    QString simKey = detectPythonModelSimKey(text, &res);
-    if (simKey == QLatin1String("unknown"))
-        simKey = QStringLiteral("palace");
 
     selectSimToolByKey(simKey);
 

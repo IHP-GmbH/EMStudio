@@ -29,6 +29,7 @@
 #include <QSignalBlocker>
 #include <QStandardPaths>
 #include <QTextCursor>
+#include <QVersionNumber>
 
 #include "wslHelper.h"
 #include "mainwindow.h"
@@ -1321,6 +1322,92 @@ bool MainWindow::resolvePalacePythonLaunch(QString &outExe, QStringList &outArgs
     outExe = QStringLiteral("python3");
     return true;
 #endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Version of the gds2palace package a Palace / Elmer model imports.
+ *
+ * Runs the tool's model Python (as for a run) in \a modelDir, so a \c gds2palace folder next to the model wins
+ * over an installed package, as when the model runs. The version is \c __version__ from the package's
+ * \c __init__.py (read, not imported), else the installed distribution's version. Cached per interpreter and
+ * folder; \a fresh probes again.
+ *
+ * \param simKeyLower Tool key (\c palace or an Elmer key).
+ * \param modelDir    Folder of the model script.
+ * \param fresh       Ignore a cached result.
+ * \return The version string, or an empty string if no Python or no gds2palace was found.
+ **********************************************************************************************************************/
+QString MainWindow::gds2palaceVersion(const QString &simKeyLower, const QString &modelDir, bool fresh) const
+{
+    QString exe;
+    QStringList args;
+    const bool found = isElmerFamilyKey(simKeyLower) ? resolveElmerPythonLaunch(exe, args)
+                                                     : resolvePalacePythonLaunch(exe, args);
+    if (!found || exe.trimmed().isEmpty())
+        return {};
+
+    const QString key = exe + QLatin1Char('|') + args.join(QLatin1Char(' ')) + QLatin1Char('|') + modelDir;
+    if (!fresh) {
+        const auto cached = m_gds2palaceVersionCache.constFind(key);
+        if (cached != m_gds2palaceVersionCache.cend())
+            return cached.value();
+    }
+
+    static const QString probe = QStringLiteral(
+        "import importlib.util, re\n"
+        "v = ''\n"
+        "try:\n"
+        "    s = importlib.util.find_spec('gds2palace')\n"
+        "    if s and s.origin:\n"
+        "        with open(s.origin, encoding='utf-8') as f:\n"
+        "            m = re.search(r\"^__version__\\s*=\\s*['\\\"]([^'\\\"]+)\", f.read(), re.M)\n"
+        "        v = m.group(1) if m else ''\n"
+        "except Exception:\n"
+        "    pass\n"
+        "if not v:\n"
+        "    try:\n"
+        "        import importlib.metadata as md\n"
+        "        v = md.version('gds2palace')\n"
+        "    except Exception:\n"
+        "        pass\n"
+        "print(v)\n");
+
+    QProcess p;
+    if (!modelDir.isEmpty() && QFileInfo(modelDir).isDir())
+        p.setWorkingDirectory(modelDir);
+    p.start(exe, args + QStringList{QStringLiteral("-c"), probe});
+    QString version;
+    if (p.waitForFinished(8000) && p.exitStatus() == QProcess::NormalExit && p.exitCode() == 0)
+        version = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+    if (p.state() != QProcess::NotRunning) {
+        p.kill();
+        p.waitForFinished(1000);
+    }
+    m_gds2palaceVersionCache.insert(key, version);
+    return version;
+}
+
+/*!*******************************************************************************************************************
+ * \brief Whether the model's gds2palace knows \c conductor_model (0.9.0 or newer), see gds2palaceVersion().
+ *
+ * \param simKeyLower Tool key; openEMS models never use gds2palace.
+ * \param modelDir    Folder of the model script.
+ * \param versionOut  Receives the version found (empty if none).
+ * \param fresh       Ignore a cached result.
+ **********************************************************************************************************************/
+bool MainWindow::supportsConductorModel(const QString &simKeyLower, const QString &modelDir,
+                                        QString *versionOut, bool fresh) const
+{
+    if (versionOut)
+        versionOut->clear();
+    if (simKeyLower == QLatin1String("openems"))
+        return false;
+    const QString version = gds2palaceVersion(simKeyLower, modelDir, fresh);
+    if (versionOut)
+        *versionOut = version;
+    int suffix = 0;
+    const QVersionNumber v = QVersionNumber::fromString(version, &suffix);
+    return !v.isNull() && v >= QVersionNumber(0, 9, 0);
 }
 
 void MainWindow::patchElmerSifFilesNoMumps(const QString &runDir) const

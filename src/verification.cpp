@@ -868,6 +868,13 @@ QString MainWindow::testForceStartSimulationOff(const QString &script) const
     return s;
 }
 
+QString MainWindow::testMigrateFilledMetals(const QString &script) const
+{
+    QString s = script;
+    migrateFilledMetals(s);
+    return s;
+}
+
 QString MainWindow::testApplyGdsAndXmlPaths(const QString &script,
                                            const QString &simKeyLower) const
 {

@@ -298,6 +298,7 @@ public:
     QString                         testReplaceOrInsertThermalSection(const QString &script,
                                                                       const QString &thermalCode) const;
     QString                         testForceStartSimulationOff(const QString &script) const;
+    QString                         testMigrateFilledMetals(const QString &script) const;
     QString                         testApplyGdsAndXmlPaths(const QString &script,
                                                            const QString &simKeyLower) const;
     void                            testOpenThermalResultsInFieldView(const QString &runDir);
@@ -470,6 +471,7 @@ private:
     /*! Push current GDS/XML line-edits into the Python buffer (browse / path edits). */
     void                            syncGuiPathsToPythonEditor();
     void                            forceStartSimulationOff(QString &script) const;
+    static int                      migrateFilledMetals(QString &script);
     void                            applyBoundaries(QString &script, bool alsoTopLevelAssignment);
     void                            applyGdsAndXmlPaths(QString &script, const QString &simKeyLower);
     void                            applyVariableOverridesToScript(QString &script);
@@ -740,6 +742,10 @@ private:
     bool                            resolveElmerPythonLaunch(QString &outExe, QStringList &outArgs) const;
     /*! Windows-native Python for gds2palace (Palace); ignores WSL-style PALACE_PYTHON paths. */
     bool                            resolvePalacePythonLaunch(QString &outExe, QStringList &outArgs) const;
+    QString                         gds2palaceVersion(const QString &simKeyLower, const QString &modelDir,
+                                                      bool fresh = false) const;
+    bool                            supportsConductorModel(const QString &simKeyLower, const QString &modelDir,
+                                                           QString *versionOut = nullptr, bool fresh = false) const;
     void                            patchElmerSifFilesNoMumps(const QString &runDir) const;
 
     void                            failPalaceSolver(const QString &message, bool showDialog);
@@ -866,6 +872,7 @@ private:
     class QPushButton              *m_btnAddSetting = nullptr;     //!< "+ Add setting..." above the grid
     class QLineEdit                *m_settingsFilter = nullptr;    //!< Filter field above the grid
     mutable QHash<QString, bool>    m_pythonModuleCache;            //!< "python|module" → installed
+    mutable QHash<QString, QString> m_gds2palaceVersionCache;       //!< "python|args|modelDir" → version or ""
 #ifdef Q_OS_WIN
     QHash<QString, WslCheck>        m_wslExecChecks;                //!< WSL probe item → test -x result
     QPointer<QProcess>              m_wslProbeProcess;              //!< Running WSL tool path probe, if any

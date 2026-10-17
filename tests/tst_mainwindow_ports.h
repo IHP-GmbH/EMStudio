@@ -22,6 +22,8 @@ private slots:
     void saveAction_writesScriptToFile_and_updatesState();
     void saveAction_keepsEditedTextSettings();
     void loadModel_dropsPreviousModelSettings();
+    void migrateFilledMetals_rewritesOrDrops();
+    void loadModel_showsFilledMetalsAsConductorModel();
     void saveAction_keepsUnchangedNumberSpelling();
     void saveAction_keepsIndentedSweepModel();
     void settingsGrid_groupsByTopic();

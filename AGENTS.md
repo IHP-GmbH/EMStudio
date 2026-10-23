@@ -137,6 +137,8 @@ regular expressions. It never regenerates the whole script.
   It collects:
   - `settings['key'] = value` (any dict name),
   - simple top-level `name = literal` lines,
+  - a top-level `Boundaries = [...]` list (kept as raw text in `topLevel`; the boundary group reads it when the
+    script has no `settings['Boundaries']`),
   - `# @brief` tooltip comments (model-specific; the templates have none, the keyword files carry the
     descriptions; the grid tooltip is the `@brief` text or else the keyword description, plus
     "Required." and "Default: …" from the keyword file),

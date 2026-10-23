@@ -26,6 +26,7 @@ private slots:
     void loadModel_showsFilledMetalsAsConductorModel();
     void saveAction_keepsUnchangedNumberSpelling();
     void saveAction_keepsIndentedSweepModel();
+    void load_topLevelBoundariesList();
     void settingsGrid_groupsByTopic();
     void settingsGrid_nestedEditSurvivesSave();
     void fileNew_createsTemplateForEachTool();

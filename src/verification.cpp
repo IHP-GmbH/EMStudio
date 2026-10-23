@@ -974,6 +974,16 @@ bool MainWindow::testSetGridSettingValue(const QString &key, const QVariant &val
     return found;
 }
 
+QStringList MainWindow::testBoundaries() const
+{
+    const QVariantMap m = m_simSettings.value(QStringLiteral("Boundaries")).toMap();
+    QStringList out;
+    for (const QString &side : QStringList{QStringLiteral("X-"), QStringLiteral("X+"), QStringLiteral("Y-"),
+                                           QStringLiteral("Y+"), QStringLiteral("Z-"), QStringLiteral("Z+")})
+        out << m.value(side).toString();
+    return out;
+}
+
 bool MainWindow::testValidateRequiredFolder(const QString &dir, const QString &simKey)
 {
     m_pythonModuleCache.clear();

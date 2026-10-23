@@ -204,16 +204,17 @@ void MainWindow::rebuildSimulationSettingsFromPalace(const QMap<QString, QVarian
     // -------------------------------------------------------------------------------------------------
     // Boundaries (special handling)
     // -------------------------------------------------------------------------------------------------
-    const QString boundariesKey = findBoundariesKeyCaseInsensitive(settings);
-    if (!boundariesKey.isEmpty()) {
-        const QStringList items = parseBoundariesItems(settings.value(boundariesKey));
-        if (items.size() == 6)
-            applyBoundariesToUiAndSettings(items, simTool);
-    }
-
     QMap<QString, QVariant> merged = topLevelVars; // low priority
     for (auto it = settings.constBegin(); it != settings.constEnd(); ++it)
         merged[it.key()] = it.value();             // overwrite => high priority
+
+    // A plain `Boundaries = [...]` (loose openEMS models) is a top-level variable.
+    const QString boundariesKey = findBoundariesKeyCaseInsensitive(merged);
+    if (!boundariesKey.isEmpty()) {
+        const QStringList items = parseBoundariesItems(merged.value(boundariesKey));
+        if (items.size() == 6)
+            applyBoundariesToUiAndSettings(items, simTool);
+    }
 
     // m_simSettings is what Save writes. It must hold this script's values only: a key of the
     // previous model would otherwise reach this one's script (Save writes every key in writeMode).

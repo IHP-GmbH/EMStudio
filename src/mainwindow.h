@@ -321,6 +321,8 @@ public:
     void                            testRebuildSettingsGrid(const QString &script);
     /*! Sets a value through the settings grid property (as the editor does). */
     bool                            testSetGridSettingValue(const QString &key, const QVariant &value);
+    /*! The Boundaries shown for the loaded model (X-, X+, Y-, Y+, Z-, Z+), as Save writes them. */
+    QStringList                     testBoundaries() const;
     bool                            testValidateRequiredFolder(const QString &dir, const QString &simKey);
     QString                         testStackupDialogStartDir();
     bool                            testAddSetting(const QString &key, const QString &pyValue);

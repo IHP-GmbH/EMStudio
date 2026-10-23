@@ -148,6 +148,13 @@ static void parseTopLevelAssignments(const QString& script,
         if (kSkip.contains(name))
             continue;
 
+        // The six boundary names as a list; the GUI shows them in the Boundaries group, not the grid.
+        if (name == QLatin1String("Boundaries") && rhs.startsWith(QLatin1Char('['))
+            && rhs.endsWith(QLatin1Char(']'))) {
+            (*outMap)[name] = rhs;
+            continue;
+        }
+
         QVariant v;
         if (!parsePyLiteral(rhs, &v))
             continue; // skip expressions, function calls, dict refs, lists, etc.

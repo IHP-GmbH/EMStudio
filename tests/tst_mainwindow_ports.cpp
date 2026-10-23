@@ -1848,6 +1848,41 @@ void MainWindowPortsTest::saveAction_keepsIndentedSweepModel()
     QVERIFY2(compiles(&err), qPrintable(err + QLatin1Char('\n') + rewritten));
 }
 
+/*!*******************************************************************************************************************
+ * \brief A loose openEMS model with a top-level `Boundaries = [...]` list shows those boundaries (not PEC) and
+ *        keeps the line unchanged on Save.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::load_topLevelBoundariesList()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString model = dir.filePath(QStringLiteral("loose_bnd.py"));
+    const QByteArray original =
+        "from gds2openEMS import *\n"
+        "from openEMS import openEMS\n"
+        "margin = 100\n"
+        "# choices for boundary: 'PEC', 'PMC', 'MUR', 'PML_8'\n"
+        "Boundaries = ['PML_8', 'PML_8', 'PML_8', 'PML_8', 'PML_8', 'PML_8']\n"
+        "FDTD = openEMS()\n"
+        "FDTD.SetBoundaryCond( Boundaries )\n";
+    {
+        QFile f(model);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(original);
+    }
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QVERIFY(w.loadPythonModel(model));
+    QCOMPARE(w.testCurrentSimToolKey(), QStringLiteral("openems"));
+    const QString pml = QStringLiteral("PML_8");
+    QCOMPARE(w.testBoundaries(), (QStringList{pml, pml, pml, pml, pml, pml}));
+
+    w.testTriggerSave();
+    QFile f(model);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    QCOMPARE(f.readAll(), original);
+}
+
 namespace {
 /*! Copies the converter test fixture (loose openEMS model + stand-in modules) into \a dir. */
 QString copyLooseFixture(const QTemporaryDir &dir, const QByteArray &append = QByteArray())

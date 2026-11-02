@@ -47,6 +47,14 @@ struct DerivedLayer {
     QString sizeValue;          // for SIZE
 };
 
+/*! Thinnest dielectric of a resolved stackup: a gap between two non-dielectric layers (below, above),
+ *  or a Dielectric / dielectric-material layer (below = its name, above empty). thicknessUm < 0: none. */
+struct ThinDielectric {
+    double  thicknessUm = -1.0;
+    QString below;
+    QString above;
+};
+
 struct ThermalTablePoint {
     QString temperatureRaw;
     QString valueRaw;
@@ -105,6 +113,9 @@ public:
     QList<StackupVariable>          overridableVariables() const;
 
     QString                         computeMinimumSchemaVersion() const;
+
+    /*! Thinnest dielectric in µm, after resolve(). */
+    ThinDielectric                  thinnestDielectric() const;
 
 private:
     bool                            resolveVariables(const QHash<QString, QVariant> &overrides,

@@ -286,3 +286,72 @@ void SubstrateTest::resolve_dielectricReferencesApplySubstrateOffset()
     }
     QCOMPARE(found, 2);
 }
+
+/*!*******************************************************************************************************************
+ * \brief thinnestDielectric finds the gap between two metals (gds2palace: MIM 0.0243 µm above Metal5) and the
+ *        thickness of a layer made of a dielectric material (openEMS: MIM_DK, 0.1 µm); a via spanning the gap
+ *        doesn't close it.
+ **********************************************************************************************************************/
+void SubstrateTest::thinnestDielectric_findsMetalGapAndDielectricLayer()
+{
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto write = [&](const QString &name, const QString &layers) {
+        const QString path = dir.filePath(name);
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Text))
+            return QString();
+        QTextStream(&f)
+            << "<Stackup schemaVersion=\"3.0\">\n"
+            << "  <Materials>\n"
+            << "    <Material Name=\"Ox\" Type=\"Dielectric\" Color=\"ffffff\"/>\n"
+            << "    <Material Name=\"Met\" Type=\"Conductor\" Color=\"ff0000\"/>\n"
+            << "  </Materials>\n"
+            << "  <ELayers LengthUnit=\"um\">\n"
+            << "    <Dielectrics>\n"
+            << "      <Dielectric Name=\"Oxide\" Material=\"Ox\" Thickness=\"10\" />\n"
+            << "    </Dielectrics>\n"
+            << "    <Layers>\n"
+            << layers
+            << "    </Layers>\n"
+            << "  </ELayers>\n"
+            << "</Stackup>\n";
+        return path;
+    };
+
+    // gds2palace style: the MIM 0.0243 µm above Metal5, TopVia1 from Metal5 past the MIM to TopMetal1
+    const QString palace = write(QStringLiteral("palace.xml"),
+        QStringLiteral("      <Layer Name=\"Metal5\" Type=\"conductor\" Material=\"Met\" Layer=\"67\" "
+                       "Zmin=\"4.1\" Zmax=\"4.59\" />\n"
+                       "      <Layer Name=\"MIM\" Type=\"conductor\" Material=\"Met\" Layer=\"36\" "
+                       "Reference=\"Metal5\" ReferenceEdge=\"Top\" Zmin=\"0.0243\" Zmax=\"0.174\" />\n"
+                       "      <Layer Name=\"TopVia1\" Type=\"via\" Material=\"Met\" Layer=\"125\" "
+                       "Zmin=\"4.59\" Zmax=\"5.44\" />\n"
+                       "      <Layer Name=\"TopMetal1\" Type=\"conductor\" Material=\"Met\" Layer=\"126\" "
+                       "Zmin=\"5.44\" Zmax=\"7.44\" />\n"));
+    QVERIFY(!palace.isEmpty());
+    Substrate sub;
+    QVERIFY(sub.parseXmlFile(palace));
+    QString err;
+    QVERIFY2(sub.resolve({}, &err), qPrintable(err));
+    ThinDielectric thin = sub.thinnestDielectric();
+    QVERIFY(qAbs(thin.thicknessUm - 0.0243) < 1e-9);
+    QCOMPARE(thin.below, QStringLiteral("Metal5"));
+    QCOMPARE(thin.above, QStringLiteral("MIM"));
+
+    // openEMS style: a 0.1 µm MIM_DK layer of dielectric material between Metal5 and the MIM
+    const QString openems = write(QStringLiteral("openems.xml"),
+        QStringLiteral("      <Layer Name=\"Metal5\" Type=\"conductor\" Material=\"Met\" Layer=\"67\" "
+                       "Zmin=\"4.1\" Zmax=\"5.58\" />\n"
+                       "      <Layer Name=\"MIM_DK\" Type=\"conductor\" Material=\"Ox\" Layer=\"36\" "
+                       "Zmin=\"5.58\" Zmax=\"5.68\" />\n"
+                       "      <Layer Name=\"MIM\" Type=\"conductor\" Material=\"Met\" Layer=\"36\" "
+                       "Zmin=\"5.68\" Zmax=\"6.43\" />\n"));
+    QVERIFY(!openems.isEmpty());
+    Substrate sub2;
+    QVERIFY(sub2.parseXmlFile(openems));
+    QVERIFY2(sub2.resolve({}, &err), qPrintable(err));
+    thin = sub2.thinnestDielectric();
+    QVERIFY(qAbs(thin.thicknessUm - 0.1) < 1e-9);
+    QVERIFY(thin.below == QLatin1String("MIM_DK") || thin.above == QLatin1String("MIM"));
+}

@@ -419,6 +419,7 @@ private:
     void                            importPortsFromEditor();
     void                            hookPortCombo(QComboBox* box);
     void                            drawSubstrate(const QString &filePath);
+    QString                         openEmsThinDielectricWarning(const Substrate &substrate) const;
 
     void                            applyTopCellFromModel(const QString& cellName);
 
@@ -923,6 +924,7 @@ private:
 
     bool                            m_headless = false;
     QString                         m_simulationLogPath;
+    QString                         m_thinDielectricNoted;      // last Log note of drawSubstrate, not repeated
     bool                            m_blockPortChanges;
     bool                            m_blockPortSelectSync = false;
 

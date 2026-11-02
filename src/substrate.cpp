@@ -723,6 +723,65 @@ void Substrate::setLengthUnit(const QString &u) { m_lengthUnit = u; }
 const QString &Substrate::description() const { return m_description; }
 void Substrate::setDescription(const QString &d) { m_description = d; }
 
+/*!*******************************************************************************************************************
+ * \brief Finds the thinnest dielectric of the resolved stackup: the smallest vertical gap between two layers that
+ *        aren't dielectric (filled by the background dielectric, e.g. Metal5 → MIM in gds2palace stackups), or the
+ *        thinnest Dielectric or layer of a dielectric material (e.g. MIM_DK in openEMS stackups).
+ *        Layers that touch or overlap in z leave no gap. Call after resolve().
+ * \return Thickness in µm (LengthUnit nm / mm / m converted) and the layer names; thicknessUm < 0 when there is none.
+ **********************************************************************************************************************/
+ThinDielectric Substrate::thinnestDielectric() const
+{
+    double toUm = 1.0;
+    const QString unit = m_lengthUnit.trimmed().toLower();
+    if (unit == QLatin1String("nm"))
+        toUm = 1e-3;
+    else if (unit == QLatin1String("mm"))
+        toUm = 1e3;
+    else if (unit == QLatin1String("m"))
+        toUm = 1e6;
+
+    QSet<QString> dielectricMaterials;
+    for (const Material &mat : m_materials) {
+        if (mat.type().compare(QLatin1String("Dielectric"), Qt::CaseInsensitive) == 0)
+            dielectricMaterials.insert(mat.name());
+    }
+
+    ThinDielectric thinnest;
+    auto consider = [&](double thickness, const QString &below, const QString &above) {
+        if (thickness <= 1e-9)
+            return;
+        if (thinnest.thicknessUm < 0.0 || thickness * toUm < thinnest.thicknessUm) {
+            thinnest.thicknessUm = thickness * toUm;
+            thinnest.below = below;
+            thinnest.above = above;
+        }
+    };
+
+    for (const Dielectric &d : m_dielectrics)
+        consider(d.thickness(), d.name(), QString());
+
+    QList<const Layer *> solid;
+    for (const Layer &lay : m_layers) {
+        if (dielectricMaterials.contains(lay.material()))
+            consider(lay.zmax() - lay.zmin(), lay.name(), QString());
+        else
+            solid << &lay;
+    }
+
+    for (const Layer *lower : solid) {
+        const Layer *next = nullptr;
+        for (const Layer *upper : solid) {
+            if (upper->zmin() > lower->zmax() + 1e-9 && (!next || upper->zmin() < next->zmin()))
+                next = upper;
+        }
+        // a layer spanning the gap (e.g. TopVia1 past the MIM) doesn't close it: it lies elsewhere in the layout
+        if (next)
+            consider(next->zmin() - lower->zmax(), lower->name(), next->name());
+    }
+    return thinnest;
+}
+
 QList<StackupVariable> Substrate::overridableVariables() const
 {
     QList<StackupVariable> out;

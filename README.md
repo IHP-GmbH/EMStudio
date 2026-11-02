@@ -353,6 +353,8 @@ Before leaving any tab, save your changes using File > Save or Ctrl+S
 
 The substrate tab is where you select the XML stackup file to be used for simulation. EMStudio shows a **2.5D stack cross-section** next to a **GDS layout top-view**. Click a metal, via, or dielectric in either pane to highlight the matching layer in the other (cross-reference). Unmapped GDS layers such as port markers are still shown. The same stackup also prepares the Ports configuration tab using layer names from the XML.
 
+openEMS needs its own stackups (from the openEMS workflow, not gds2palace's): a very thin dielectric forces a tiny FDTD time step, so openEMS stackups model the MIM dielectric as a 0.1 µm layer of equivalent permittivity, while gds2palace stackups keep the real 0.0243 µm oxide between Metal5 and the MIM. For an OpenEMS model, EMStudio therefore notes in the Log, and warns before Run, when the stackup has a dielectric thinner than 0.1 µm (a gap between two metal or via layers, a Dielectric, or a layer of dielectric material): it may be a Palace stackup. SG13CMOS5L stackups have no MIM, so there the two kinds can't be told apart this way.
+
 ### Layout preview: 2D / 3D / Field
 
 Floating controls on the layout preview (top-right):

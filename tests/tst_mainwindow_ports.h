@@ -37,6 +37,7 @@ private slots:
     void addSetting_menuAndOldModels();
     void settingsGrid_tooltipsCombineModelAndKeywordFile();
     void collectSanityFindings_reportsMissingInputs();
+    void openemsStackupWithThinDielectric_warns();
     void layoutPreview_withGoldenGds_populatesLayerPanel();
     void loadPythonModel_buildsLayoutPreviewOnce();
     void gdsCache_rereadsChangedFile();

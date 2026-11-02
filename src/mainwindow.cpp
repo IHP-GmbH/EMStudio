@@ -4699,6 +4699,11 @@ void MainWindow::drawSubstrate(const QString &filePath)
 
     refreshStackupOverridesUi(substrate);
 
+    const QString thinNote = openEmsThinDielectricWarning(substrate);
+    if (!thinNote.isEmpty() && thinNote != m_thinDielectricNoted)
+        info(thinNote, false);
+    m_thinDielectricNoted = thinNote;
+
     if (m_ui->substrateView) {
         m_ui->substrateView->setSubstrate(substrate);
         m_ui->substrateView->update();
@@ -4708,6 +4713,29 @@ void MainWindow::drawSubstrate(const QString &filePath)
 
     rebuildLayerMapping();
     refreshLayoutPreview();
+}
+
+/*!*******************************************************************************************************************
+ * \brief For an openEMS model: a warning when the stackup has a dielectric thinner than 0.1 µm. gds2palace stackups
+ *        have one (the oxide between Metal5 and the MIM, 0.0243 µm in SG13G2); openEMS stackups model it as a
+ *        0.1 µm layer of equivalent permittivity, because a thin layer forces a tiny FDTD time step.
+ * \param substrate The resolved stackup.
+ * \return The warning text, or an empty string (other tools, no thin dielectric).
+ **********************************************************************************************************************/
+QString MainWindow::openEmsThinDielectricWarning(const Substrate &substrate) const
+{
+    if (currentSimToolKey().toLower() != QLatin1String("openems"))
+        return QString();
+
+    const ThinDielectric thin = substrate.thinnestDielectric();
+    if (thin.thicknessUm < 0.0 || thin.thicknessUm >= 0.1 - 1e-6)    // openEMS MIM_DK: 0.1 µm, as 0.0999999...
+        return QString();
+
+    const QString where = thin.above.isEmpty() ? thin.below
+                                               : tr("between %1 and %2").arg(thin.below, thin.above);
+    return tr("The stackup has a %1 µm dielectric (%2). This may be a Palace stackup: openEMS stackups model thin "
+              "dielectrics thicker with an equivalent permittivity, because a thin layer forces a tiny FDTD time step.")
+        .arg(QString::number(thin.thicknessUm, 'g', 4), where);
 }
 
 void MainWindow::on_btnEditStackup_clicked()
@@ -5878,6 +5906,18 @@ QVector<SanityFinding> MainWindow::collectSanityFindings() const
         f.code = QStringLiteral("substrate_not_found");
         f.message = tr("Substrate XML does not exist:\n%1").arg(subPath);
         out.append(f);
+    } else if (simKey == QLatin1String("openems")) {
+        Substrate substrate;
+        if (substrate.parseXmlFile(subPath) && substrate.resolve(currentStackupOverrides())) {
+            const QString thin = openEmsThinDielectricWarning(substrate);
+            if (!thin.isEmpty()) {
+                SanityFinding f;
+                f.severity = SanityFinding::Warning;
+                f.code = QStringLiteral("stackup_thin_dielectric");
+                f.message = thin;
+                out.append(f);
+            }
+        }
     }
 
     // GDS layer numbers present in file (layer only, ignore datatype for matching)

@@ -2277,8 +2277,9 @@ bool MainWindow::parseFieldChoices(const QByteArray &json)
 /*!*******************************************************************************************************************
  * \brief Re-lists field dumps for the current run via \c field_io.py (same discovery as the 3D viewer).
  *
- * Cheap: \c field_io.py only globs and reads XML headers. Leaves the list empty
- * (legacy \c findFieldDumpPath fallback) when the tool, Python or script is missing.
+ * Starts asynchronously so the Fields page never blocks the UI thread on a cold
+ * Python start. Leaves the list empty (legacy \c findFieldDumpPath fallback) when
+ * the tool, Python or script is missing.
  **********************************************************************************************************************/
 void MainWindow::refreshFieldChoices()
 {
@@ -2298,22 +2299,68 @@ void MainWindow::refreshFieldChoices()
         parseFieldChoices(QByteArrayLiteral("{\"files\":[]}"));
         return;
     }
-    QProcess proc;
-    proc.setProcessChannelMode(QProcess::SeparateChannels);
-    proc.start(python, {script, QStringLiteral("--list"),
-                        QStringLiteral("--run-path"), runDir,
-                        QStringLiteral("--source"), source});
-    if (!proc.waitForFinished(15000) || proc.exitCode() != 0
-        || !parseFieldChoices(proc.readAllStandardOutput())) {
-        proc.kill();
-        fieldLog(QByteArray("\n[Field] Listing field dumps failed:\n  ")
-                              + proc.readAllStandardError().trimmed().right(600) + "\n", true);
+    if (!m_fieldChoicesProcess) {
+        m_fieldChoicesProcess = new QProcess(this);
+        connect(m_fieldChoicesProcess,
+                QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+                this, &MainWindow::onFieldChoicesListFinished);
+    }
+    // Supersede an in-flight list without blocking the UI (same pattern as field export).
+    if (m_fieldChoicesProcess->state() != QProcess::NotRunning) {
+        m_fieldChoicesRestartPending = true;
+        m_fieldChoicesProcess->kill();
+        return;
+    }
+    m_fieldChoicesRestartPending = false;
+    m_fieldChoicesProcess->setProperty("fieldChoicesKey", m_fieldChoicesKey);
+    m_fieldChoicesProcess->setProcessChannelMode(QProcess::SeparateChannels);
+    m_fieldChoicesProcess->setProgram(python);
+    m_fieldChoicesProcess->setArguments({script, QStringLiteral("--list"),
+                                         QStringLiteral("--run-path"), runDir,
+                                         QStringLiteral("--source"), source});
+    m_fieldChoicesProcess->start();
+    if (!m_fieldChoicesProcess->waitForStarted(1500)) {
+        fieldLog(QByteArray("\n[Field] Failed to start field_io.py listing:\n  ")
+                              + python.toUtf8() + "\n", true);
+        parseFieldChoices(QByteArrayLiteral("{\"files\":[]}"));
+    }
+#endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief Slot: async \c field_io.py --list finished — fill the Field picker.
+ **********************************************************************************************************************/
+void MainWindow::onFieldChoicesListFinished(int exitCode, QProcess::ExitStatus status)
+{
+    if (m_fieldChoicesRestartPending) {
+        m_fieldChoicesRestartPending = false;
+        refreshFieldChoices();
+        return;
+    }
+    if (!m_fieldChoicesProcess)
+        return;
+    const QString key = m_fieldChoicesProcess->property("fieldChoicesKey").toString();
+    if (key != m_fieldChoicesKey)
+        return;
+
+    const QByteArray out = m_fieldChoicesProcess->readAllStandardOutput();
+    const QByteArray err = m_fieldChoicesProcess->readAllStandardError();
+    if (status != QProcess::NormalExit || exitCode != 0 || !parseFieldChoices(out)) {
+        if (status != QProcess::CrashExit) {
+            fieldLog(QByteArray("\n[Field] Listing field dumps failed:\n  ")
+                                  + err.trimmed().right(600) + "\n", true);
+        }
         parseFieldChoices(QByteArrayLiteral("{\"files\":[]}"));
         return;
     }
+    const QString source = fieldSourceId();
+    const QString runDir = fieldRunDirectory();
     fieldLog(QStringLiteral("\n[Field] %1 result choice(s) for %2 under:\n  %3\n")
                               .arg(m_fieldChoices.size()).arg(source, runDir).toUtf8());
-#endif
+    // Listing can change the selected dump vs. the findFieldDumpPath fallback used
+    // for the immediate first paint — refresh once the picker is authoritative.
+    if (m_ui && m_ui->layoutView && m_ui->layoutView->isFieldMode())
+        scheduleFieldOverlayRefresh(false);
 }
 
 const MainWindow::FieldChoice *MainWindow::currentFieldChoice() const
@@ -2467,6 +2514,8 @@ void MainWindow::onLayoutFieldModeChanged(bool on)
                                              view->layoutOpacity());
     }
     if (!on) {
+        if (m_fieldSliceDebounce)
+            m_fieldSliceDebounce->stop();
         m_fieldDumpSearchDir.clear();
         stopFieldVolumeServe();
         if (m_ui && m_ui->layoutView)
@@ -2476,10 +2525,14 @@ void MainWindow::onLayoutFieldModeChanged(bool on)
     if (m_ui && m_ui->layoutView)
         m_ui->layoutView->setFieldProbeThermal(isElmerThermalKey(currentSimToolKey()));
     m_fieldPreferAutoZ = true;
+    // List dumps in the background (never block the UI on a cold Python start).
     refreshFieldChoices();
-    // Prefer disk cache when re-entering Field — force re-export freezes the UI
-    // (kill+waitForFinished + Python VTU load) and is rarely needed.
-    scheduleFieldOverlayRefresh(false);
+    // Paint immediately from disk cache / findFieldDumpPath — do not wait for the
+    // 250 ms Z-slider debounce or for field_io --list to finish.
+    QTimer::singleShot(0, this, [this]() {
+        if (m_ui && m_ui->layoutView && m_ui->layoutView->isFieldMode())
+            refreshFieldOverlay(false);
+    });
 }
 
 /*!*******************************************************************************************************************

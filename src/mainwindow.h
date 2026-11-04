@@ -520,6 +520,7 @@ private:
     QString                         fieldSourceId() const;
     QString                         fieldRunDirectory() const;
     void                            refreshFieldChoices();
+    void                            onFieldChoicesListFinished(int exitCode, QProcess::ExitStatus status);
     bool                            parseFieldChoices(const QByteArray &json);
     const FieldChoice              *currentFieldChoice() const;
     QString                         currentFieldDumpPath(int *cycleOut = nullptr) const;
@@ -913,6 +914,8 @@ private:
     int                             m_fieldChoiceIndex = 0;
     QString                         m_fieldChoicesKey;     //!< runDir|source of m_fieldChoices
     int                             m_fieldLastCycle = 1;
+    QProcess                       *m_fieldChoicesProcess = nullptr; //!< Async field_io.py --list
+    bool                            m_fieldChoicesRestartPending = false;
     QProcess                       *m_fieldExportProcess = nullptr;
     QProcess                       *m_fieldVolumeViewerProcess = nullptr;
     QPointer<QFrame>                m_fieldVolumeViewerSplash;

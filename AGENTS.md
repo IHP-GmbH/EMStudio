@@ -298,6 +298,10 @@ without a settings dict, `canConvertLooseModel`). The work is done by
 
 `on_btnRun_clicked()` → sanity check dialog (`collectSanityFindings`,
 sanitycheck.cpp) → `runOpenEMS()` or `runPalace()`. Both save first.
+For openEMS, `stackup_thin_dielectric` warns when `Substrate::thinnestDielectric()` (resolved stackup: smallest
+gap between two non-dielectric layers, or a dielectric layer) is below 0.1 µm, with a 1e-6 tolerance because openEMS
+stackups' 0.1 µm `MIM_DK` resolves to 0.0999999…; gds2palace stackups have 0.0243 µm (Metal5 → MIM).
+`openEmsThinDielectricWarning` builds the text; `drawSubstrate` also writes it to the Log once per change.
 
 - **openEMS**: runs the model with preference `Python Path` in `RunDir` (default:
   the script's folder). Output streams into the Simulate log.

@@ -14,6 +14,7 @@
 #include <QAction>
 #include <QRegularExpression>
 #include <QTemporaryDir>
+#include <QTextStream>
 #include <QGraphicsView>
 #include <QKeyEvent>
 #include <QListWidget>
@@ -865,6 +866,72 @@ void MainWindowPortsTest::collectSanityFindings_reportsMissingInputs()
         // Path exercised; findings depend on whether GDS layers loaded into the window.
         Q_UNUSED(findings);
     }
+}
+
+/*!*******************************************************************************************************************
+ * \brief An openEMS model with a gds2palace stackup (0.0243 µm oxide between Metal5 and the MIM) gets a Log note
+ *        and a Run check warning; an openEMS stackup (0.1 µm MIM_DK) and Palace models get neither.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::openemsStackupWithThinDielectric_warns()
+{
+    const QString palaceXml = QFINDTESTDATA("golden/SG13G2_200um.xml");
+    QVERIFY(!palaceXml.isEmpty());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString openemsXml = dir.filePath(QStringLiteral("openems.xml"));
+    {
+        QFile f(openemsXml);
+        QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream(&f)
+            << "<Stackup schemaVersion=\"3.0\">\n"
+            << "  <Materials>\n"
+            << "    <Material Name=\"Ox\" Type=\"Dielectric\" Permittivity=\"4.1\" Color=\"ffffff\"/>\n"
+            << "    <Material Name=\"MIM_equiv\" Type=\"Dielectric\" Permittivity=\"16.87\" Color=\"ff0000\"/>\n"
+            << "    <Material Name=\"Met\" Type=\"Conductor\" Conductivity=\"2e7\" Color=\"ff0000\"/>\n"
+            << "  </Materials>\n"
+            << "  <ELayers LengthUnit=\"um\">\n"
+            << "    <Dielectrics>\n"
+            << "      <Dielectric Name=\"Oxide\" Material=\"Ox\" Thickness=\"10\" />\n"
+            << "    </Dielectrics>\n"
+            << "    <Layers>\n"
+            << "      <Layer Name=\"Metal5\" Type=\"conductor\" Material=\"Met\" Layer=\"67\" "
+               "Zmin=\"4.1\" Zmax=\"5.58\" />\n"
+            << "      <Layer Name=\"MIM_DK\" Type=\"conductor\" Material=\"MIM_equiv\" Layer=\"36\" "
+               "Zmin=\"5.58\" Zmax=\"5.68\" />\n"
+            << "      <Layer Name=\"MIM\" Type=\"conductor\" Material=\"Met\" Layer=\"36\" "
+               "Zmin=\"5.68\" Zmax=\"6.43\" />\n"
+            << "    </Layers>\n"
+            << "  </ELayers>\n"
+            << "</Stackup>\n";
+    }
+
+    auto hasThinFinding = [](MainWindow &w) {
+        for (const SanityFinding &f : w.testCollectSanityFindings()) {
+            if (f.code == QLatin1String("stackup_thin_dielectric"))
+                return true;
+        }
+        return false;
+    };
+
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("openems"), &err), qPrintable(err));
+
+    w.setSubstrateFile(palaceXml);
+    QVERIFY(hasThinFinding(w));
+    QVERIFY(w.testMainLogText().contains(QStringLiteral("0.0243 µm dielectric (between Metal5 and MIM)")));
+    QCOMPARE(w.testMainLogText().count(QStringLiteral("may be a Palace stackup")), 1);
+
+    w.setSubstrateFile(openemsXml);         // 0.1 µm, also as 0.0999999... from 5.68 - 5.58
+    QVERIFY(!hasThinFinding(w));
+
+    w.setSubstrateFile(palaceXml);          // a stackup change brings the note back
+    QCOMPARE(w.testMainLogText().count(QStringLiteral("may be a Palace stackup")), 2);
+
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QVERIFY(!hasThinFinding(w));
 }
 
 /*!*******************************************************************************************************************

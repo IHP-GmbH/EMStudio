@@ -22,6 +22,7 @@ private slots:
     void parseMissingFile_fails();
     void resolve_dielectricAndLayerReferences();
     void resolve_dielectricReferencesApplySubstrateOffset();
+    void thinnestDielectric_findsMetalGapAndDielectricLayer();
 };
 
 #endif // TST_SUBSTRATE_H

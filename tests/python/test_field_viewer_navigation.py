@@ -87,6 +87,23 @@ def test_setupem_wheel_zooms(window):
     assert dist1 < dist0
 
 
+def test_orbit_pivot_shifts_without_changing_view_direction(window):
+    cam = window.plotter.camera
+    pos0 = np.array(cam.position, dtype=float)
+    focal0 = np.array(cam.focal_point, dtype=float)
+    view0 = focal0 - pos0
+    pivot = focal0 + np.array([1.5, -0.7, 0.3])
+    window._set_orbit_pivot(pivot)
+    pos1 = np.array(cam.position, dtype=float)
+    focal1 = np.array(cam.focal_point, dtype=float)
+    assert focal1 == pytest.approx(pivot)
+    assert (focal1 - pos1) == pytest.approx(view0)
+    # Key C restores the mesh-centre pivot (view direction unchanged again).
+    center = np.array(window._full_mesh.center, dtype=float)
+    QApplication.sendEvent(window.plotter, QKeyEvent(QEvent.KeyPress, Qt.Key_C, Qt.NoModifier, "c"))
+    assert np.array(cam.focal_point, dtype=float) == pytest.approx(center)
+
+
 def test_keys_drive_view_and_vtk_keys_are_swallowed(window):
     # X: camera on +X, parallel projection on
     QApplication.sendEvent(window.plotter, QKeyEvent(QEvent.KeyPress, Qt.Key_X, Qt.NoModifier, "x"))

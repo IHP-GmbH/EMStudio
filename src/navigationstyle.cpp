@@ -175,14 +175,15 @@ QVector<BindingRow> bindingTable(NavStyle style)
          << BindingRow{field, tr("Probe the value"), tr("Left click (Probe on)")};
 
     // 3D field viewer (PyVista)
-    rows << BindingRow{viewer, tr("Orbit"),
+    rows << BindingRow{viewer, tr("Orbit (pivots on the surface under the cursor)"),
                        vtk ? tr("Left drag") : tr("Left drag · Right drag · Ctrl+left drag · wheel / trackpad scroll")};
     if (vtk)
         rows << BindingRow{viewer, tr("Roll around the view axis"), tr("Ctrl+left drag")};
-    rows << BindingRow{viewer, tr("Zoom"), vtk ? tr("Wheel · Right drag") : tr("Ctrl+wheel")}
+    rows << BindingRow{viewer, tr("Zoom toward the focus"), vtk ? tr("Wheel · Right drag") : tr("Ctrl+wheel")}
          << BindingRow{viewer, tr("Pan"), tr("Middle drag · Shift/Alt+left drag")}
          << BindingRow{viewer, tr("Copy view (menu)"), tr("Right click")}
          << BindingRow{viewer, tr("Reset camera"), QStringLiteral("R · F · Home")}
+         << BindingRow{viewer, tr("Re-centre orbit on the mesh"), QStringLiteral("C")}
          << BindingRow{viewer, tr("Isometric view"), QStringLiteral("I")}
          << BindingRow{viewer, tr("View from +X / +Y / +Z (Shift: negative side)"), QStringLiteral("X · Y · Z")}
          << BindingRow{viewer, tr("Zoom in / out"), QStringLiteral("+ · −")}

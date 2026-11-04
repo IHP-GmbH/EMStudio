@@ -40,10 +40,13 @@ Navigation (--nav-style, EMStudio Setup -> Key Bindings):
     emstudio  As the EMStudio Layout 3D view: left or right drag and wheel /
               trackpad scroll orbit, Ctrl+wheel zoom, middle / Shift+left /
               Alt+left pan.
-Keys (plot focused): R/F/Home reset camera, I isometric, X/Y/Z axis views
-(Shift: negative side), +/- zoom, arrows pan, O parallel projection,
-M find max., A arrows, P probe, PgUp/PgDn clip plane, Ctrl+C copy. VTK's own
-letter keys (w, s, 3, q, e, ...) are disabled.
+Orbit pivots on the surface under the cursor (else the mesh centre) so rotation
+stays around the figure. Wheel zoom uses the same step curve as the Layout view
+and dollies toward the focal point (parallel: scale; perspective: camera move).
+Keys (plot focused): R/F/Home reset camera, C re-centre orbit on the mesh,
+I isometric, X/Y/Z axis views (Shift: negative side), +/- zoom, arrows pan,
+O parallel projection, M find max., A arrows, P probe, PgUp/PgDn clip plane,
+Ctrl+C copy. VTK's own letter keys (w, s, 3, q, e, ...) are disabled.
 
 Value markers: with Probe on, a left click without drag picks the rendered
 surface (any angle; clipped solid, cut face or 2D plane) and adds a numbered
@@ -952,6 +955,70 @@ class FieldViewerWindow(QDialog):
                 return Qt.LeftButton, Qt.NoModifier  # orbit
         return button, mods
 
+    def _is_orbit_press(self, button, mods):
+        """True when this press starts an orbit drag (not pan / roll / zoom-drag)."""
+        mapped, mapped_mods = self._mapped_press(button, mods)
+        return mapped == Qt.LeftButton and mapped_mods == Qt.NoModifier
+
+    def _set_orbit_pivot(self, world_point):
+        """Move the orbit centre without changing what is on screen.
+
+        VTK's trackball orbits around the camera focal point. Shifting position
+        and focal by the same delta keeps the view; the next drag then rotates
+        around *world_point* (surface under the cursor or the mesh centre).
+        """
+        cam = self.plotter.camera
+        pivot = np.asarray(world_point, dtype=float)
+        pos = np.asarray(cam.position, dtype=float)
+        focal = np.asarray(cam.focal_point, dtype=float)
+        delta = pivot - focal
+        if float(np.linalg.norm(delta)) < 1e-15:
+            return
+        cam.focal_point = tuple(focal + delta)
+        cam.position = tuple(pos + delta)
+
+    def _pivot_orbit_at(self, widget_pos):
+        """Orbit around the pick under the cursor, else the mesh centre."""
+        hit = self._pick_at(widget_pos)
+        if hit is not None:
+            self._set_orbit_pivot(hit[0])
+        elif self._full_mesh is not None:
+            self._set_orbit_pivot(self._full_mesh.center)
+
+    def _recenter_orbit_on_mesh(self):
+        """Key C: put the orbit pivot back on the mesh centre."""
+        if self._full_mesh is None:
+            return
+        self._set_orbit_pivot(self._full_mesh.center)
+        self.plotter.reset_camera_clipping_range()
+        self.plotter.render()
+
+    def _zoom_camera(self, factor):
+        """Zoom toward the focal point. *factor* > 1 zooms in."""
+        if factor <= 0.0 or abs(factor - 1.0) < 1e-9:
+            return
+        cam = self.plotter.camera
+        if cam.parallel_projection:
+            cam.parallel_scale = max(float(cam.parallel_scale) / factor, 1e-12)
+        else:
+            pos = np.asarray(cam.position, dtype=float)
+            focal = np.asarray(cam.focal_point, dtype=float)
+            cam.position = tuple(focal + (pos - focal) / factor)
+        self.plotter.reset_camera_clipping_range()
+        self.plotter.render()
+
+    def _zoom_by_wheel(self, event):
+        """Layout-matched wheel zoom (notch and trackpad pixel deltas)."""
+        pixel = event.pixelDelta()
+        angle = event.angleDelta()
+        if angle.y() != 0:
+            factor = 1.15 ** (angle.y() / 120.0)
+        elif not pixel.isNull() and pixel.y() != 0:
+            factor = 1.0035 ** float(pixel.y())
+        else:
+            return
+        self._zoom_camera(factor)
+
     def eventFilter(self, obj, event):
         if obj is not getattr(self, "plotter", None):
             return super().eventFilter(obj, event)
@@ -963,6 +1030,8 @@ class FieldViewerWindow(QDialog):
             self._left_press_pos = (event.position().toPoint()
                                     if event.button() == Qt.LeftButton and mods == Qt.NoModifier
                                     else None)
+            if self._is_orbit_press(event.button(), mods):
+                self._pivot_orbit_at(event.position().toPoint())
             button, new_mods = self._mapped_press(event.button(), mods)
             if (button, new_mods) != (event.button(), mods):
                 self.plotter.mousePressEvent(QMouseEvent(
@@ -985,9 +1054,14 @@ class FieldViewerWindow(QDialog):
             if start is not None and (pos - start).manhattanLength() < _CLICK_SLOP_PX:
                 QTimer.singleShot(0, lambda p=pos: self._show_plotter_context_menu(p))
             return True
-        if etype == QEvent.Wheel and self.nav_style == "emstudio" \
-                and not event.modifiers() & Qt.ControlModifier:
-            self._orbit_by_wheel(event)
+        if etype == QEvent.Wheel:
+            mods = event.modifiers()
+            # emstudio: plain scroll orbits (Layout 3D); Ctrl+scroll zooms.
+            if self.nav_style == "emstudio" and not (mods & Qt.ControlModifier):
+                self._orbit_by_wheel(event)
+                return True
+            # setupem wheel, or emstudio Ctrl+wheel → zoom toward the focal point.
+            self._zoom_by_wheel(event)
             return True
         if etype == QEvent.KeyPress:
             self._handle_key(event)
@@ -1043,6 +1117,10 @@ class FieldViewerWindow(QDialog):
 
     def _reset_view_camera(self):
         self.plotter.reset_camera()
+        if self._full_mesh is not None:
+            # reset_camera can leave the focal off-centre on clipped / thin meshes.
+            self._set_orbit_pivot(self._full_mesh.center)
+        self.plotter.reset_camera_clipping_range()
         self.plotter.render()
 
     def _handle_key(self, event):
@@ -1058,15 +1136,15 @@ class FieldViewerWindow(QDialog):
             return True
         if shift and key not in (Qt.Key_Plus,):
             return False
-        cam = self.plotter.camera
         actions = {
             Qt.Key_R: self._reset_view_camera,
             Qt.Key_F: self._reset_view_camera,
             Qt.Key_Home: self._reset_view_camera,
+            Qt.Key_C: self._recenter_orbit_on_mesh,
             Qt.Key_I: lambda: (self.plotter.view_isometric(), self.plotter.render()),
-            Qt.Key_Plus: lambda: (cam.Zoom(1.15), self.plotter.render()),
-            Qt.Key_Equal: lambda: (cam.Zoom(1.15), self.plotter.render()),
-            Qt.Key_Minus: lambda: (cam.Zoom(1.0 / 1.15), self.plotter.render()),
+            Qt.Key_Plus: lambda: self._zoom_camera(1.15),
+            Qt.Key_Equal: lambda: self._zoom_camera(1.15),
+            Qt.Key_Minus: lambda: self._zoom_camera(1.0 / 1.15),
             Qt.Key_Left: lambda: self._pan_camera(-0.2, 0.0),
             Qt.Key_Right: lambda: self._pan_camera(0.2, 0.0),
             Qt.Key_Up: lambda: self._pan_camera(0.0, 0.2),

@@ -248,6 +248,12 @@ class FieldViewerWindow(QDialog):
     def __init__(self, file_paths, source, off_screen=False, icon_path=None, nav_style="setupem"):
         super().__init__()
         self.setAttribute(Qt.WA_DeleteOnClose)
+        # QDialog is a Qt.Dialog on Windows: only Close in the title bar.
+        # Qt.Window + min/max hints give the usual — □ × decorations.
+        self.setWindowFlags(
+            (self.windowFlags() | Qt.Window
+             | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
+            & ~Qt.WindowContextHelpButtonHint)
         self.nav_style = nav_style if nav_style in NAV_STYLES else "setupem"
         self._right_press_pos = None
         self._left_press_pos = None

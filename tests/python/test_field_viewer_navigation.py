@@ -55,6 +55,12 @@ def _wheel(win, dy, mods=Qt.NoModifier):
     QApplication.sendEvent(win.plotter, ev)
 
 
+def test_window_has_minimize_and_maximize_buttons(window):
+    flags = window.windowFlags()
+    assert flags & Qt.WindowMinimizeButtonHint
+    assert flags & Qt.WindowMaximizeButtonHint
+
+
 def test_press_mapping_per_style(window):
     window.set_nav_style("emstudio")
     assert window._mapped_press(Qt.RightButton, Qt.NoModifier) == (Qt.LeftButton, Qt.NoModifier)

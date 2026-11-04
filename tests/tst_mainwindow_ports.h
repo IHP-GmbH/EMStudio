@@ -21,6 +21,7 @@ private slots:
     void boundaryOptions_updateOnToolChange_withoutCrash();
     void saveAction_writesScriptToFile_and_updatesState();
     void saveAction_keepsEditedTextSettings();
+    void resultsDirectory_openemsIgnoresPalaceFolder();
     void loadModel_dropsPreviousModelSettings();
     void migrateFilledMetals_rewritesOrDrops();
     void loadModel_showsFilledMetalsAsConductorModel();

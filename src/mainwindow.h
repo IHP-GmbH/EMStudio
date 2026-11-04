@@ -202,6 +202,7 @@ public:
     QString                         testSimulationLogText() const;
     bool                            testIsSimulationRunning() const;
     void                            testSetRunPythonScriptPath(const QString& path);
+    QString                         testResolveResultsDirectory() const { return resolveResultsDirectory(); }
     void                            testRunOpenems(bool interactive = false);
     void                            testRunPalace(bool interactive = false);
     void                            testRunHeadless(const QString& simKeyLower);

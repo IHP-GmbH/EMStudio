@@ -672,6 +672,33 @@ void MainWindowPortsTest::saveAction_writesScriptToFile_and_updatesState()
 }
 
 /*!*******************************************************************************************************************
+ * \brief The Results folder of an OpenEMS model is output/<model>_data, also when a Palace run of a model with the
+ *        same name left palace_model/<model>_data next to it; a Palace model still uses palace_model.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::resultsDirectory_openemsIgnoresPalaceFolder()
+{
+    MainWindow w;
+    w.setAttribute(Qt::WA_DontShowOnScreen, true);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+    QVERIFY(root.mkpath(QStringLiteral("palace_model/model_data")));
+    w.testSetRunPythonScriptLinePath(root.filePath(QStringLiteral("model.py")));
+
+    QString err;
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("openems"), &err), qPrintable(err));
+    QCOMPARE(w.testResolveResultsDirectory(), QDir::cleanPath(root.absolutePath()));    // no run yet
+    QVERIFY(root.mkpath(QStringLiteral("output/model_data")));
+    QCOMPARE(w.testResolveResultsDirectory(),
+             QDir::cleanPath(root.filePath(QStringLiteral("output/model_data"))));
+
+    QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &err), qPrintable(err));
+    QCOMPARE(w.testResolveResultsDirectory(),
+             QDir::cleanPath(root.filePath(QStringLiteral("palace_model/model_data"))));
+}
+
+/*!*******************************************************************************************************************
  * \brief Text cells of the Simulation Settings grid (fdump list, other lists, quoted strings)
  *        must survive Save: they used to be skipped when writing the script and then
  *        reverted by the re-parse that Save does.

@@ -2065,6 +2065,8 @@ QString MainWindow::resolveResultsDirectory() const
     // Prefer an existing results root near the Python model:
     // 1) palace_model/<base>_data under the model directory
     // 2) the model directory itself (OpenEMS often writes .sNp nearby)
+    // OpenEMS models never use palace_model / elmer_model: a Palace run of a model with the same name
+    // would hide their results.
     const QString script = currentPythonScriptPath();
     if (script.isEmpty())
         return {};
@@ -2072,6 +2074,17 @@ QString MainWindow::resolveResultsDirectory() const
     const QFileInfo fi(script);
     const QDir modelDir(fi.absolutePath());
     const QString base = fi.completeBaseName();
+
+    if (currentSimToolKey() == QLatin1String("openems")) {
+        // gds2openEMS writes output/<base>_data next to the script (utilities.create_sim_path)
+        const QString openemsData = modelDir.filePath(QStringLiteral("output/%1_data").arg(base));
+        if (QDir(openemsData).exists())
+            return QDir::cleanPath(openemsData);
+        const QString out = modelDir.filePath(QStringLiteral("output"));
+        if (QDir(out).exists())
+            return QDir::cleanPath(out);
+        return QDir::cleanPath(modelDir.absolutePath());
+    }
 
     const QString palaceData = modelDir.filePath(
         QStringLiteral("palace_model/%1_data").arg(base));

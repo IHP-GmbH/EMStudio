@@ -37,6 +37,7 @@
 #include "tst_gdslayout.h"
 #include "tst_substrate_view.h"
 #include "tst_tips.h"
+#include "tst_simcfg_import.h"
 
 namespace
 {
@@ -158,6 +159,7 @@ int main(int argc, char **argv)
         ADD_TEST(MainWindowPortsTest),
         ADD_TEST(PythonEditorTest),
         ADD_TEST(PalaceGolden),
+        ADD_TEST(SimcfgImportTest),
         ADD_TEST(OpenemsGolden),
         ADD_TEST(ElmerTest),
         ADD_TEST(TouchstoneTest),

@@ -93,6 +93,7 @@ several files by topic. Add a method to the file whose topic it belongs to:
 | convertloosemodel.cpp | File → Convert to Settings Dictionary: runs `scripts/convert_loose_to_settings.py`, confirmation dialog, verified backup, replace, reload |
 | sidebysidediff.cpp | `SideBySideDiff`: original and changed Python side by side for that dialog. Rows come aligned from the converter's report (`rows`: line per side, 0 = filler); synced scrolling, syntax highlighting, line-number gutter, Previous/Next change. `changeShown` (original lines of the shown change) selects the variables assigned there in the dialog's table; a table row calls `goToLeftLine` |
 | headless.cpp | `runHeadless()` for `-run -palace/-openems` |
+| simcfgimport.cpp | File → Import setupEM Config: `SimcfgImport::read()` (no GUI: JSON → files, settings as Python literals with GHz → Hz, ports) and `importSimcfg(path, simKey)`: new Palace or OpenEMS model from the template (`askSimcfgImportTool` when `simKey` is empty; test builds use `testSetSimcfgImportTool`; `SimcfgImport::settingsFor` picks the settings per tool), or, when `<name>.py` exists next to the .simcfg, silent update of its ports, layout file, stackup, cell and purpose only. `saveModelAs()` for `-save` |
 | gdsreader.cpp / xmlreader.cpp | GDS cells, top cells and layers in one pass over the file read into memory (`readGdsFileInfo`; `updateGdsUserInfo` caches it per `gdsFileKey`: path, size, SHA-1 of contents — not mtime, so same-size rewrites on FAT/network FS are seen); stackup layer names for the port combos |
 | tips.cpp | Load `keywords/<tool>.csv` (description, topic, default) and `workflow_signatures.csv`; merge with `# @brief` tips from the model |
 | wslHelper.cpp | Path conversion and existence checks that work across Windows and WSL. The Simulation Tool combo (`refreshSimToolOptions` → `rebuildSimToolCombo`) checks WSL tool paths with one asynchronous `wsl.exe -- bash -s` call (`startWslToolProbe`, results in `m_wslExecChecks`): a cold WSL start can exceed any short timeout. Until it answers, those tools are listed provisionally; a check WSL doesn't answer (60 s) is reported as such, never as "not executable" |
@@ -326,6 +327,12 @@ stackups' 0.1 µm `MIM_DK` resolves to 0.0999999…; gds2palace stackups have 0.
   its saved log; File → New clears the log (`clearSimulationLog(false)`).
 - Headless: `EMStudio -run -palace|-openems model.py` (main.cpp → `runHeadless`)
   exits with a non-zero code on failure.
+- `.simcfg` import (setupEM / klayout_em_export settings file): `EMStudio x.simcfg [-palace|-openems]` imports at start (the
+  recent-model auto-load is skipped then), `EMStudio x.simcfg -save x.py` converts without a window. Settings go
+  through `writeSettingValueToScript` / `insertSettingIntoScript`, unchanged values are not rewritten
+  (`sameSettingValue`), ports through the Ports table. Tests: `SimcfgImportTest`, goldens
+  `tests/golden/tst_palace_from_simcfg.py` and `tst_openems_from_simcfg.py` (also run by
+  `tests/python/test_golden_scripts.py`).
 
 ### 3.4 Other UI components
 

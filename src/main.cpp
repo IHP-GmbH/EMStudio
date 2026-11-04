@@ -155,16 +155,20 @@ void preferXcbOnWayland()
  **********************************************************************************************************************/
 void printHelp()
 {
-    qDebug() << "Usage: EMStudio [options] [model.py]";
+    qDebug() << "Usage: EMStudio [options] [model.py | settings.simcfg]";
     qDebug() << "\nOptions:";
     qDebug() << "  -h, --help            Show this help message";
     qDebug() << "  -gdsfile <path>       Specify path to GDS file";
     qDebug() << "  -topcell <name>       Specify name of the top cell in the GDS file";
     qDebug() << "  -run                  Run simulation headless (no GUI)";
-    qDebug() << "  -palace               Select Palace backend (with -run)";
-    qDebug() << "  -openems              Select OpenEMS backend (with -run)";
+    qDebug() << "  -palace               Select Palace backend (with -run; with a .simcfg: new model for Palace)";
+    qDebug() << "  -openems              Select OpenEMS backend (with -run; with a .simcfg: new model for OpenEMS)";
+    qDebug() << "  -save <model.py>      With a .simcfg: write the imported model there and exit (no GUI;";
+    qDebug() << "                        Palace unless -openems is given)";
     qDebug() << "\nArguments:";
     qDebug() << "  model.py              Python model to load (optional, but usually needed)";
+    qDebug() << "  settings.simcfg       setupEM settings to import as a Palace or OpenEMS model; if <name>.py exists";
+    qDebug() << "                        next to it, only its ports, layout file, stackup and cell are updated";
 }
 
 /*!*******************************************************************************************************************
@@ -209,6 +213,8 @@ int main(int argc, char *argv[])
     QString gdsFile;
     QString topCell;
     QString pythonFile;
+    QString simcfgFile;
+    QString savePath;
 
     bool headlessRun = false;
     QString runTool;
@@ -230,8 +236,12 @@ int main(int argc, char *argv[])
             runTool = "palace";
         } else if (arg == "-openems") {
             runTool = "openems";
+        } else if (arg == "-save" && i + 1 < args.size()) {
+            savePath = args[++i];
         } else if (arg.endsWith(".py", Qt::CaseInsensitive)) {
             pythonFile = arg;
+        } else if (arg.endsWith(".simcfg", Qt::CaseInsensitive)) {
+            simcfgFile = arg;
         } else {
             qWarning() << "Unknown or malformed argument:" << arg;
             printHelp();
@@ -247,10 +257,17 @@ int main(int argc, char *argv[])
         }
     }
 
+    if (!savePath.isEmpty() && simcfgFile.isEmpty()) {
+        qWarning() << "-save needs a .simcfg file to import";
+        printHelp();
+        return 1;
+    }
+    const bool convertOnly = !savePath.isEmpty();
+
     QScopedPointer<QSplashScreen> splash;
     QElapsedTimer splashClock;
     constexpr int kSplashMinMs = 1000;
-    if (!headlessRun) {
+    if (!headlessRun && !convertOnly) {
         QPixmap pixmap(":/logo");
         QPixmap scaledPixmap = pixmap.scaled(
             pixmap.width() / 3,
@@ -281,6 +298,19 @@ int main(int argc, char *argv[])
     if (!topCell.isEmpty())
         w.setTopCell(topCell);
 
+    if (!simcfgFile.isEmpty()) {
+        // -palace / -openems choose the new model's tool; without them the GUI asks, -save takes Palace
+        const QString tool = !runTool.isEmpty() ? runTool : (convertOnly ? QStringLiteral("palace") : QString());
+        const bool imported = w.importSimcfg(simcfgFile, tool);
+        if (convertOnly) {
+            const bool saved = imported && w.saveModelAs(savePath);
+            if (!saved)
+                qWarning().noquote() << "Import of" << simcfgFile << "to" << savePath << "failed:\n"
+                                     << w.mainLogText();
+            return saved ? 0 : 1;
+        }
+    }
+
     if (headlessRun) {
         QTimer::singleShot(0, &w, [&w, runTool]() {
             w.runHeadless(runTool);
@@ -289,7 +319,8 @@ int main(int argc, char *argv[])
     }
 
     // Heavy session restore / layout preview under the splash (not after it closes).
-    w.tryAutoLoadRecentPythonForTopCell();
+    if (simcfgFile.isEmpty())       // an imported .simcfg must not be replaced by a recent model of that cell
+        w.tryAutoLoadRecentPythonForTopCell();
     if (splash)
         a.processEvents();
 

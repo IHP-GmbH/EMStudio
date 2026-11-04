@@ -337,6 +337,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupSettingsPanel();
     setupGlobalShortcuts();
     setupNewModelMenu();
+    setupSimcfgImportAction();
     applyNavigationStyle();
     applyLayoutPreviewPreferences();
 

@@ -29,6 +29,7 @@ set(TEST_SOURCES
     tst_palace_golden.cpp
     tst_elmer.cpp
     tst_touchstone.cpp
+    tst_simcfg_import.cpp
     tst_smithchart.cpp
     tst_stackupexpr.cpp
     tst_exprparser.cpp

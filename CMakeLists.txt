@@ -167,6 +167,7 @@ set(SOURCES
     src/verification.cpp
     src/xmlreader.cpp
     src/touchstone.cpp
+    src/simcfgimport.cpp
     src/smithchartwidget.cpp
     src/assistantchatpanel.cpp
     src/assistantmcp.cpp
@@ -224,6 +225,7 @@ set(HEADERS
     src/stackupexpr.h
     src/stackupeditor.h
     src/touchstone.h
+    src/simcfgimport.h
     src/smithchartwidget.h
     src/assistantchatpanel.h
     src/assistantmcp.h

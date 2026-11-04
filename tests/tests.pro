@@ -21,6 +21,7 @@ SOURCES += \
     tst_palace_golden.cpp \
     tst_elmer.cpp \
     tst_touchstone.cpp \
+    tst_simcfg_import.cpp \
     tst_smithchart.cpp \
     tst_stackupexpr.cpp \
     tst_exprparser.cpp \
@@ -50,6 +51,7 @@ HEADERS += \
     tst_palace_golden.h \
     tst_elmer.h \
     tst_touchstone.h \
+    tst_simcfg_import.h \
     tst_smithchart.h \
     tst_stackupexpr.h \
     tst_exprparser.h \

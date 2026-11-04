@@ -62,6 +62,7 @@ SOURCES += \
     $$TOP/src/verification.cpp \
     $$TOP/src/xmlreader.cpp \
     $$TOP/src/touchstone.cpp \
+    $$TOP/src/simcfgimport.cpp \
     $$TOP/src/smithchartwidget.cpp \
     $$TOP/src/assistantchatpanel.cpp \
     $$TOP/src/assistantmcp.cpp \
@@ -118,6 +119,7 @@ HEADERS += \
     $$TOP/src/stackupexpr.h \
     $$TOP/src/stackupeditor.h \
     $$TOP/src/touchstone.h \
+    $$TOP/src/simcfgimport.h \
     $$TOP/src/smithchartwidget.h \
     $$TOP/src/assistantchatpanel.h \
     $$TOP/src/assistantmcp.h \

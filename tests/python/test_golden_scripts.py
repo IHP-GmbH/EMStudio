@@ -85,6 +85,21 @@ def test_palace_golden_runs(tmp_path):
     only(calls, "create_run_script")
 
 
+def test_palace_from_simcfg_golden_runs(tmp_path):
+    # File > Import setupEM Config: the imported ports and settings reach gds2palace.
+    proc, calls = run_golden(tmp_path, "tst_palace_from_simcfg.py")
+    assert proc.returncode == 0, proc.stderr
+
+    gds = only(calls, "read_gds")
+    assert gds["cellname"] == "t1"
+    assert {201, 202} <= set(gds["layerlist"]), "port layers not read from the GDS"
+    palace = only(calls, "create_palace")
+    assert palace["excite_ports"] == [1, 2]
+    assert "order" in palace["settings_keys"], "a setting the template lacks was not inserted"
+    missing = required_keywords("palace") - set(palace["settings_keys"])
+    assert not missing, f"settings without required keys: {sorted(missing)}"
+
+
 def test_openems_golden_runs(tmp_path):
     # Inject one port: the stock golden has an empty Ports table, so the excitation loop
     # would never call setupSimulation / runSimulation otherwise.
@@ -104,6 +119,21 @@ def test_openems_golden_runs(tmp_path):
     only(calls, "setupSimulation")
     only(calls, "runSimulation")
     assert only(calls, "openEMS")["EndCriteria"] is not None
+
+
+def test_openems_from_simcfg_golden_runs(tmp_path):
+    # File > Import setupEM Config as an OpenEMS model: the imported ports and frequencies reach gds2openEMS.
+    proc, calls = run_golden(tmp_path, "tst_openems_from_simcfg.py")
+    assert proc.returncode == 0, proc.stderr
+
+    gds = only(calls, "read_gds")
+    assert gds["cellname"] == "t1"
+    assert {201, 202} <= set(gds["layerlist"]), "port layers not read from the GDS"
+    # setupEM's 0..50 GHz in 1 GHz steps became numfreq = 51
+    assert only(calls, "write_snp")["numfreq"] == 51
+    # one excitation per imported port
+    setups = [c["args"] for c in calls if c["call"] == "setupSimulation"]
+    assert [s["excite_portnumbers"] for s in setups] == [[1], [2]]
 
 
 def test_openems_rejects_unknown_init_kwarg(tmp_path):

@@ -249,11 +249,14 @@ class FieldViewerWindow(QDialog):
         super().__init__()
         self.setAttribute(Qt.WA_DeleteOnClose)
         # QDialog is a Qt.Dialog on Windows: only Close in the title bar.
-        # Qt.Window + min/max hints give the usual — □ × decorations.
+        # A normal Window needs an explicit Close hint too, or × stays greyed out.
         self.setWindowFlags(
-            (self.windowFlags() | Qt.Window
-             | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
-            & ~Qt.WindowContextHelpButtonHint)
+            Qt.Window
+            | Qt.WindowTitleHint
+            | Qt.WindowSystemMenuHint
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+            | Qt.WindowCloseButtonHint)
         self.nav_style = nav_style if nav_style in NAV_STYLES else "setupem"
         self._right_press_pos = None
         self._left_press_pos = None

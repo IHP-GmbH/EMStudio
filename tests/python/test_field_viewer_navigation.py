@@ -55,10 +55,11 @@ def _wheel(win, dy, mods=Qt.NoModifier):
     QApplication.sendEvent(win.plotter, ev)
 
 
-def test_window_has_minimize_and_maximize_buttons(window):
+def test_window_has_minimize_maximize_and_close_buttons(window):
     flags = window.windowFlags()
     assert flags & Qt.WindowMinimizeButtonHint
     assert flags & Qt.WindowMaximizeButtonHint
+    assert flags & Qt.WindowCloseButtonHint
 
 
 def test_press_mapping_per_style(window):

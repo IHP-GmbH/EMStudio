@@ -6202,6 +6202,7 @@ void MainWindow::setGdsFile(const QString &filePath)
         QSignalBlocker b(m_ui->txtGdsFile);
         m_ui->txtGdsFile->setText(filePath);
     }
+    setLineEditPalette(m_ui->txtGdsFile, filePath);     // the blocked textChanged would have set the color
 
     updateGdsUserInfo();
 

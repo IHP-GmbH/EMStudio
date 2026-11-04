@@ -73,6 +73,7 @@ private:
         ProbeKind kind = ProbeKind::ExeVersion;
         QString program;
         QString module;
+        QStringList fallbackPrograms;   // PythonModule: interpreters tried in turn when the module isn't found
         bool viaWsl = false;
         bool skipProbe = false;
         LatestKind latestKind = LatestKind::None;

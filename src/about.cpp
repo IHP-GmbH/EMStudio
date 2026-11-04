@@ -410,24 +410,24 @@ void AboutDialog::buildToolRows()
             tr("Probed via: %1").arg(QDir::toNativeSeparators(gdsPy)));
     }
 
-    QString snpPy;
-    for (const QString &cand : {openemsPy, elmerPy, fieldPy, palacePy}) {
-        if (!cand.isEmpty() && !looksLinuxPath(cand)) {
-            snpPy = cand;
-            break;
+    // snp2le: the interpreters Model Fit tries (ResultsViewer::hostPythonCandidates), the first with snp2le is shown.
+    // Windows: native interpreters before WSL-style paths.
+    QStringList snpPys;
+    for (const bool linuxPaths : {false, true}) {
+        for (const QString &cand : {palacePy, elmerPy, openemsPy}) {
+            if (!cand.isEmpty() && looksLinuxPath(cand) == linuxPaths && !snpPys.contains(cand))
+                snpPys << cand;
         }
     }
-    if (snpPy.isEmpty()) {
-        for (const QString &cand : {openemsPy, elmerPy, fieldPy, palacePy}) {
-            if (!cand.isEmpty()) {
-                snpPy = cand;
-                break;
-            }
-        }
+    for (const QString &exe : {QStringLiteral("python3"), QStringLiteral("python")}) {
+        const QString path = QStandardPaths::findExecutable(exe);
+        if (!path.isEmpty() && !snpPys.contains(path))
+            snpPys << path;
     }
-    if (snpPy.isEmpty()) {
+    if (snpPys.isEmpty()) {
         addStaticRow(QStringLiteral("snp2le"), QStringLiteral("no Python configured"));
     } else {
+        const QString snpPy = snpPys.takeFirst();
         addProbeRow(QStringLiteral("snp2le"),
                     ProbeKind::PythonModule,
                     snpPy,
@@ -435,6 +435,7 @@ void AboutDialog::buildToolRows()
                     probeViaWsl(snpPy),
                     LatestKind::Pypi,
                     QStringLiteral("snp2le"));
+        m_tools.last().fallbackPrograms = snpPys;
         m_tools.last().valueLabel->setToolTip(
             tr("Probed via: %1").arg(QDir::toNativeSeparators(snpPy)));
     }
@@ -735,6 +736,21 @@ void AboutDialog::onProbeFinished(int exitCode, QProcess::ExitStatus exitStatus)
     ToolRow &row = m_tools[m_probeIndex];
     const QString parsed = extractVersion(row.name, raw);
     const bool ok = (exitStatus == QProcess::NormalExit && exitCode == 0);
+
+    // A module that can't be imported has no version: the traceback would otherwise be read as one
+    // (e.g. "3.14" from a python3.14 path). Try the next interpreter, if any.
+    if (row.kind == ProbeKind::PythonModule && !ok) {
+        if (!row.fallbackPrograms.isEmpty()) {
+            row.program = row.fallbackPrograms.takeFirst();
+            row.viaWsl = probeViaWsl(row.program);
+            row.valueLabel->setToolTip(tr("Probed via: %1").arg(QDir::toNativeSeparators(row.program)));
+            --m_probeIndex;                     // run the same row again
+            runNextProbe();
+            return;
+        }
+        finishCurrent(QStringLiteral("not installed"));
+        return;
+    }
 
     if (!parsed.isEmpty()
         && (ok || row.kind == ProbeKind::ExeVersion || row.kind == ProbeKind::PythonVersion

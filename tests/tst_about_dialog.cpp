@@ -13,6 +13,7 @@
 #include <QMap>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QTemporaryDir>
 #include <QVariant>
 
 #include "about.h"
@@ -224,5 +225,59 @@ void AboutDialogTest::linuxProbe_liveGds2palace_matchesGolden()
         QFAIL(qPrintable(QString("live gds2palace mismatch:\n%1\nfull status:\n%2")
                              .arg(diffText(expected, actual), status)));
     }
+#endif
+}
+
+/*!*******************************************************************************************************************
+ * \brief The snp2le row shows the first interpreter that can import snp2le, as Model Fit uses it. A failed import is
+ *        never read as a version (the traceback's python3.14 paths were shown as "3.14"); without any: "not installed".
+ **********************************************************************************************************************/
+void AboutDialogTest::linuxProbe_snp2leTriesNextPython()
+{
+#ifndef Q_OS_LINUX
+    QSKIP("Uses shell scripts as stand-in Pythons");
+#else
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto writePython = [&](const QString &name, const QString &moduleAnswer) {
+        const QString path = dir.filePath(name);
+        QFile f(path);
+        if (!f.open(QIODevice::WriteOnly))
+            return QString();
+        f.write(QStringLiteral("#!/bin/sh\n"
+                               "if [ \"$1\" = \"--version\" ]; then echo 'Python 3.12.0'; exit 0; fi\n"
+                               "%1\n").arg(moduleAnswer).toUtf8());
+        f.close();
+        f.setPermissions(f.permissions() | QFileDevice::ExeOwner);
+        return path;
+    };
+    const QString without = writePython(QStringLiteral("without_snp2le"),
+        QStringLiteral("echo 'File \"/venv/lib/python3.14/importlib/__init__.py\", line 88' >&2; "
+                       "echo \"ModuleNotFoundError: No module named 'snp2le'\" >&2; exit 1"));
+    const QString with = writePython(QStringLiteral("with_snp2le"), QStringLiteral("echo 9.8.7"));
+    QVERIFY(!without.isEmpty() && !with.isEmpty());
+
+    auto snp2leLine = [](const QMap<QString, QVariant> &prefs) {
+        AboutDialog dlg(prefs);
+        if (!dlg.testWaitForProbesIdle(60000))
+            return QStringLiteral("(probes did not finish)");
+        for (const QString &line : dlg.testToolsStatusReport().split(QLatin1Char('\n')))
+            if (line.startsWith(QStringLiteral("snp2le\t")))
+                return stripLatestNoise(line.trimmed());
+        return QStringLiteral("(no snp2le row)");
+    };
+
+    QMap<QString, QVariant> prefs;
+    prefs.insert(QStringLiteral("PALACE_PYTHON"), without);
+    prefs.insert(QStringLiteral("ELMER_PYTHON"), with);
+    QCOMPARE(snp2leLine(prefs), QStringLiteral("snp2le\t9.8.7"));
+
+    // No interpreter with snp2le (python3 on PATH may have it, so keep PATH out of this case).
+    const QByteArray path = qgetenv("PATH");
+    qputenv("PATH", QByteArray());
+    prefs.insert(QStringLiteral("ELMER_PYTHON"), without);
+    const QString line = snp2leLine(prefs);
+    qputenv("PATH", path);
+    QCOMPARE(line, QStringLiteral("snp2le\tnot installed"));
 #endif
 }

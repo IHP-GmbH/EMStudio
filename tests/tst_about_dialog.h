@@ -24,6 +24,7 @@ private slots:
     void linuxProbe_viaWslContract_matchesGolden();
     void linuxProbe_toolPlan_matchesGolden();
     void linuxProbe_liveGds2palace_matchesGolden();
+    void linuxProbe_snp2leTriesNextPython();
 };
 
 #endif // TST_ABOUT_DIALOG_H

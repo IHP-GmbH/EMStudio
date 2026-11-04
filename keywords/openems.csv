@@ -17,6 +17,7 @@ cells_per_wavelength	Coarse mesh cells per wavelength, must be 10 or more	Mesh s
 max_cellsize	Maximum mesh cell size in project units; only used when cells_per_wavelength is not set	Mesh size and accuracy
 energy_limit	End criterion: residual energy (dB) at which the FDTD run is converged	Solver (openEMS)		yes
 numThreads	Force the openEMS thread count, 0 = automatic	Solver (openEMS)	0
+engine	openEMS engine: '' = default (multithreaded CPU), 'gpu' = GPU engine. The GPU engine needs openEMS built from source after v0.37.0 and gds2openEMS 0.6.4 or newer; without it openEMS runs on the CPU, with a warning	Solver (openEMS)	None
 margin	Oversize of dielectric layers relative to the drawn geometry, in project units	Simulation boundary		yes
 Boundaries	Boundary at xmin,xmax,ymin,ymax,zmin,zmax: 'PEC', 'PMC', 'MUR' or 'PML_8'	Simulation boundary		yes
 air_around	Extra air around the model in addition to margin, single value or list of 6	Simulation boundary	0

@@ -73,6 +73,7 @@ settings['Boundaries'] = ['PEC', 'PEC', 'PEC', 'PEC', 'PEC', 'PEC']
 
 settings['cells_per_wavelength'] = 20   # how many mesh cells per wavelength, must be 10 or more
 settings['energy_limit'] = -40          # end criteria for residual energy (dB), default is -40
+settings['engine'] = ''                 # openEMS engine: '' = default (multithreaded CPU), 'gpu' = GPU engine (needs openEMS built from source after v0.37.0)
 
 # port configuration, port geometry is read from GDSII file on the specified layer
 simulation_ports = simulation_setup.all_simulation_ports()

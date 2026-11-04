@@ -129,6 +129,8 @@ EC-FDTD electromagnetic solver.
 - Documentation: https://docs.openems.de/
 - Source code & build instructions: https://github.com/thliebig/openEMS-Project
 
+**Running openEMS on the GPU:** set the model setting `engine` (topic "Solver (openEMS)") to `gpu`. Empty, or not in the model, openEMS uses its default multithreaded CPU engine. The GPU engine is not in an openEMS release yet (v0.37.0 doesn't have it): openEMS has to be built from its current source code, and the model needs gds2openEMS 0.6.4 or newer. An openEMS without the GPU engine ignores the setting and runs on the CPU; gds2openEMS warns about that in the simulation log. Set **OpenEMS Python Path** to the Python of the GPU build.
+
 ### Palace
 
 Parallel finite-element electromagnetic solver.

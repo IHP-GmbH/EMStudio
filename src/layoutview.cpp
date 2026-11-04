@@ -2831,8 +2831,19 @@ void LayoutView::keyPressEvent(QKeyEvent *event)
         clearMeasure();
         clearFieldProbe();
         m_measureArmed = false;
+        m_spaceDown = false;
         viewport()->setCursor(Qt::ArrowCursor);
         emit highlightCleared();
+        event->accept();
+        return;
+    }
+    // Photoshop-style pan: hold Space, then left-drag (cursor shows the hand).
+    if (event->key() == Qt::Key_Space
+        && (event->modifiers() & ~Qt::KeypadModifier) == Qt::NoModifier
+        && !event->isAutoRepeat()) {
+        m_spaceDown = true;
+        if (!m_panning && !m_orbiting && !m_dollying)
+            viewport()->setCursor(Qt::OpenHandCursor);
         event->accept();
         return;
     }
@@ -2841,6 +2852,21 @@ void LayoutView::keyPressEvent(QKeyEvent *event)
         return;
     }
     QGraphicsView::keyPressEvent(event);
+}
+
+/*!*******************************************************************************************************************
+ * \brief Ends Space-held pan arming when the key is released.
+ **********************************************************************************************************************/
+void LayoutView::keyReleaseEvent(QKeyEvent *event)
+{
+    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+        m_spaceDown = false;
+        if (!m_panning && !m_orbiting && !m_dollying)
+            viewport()->setCursor(Qt::ArrowCursor);
+        event->accept();
+        return;
+    }
+    QGraphicsView::keyReleaseEvent(event);
 }
 
 /*!*******************************************************************************************************************
@@ -3184,9 +3210,11 @@ void LayoutView::mousePressEvent(QMouseEvent *event)
         return;
     }
 
-    // Middle, Shift+left or Alt+left: pan.
+    // Middle, Space+left (Photoshop), Shift+left or Alt+left: pan.
     if (event->button() == Qt::MiddleButton
-        || (left && (mods == Qt::ShiftModifier || mods == Qt::AltModifier))) {
+        || (left && (m_spaceDown
+                     || mods == Qt::ShiftModifier
+                     || mods == Qt::AltModifier))) {
         beginDrag(&m_panning, Qt::ClosedHandCursor);
         return;
     }

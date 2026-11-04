@@ -318,6 +318,7 @@ protected:
     void                        wheelEvent(QWheelEvent *event) override;
     bool                        viewportEvent(QEvent *event) override;
     void                        keyPressEvent(QKeyEvent *event) override;
+    void                        keyReleaseEvent(QKeyEvent *event) override;
     void                        resizeEvent(QResizeEvent *event) override;
     void                        mousePressEvent(QMouseEvent *event) override;
     void                        mouseMoveEvent(QMouseEvent *event) override;
@@ -493,6 +494,7 @@ private:
     bool                        m_leftPressPending = false; //!< Left down; select on release if not dragged
     bool                        m_dollying = false;         //!< Right drag zoom (setupEM style)
     bool                        m_measureArmed = false;     //!< M pressed: left clicks measure
+    bool                        m_spaceDown = false;        //!< Space held: left drag pans (Photoshop)
     NavStyle                    m_navStyle = NavStyle::EMStudio;
     class QTimer               *m_fieldZKeyTimer = nullptr; //!< Debounce PgUp/PgDn slice export
     QPoint                      m_panLast;

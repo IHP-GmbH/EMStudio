@@ -65,6 +65,11 @@ def test_press_mapping_per_style(window):
     assert window._mapped_press(Qt.RightButton, Qt.NoModifier) == (Qt.RightButton, Qt.NoModifier)
     assert window._mapped_press(Qt.LeftButton, Qt.ControlModifier) == (Qt.LeftButton, Qt.ControlModifier)
     assert window._mapped_press(Qt.LeftButton, Qt.AltModifier) == (Qt.MiddleButton, Qt.NoModifier)
+    # Photoshop: Space+left pans (middle-button mapping)
+    window._space_down = True
+    assert window._mapped_press(Qt.LeftButton, Qt.NoModifier) == (Qt.MiddleButton, Qt.NoModifier)
+    assert not window._is_orbit_press(Qt.LeftButton, Qt.NoModifier)
+    window._space_down = False
     window.set_nav_style("bogus")
     assert window.nav_style == "setupem"
 

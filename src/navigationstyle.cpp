@@ -133,8 +133,8 @@ QVector<BindingRow> bindingTable(NavStyle style)
     rows << BindingRow{l2d, tr("Zoom under the cursor"),
                        vtk ? tr("Wheel · Ctrl+wheel · pinch") : tr("Mouse wheel · Ctrl+wheel · pinch")}
          << BindingRow{l2d, tr("Pan"),
-                       vtk ? tr("Left drag · Middle drag · Shift/Alt+left drag")
-                           : tr("Left drag · Middle drag · Shift/Alt+left drag · trackpad scroll")};
+                       vtk ? tr("Left drag · Space+left drag · Middle drag · Shift/Alt+left drag")
+                           : tr("Left drag · Space+left drag · Middle drag · Shift/Alt+left drag · trackpad scroll")};
     if (vtk)
         rows << BindingRow{l2d, tr("Zoom (drag up = in)"), tr("Right drag")};
     rows << BindingRow{l2d, tr("Select layer (click again: next layer below)"), tr("Left click")};
@@ -145,7 +145,7 @@ QVector<BindingRow> bindingTable(NavStyle style)
                            : tr("Left drag · Right drag · Ctrl+left drag · wheel / trackpad scroll")}
          << BindingRow{l3d, tr("Zoom under the cursor"), vtk ? tr("Wheel · Ctrl+wheel · pinch")
                                                              : tr("Ctrl+wheel · pinch")}
-         << BindingRow{l3d, tr("Pan"), tr("Middle drag · Shift/Alt+left drag")};
+         << BindingRow{l3d, tr("Pan"), tr("Space+left drag · Middle drag · Shift/Alt+left drag")};
     if (vtk)
         rows << BindingRow{l3d, tr("Zoom (drag up = in)"), tr("Right drag")};
     rows << BindingRow{l3d, tr("Select layer"), tr("Left click")}
@@ -180,7 +180,7 @@ QVector<BindingRow> bindingTable(NavStyle style)
     if (vtk)
         rows << BindingRow{viewer, tr("Roll around the view axis"), tr("Ctrl+left drag")};
     rows << BindingRow{viewer, tr("Zoom toward the focus"), vtk ? tr("Wheel · Right drag") : tr("Ctrl+wheel")}
-         << BindingRow{viewer, tr("Pan"), tr("Middle drag · Shift/Alt+left drag")}
+         << BindingRow{viewer, tr("Pan"), tr("Space+left drag · Middle drag · Shift/Alt+left drag")}
          << BindingRow{viewer, tr("Copy view (menu)"), tr("Right click")}
          << BindingRow{viewer, tr("Reset camera"), QStringLiteral("R · F · Home")}
          << BindingRow{viewer, tr("Re-centre orbit on the mesh"), QStringLiteral("C")}

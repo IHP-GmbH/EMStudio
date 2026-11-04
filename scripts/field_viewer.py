@@ -43,6 +43,7 @@ Navigation (--nav-style, EMStudio Setup -> Key Bindings):
 Orbit pivots on the surface under the cursor (else the mesh centre) so rotation
 stays around the figure. Wheel zoom uses the same step curve as the Layout view
 and dollies toward the focal point (parallel: scale; perspective: camera move).
+Pan: Space+left drag (Photoshop), middle drag, or Shift/Alt+left drag.
 Keys (plot focused): R/F/Home reset camera, C re-centre orbit on the mesh,
 I isometric, X/Y/Z axis views (Shift: negative side), +/- zoom, arrows pan,
 O parallel projection, M find max., A arrows, P probe, PgUp/PgDn clip plane,
@@ -250,6 +251,7 @@ class FieldViewerWindow(QDialog):
         self.nav_style = nav_style if nav_style in NAV_STYLES else "setupem"
         self._right_press_pos = None
         self._left_press_pos = None
+        self._space_down = False  # Photoshop-style Space+drag pan
         self._icon_path = icon_path
         if icon_path:
             self.setWindowIcon(QIcon(icon_path))
@@ -317,6 +319,23 @@ class FieldViewerWindow(QDialog):
         self._clear_busy_cursor()
         self.plotter.close()
         super().closeEvent(event)
+
+    def keyPressEvent(self, event):
+        # Space may land on the dialog (combo, checkbox, …); still arm Photoshop pan.
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            self._space_down = True
+            if hasattr(self, "plotter") and self.plotter is not None:
+                self.plotter.setFocus(Qt.OtherFocusReason)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            self._space_down = False
+            event.accept()
+            return
+        super().keyReleaseEvent(event)
 
     # ---------- UI construction ----------
 
@@ -948,8 +967,9 @@ class FieldViewerWindow(QDialog):
     def _mapped_press(self, button, mods):
         """(button, modifiers) VTK's trackball should see for a press."""
         left = button == Qt.LeftButton
-        if left and mods in (Qt.ShiftModifier, Qt.AltModifier):
-            return Qt.MiddleButton, Qt.NoModifier  # pan
+        # Pan: Space+left (Photoshop), Shift/Alt+left, or a real middle button.
+        if left and (self._space_down or mods in (Qt.ShiftModifier, Qt.AltModifier)):
+            return Qt.MiddleButton, Qt.NoModifier
         if self.nav_style == "emstudio":
             if button == Qt.RightButton or (left and mods == Qt.ControlModifier):
                 return Qt.LeftButton, Qt.NoModifier  # orbit
@@ -1027,8 +1047,11 @@ class FieldViewerWindow(QDialog):
             mods = event.modifiers() & ~Qt.KeypadModifier
             if event.button() == Qt.RightButton:
                 self._right_press_pos = event.position().toPoint()
+            # Probe only on a plain left click (not Space/Shift/Alt pan).
             self._left_press_pos = (event.position().toPoint()
-                                    if event.button() == Qt.LeftButton and mods == Qt.NoModifier
+                                    if (event.button() == Qt.LeftButton
+                                        and mods == Qt.NoModifier
+                                        and not self._space_down)
                                     else None)
             if self._is_orbit_press(event.button(), mods):
                 self._pivot_orbit_at(event.position().toPoint())
@@ -1064,9 +1087,14 @@ class FieldViewerWindow(QDialog):
             self._zoom_by_wheel(event)
             return True
         if etype == QEvent.KeyPress:
+            if event.key() == Qt.Key_Space:
+                self._space_down = True
+                return True
             self._handle_key(event)
             return True  # never reach VTK's own key bindings
         if etype == QEvent.KeyRelease:
+            if event.key() == Qt.Key_Space:
+                self._space_down = False
             return True
         return False
 

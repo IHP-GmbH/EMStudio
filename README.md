@@ -332,7 +332,7 @@ When you start from scratch, the settings grid is almost empty. Use **File > New
 ### Importing a setupEM config (.simcfg)
 
 **File > Import setupEM Config (.simcfg)...** turns a setupEM settings file into a Palace or OpenEMS model. The KLayout plug-in
-[klayout_em_export](https://github.com/volkermuehlhaus-claude/klayout_em_export) writes such a file with each export
+[klayout_em_export](https://github.com/VolkerMuehlhaus/klayout_em_export) writes such a file with each export
 (`<name>.gds`, `<name>.simcfg`), and setupEM saves one with its settings.
 
 - **First import:** EMStudio asks for which simulator (only when both Palace and OpenEMS are configured) and makes a

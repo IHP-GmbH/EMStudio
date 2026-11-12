@@ -6195,20 +6195,7 @@ bool MainWindow::adoptPortsTableIntoMarkup()
         return ok && m_gdsToSubName.contains(gds) ? m_gdsToSubName.value(gds) : text;
     };
 
-    auto shapeBoxes = [](const QVector<QPolygonF> &shapes) {
-        QStringList boxes;
-        for (const QPolygonF &s : shapes) {
-            const QRectF b = s.boundingRect();
-            boxes << QStringLiteral("%1,%2,%3,%4").arg(qRound64(b.left() * 1000)).arg(qRound64(b.top() * 1000))
-                         .arg(qRound64(b.right() * 1000)).arg(qRound64(b.bottom() * 1000));
-        }
-        boxes.sort();
-        return boxes;
-    };
-
-    const EmMarkup before = m_markup;
     EmMarkup updated = m_markup;
-    bool moved = false;
     for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
         bool ok = false;
         const int number = m_ui->tblPorts->item(r, 0) ? m_ui->tblPorts->item(r, 0)->text().trimmed().toInt(&ok) : 0;
@@ -6222,6 +6209,9 @@ bool MainWindow::adoptPortsTableIntoMarkup()
         if (layer < 0)
             continue;
 
+        // The markup wins: after an export its numbers follow the EM layout, not the source layout's layers.
+        if (updated.port(number))
+            continue;
         EmMarkupPort port;
         port.number = number;
         for (const GdsFlatPolygon &p : qAsConst(m_flatPolys))
@@ -6229,20 +6219,6 @@ bool MainWindow::adoptPortsTableIntoMarkup()
                 port.shapesUm << p.pointsUm;
         if (port.shapesUm.isEmpty())
             continue;
-        if (const EmMarkupPort *existing = updated.port(number)) {
-            if (shapeBoxes(existing->shapesUm) == shapeBoxes(port.shapesUm))
-                continue;
-            // Same number, other shapes: a port drawn in the markup, not this layout port. It moves aside.
-            const int free = freeMarkupPortNumber(updated);
-            if (free < 1)
-                continue;
-            for (EmMarkupPort &p : updated.ports)
-                if (p.number == number)
-                    p.number = free;
-            info(tr("Markup: P%1 drawn in the markup is now P%2; P%1 is the port on layer %3 of the layout.")
-                     .arg(number).arg(free).arg(layer));
-            moved = true;
-        }
         const auto *dirBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 6));
         port.direction = dirBox && !dirBox->currentText().trimmed().isEmpty()
                 ? dirBox->currentText().trimmed().toUpper() : QStringLiteral("Z");
@@ -6262,7 +6238,7 @@ bool MainWindow::adoptPortsTableIntoMarkup()
             port.z0 = z0;
         updated.ports << port;
     }
-    if (updated.ports.size() == m_markup.ports.size() && !moved)
+    if (updated.ports.size() == m_markup.ports.size())
         return false;
     std::sort(updated.ports.begin(), updated.ports.end(),
               [](const EmMarkupPort &a, const EmMarkupPort &b) { return a.number < b.number; });
@@ -6272,15 +6248,18 @@ bool MainWindow::adoptPortsTableIntoMarkup()
     }
     const int added = updated.ports.size() - m_markup.ports.size();
     applyMarkup(updated, true, tr("%n port(s) taken from the model's Ports table; not saved yet.", nullptr, added));
-    if (moved)
-        pushMarkupPortsToTable(before);   // the moved ports get rows of their own
     return true;
 }
 
 int MainWindow::freeMarkupPortNumber(const EmMarkup &markup) const
 {
+    // Layout shapes on 200+n would claim port n back as soon as the Ports table points at that layer.
+    QSet<int> layoutPortLayers;
+    for (const GdsFlatPolygon &p : qAsConst(m_flatPolys))
+        if (p.layer > 200 && p.layer <= EmMarkup::kLastPortLayer)
+            layoutPortLayers.insert(p.layer);
     for (int n = 1; n <= EmMarkup::kLastPortLayer - 200; ++n)
-        if (!markup.port(n) && portsTableRow(n) < 0)
+        if (!markup.port(n) && portsTableRow(n) < 0 && !layoutPortLayers.contains(200 + n))
             return n;
     return 0;
 }

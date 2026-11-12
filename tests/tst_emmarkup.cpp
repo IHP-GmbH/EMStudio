@@ -597,10 +597,10 @@ void EmMarkupTest::mainWindow_exportUsesEmLayoutInModel()
     QVERIFY(view);
     emit view->markupRectDrawn(LayoutView::MarkupTool::Port, QRectF(QPointF(98, 0), QPointF(100, 10)));
     QCOMPARE(panel->markup().ports.size(), 2);
-    const EmMarkupPort *p2 = panel->markup().port(2);
-    QVERIFY(p2);
-    QCOMPARE(p2->direction, QStringLiteral("Z"));
-    QCOMPARE(p2->fromLayer, QStringLiteral("Metal1"));
+    const EmMarkupPort *p3 = panel->markup().port(3);
+    QVERIFY(p3);
+    QCOMPARE(p3->direction, QStringLiteral("Z"));
+    QCOMPARE(p3->fromLayer, QStringLiteral("Metal1"));
 
     QVERIFY(w.findChild<QAction *>(QStringLiteral("actionExportEmLayout")));
     const QString em = dir.filePath(QStringLiteral("line_em.gds"));
@@ -661,42 +661,42 @@ void EmMarkupTest::mainWindow_markupPortsFollowPortsTable()
     emit view->markupRectDrawn(LayoutView::MarkupTool::Port, QRectF(QPointF(98, 0), QPointF(100, 10)));
     QCOMPARE(panel->markup().ports.size(), 2);
     QCOMPARE(ports->rowCount(), rowsBefore + 1);
-    int row = rowOf(2);
+    int row = rowOf(3);
     QVERIFY(row >= 0);
-    QCOMPARE(qobject_cast<QComboBox *>(ports->cellWidget(row, 3))->currentText(), QStringLiteral("202"));
+    QCOMPARE(qobject_cast<QComboBox *>(ports->cellWidget(row, 3))->currentText(), QStringLiteral("203"));
     QCOMPARE(qobject_cast<QComboBox *>(ports->cellWidget(row, 6))->currentText(), QStringLiteral("z"));
 
     // Markup edit → model row.
     auto *z0Box = qobject_cast<QDoubleSpinBox *>(markupPorts->cellWidget(1, 4));
     QVERIFY(z0Box);
     z0Box->setValue(25.0);
-    QCOMPARE(ports->item(rowOf(2), 2)->text(), QStringLiteral("25"));
+    QCOMPARE(ports->item(rowOf(3), 2)->text(), QStringLiteral("25"));
 
     // Model row edit → markup.
-    row = rowOf(2);
+    row = rowOf(3);
     ports->item(row, 1)->setText(QStringLiteral("0"));
-    QCOMPARE(panel->markup().port(2)->voltage, 0.0);
+    QCOMPARE(panel->markup().port(3)->voltage, 0.0);
     qobject_cast<QComboBox *>(ports->cellWidget(row, 6))->setCurrentText(QStringLiteral("-z"));
-    QCOMPARE(panel->markup().port(2)->direction, QStringLiteral("-Z"));
-    QCOMPARE(view->markup().port(2)->direction, QStringLiteral("-Z"));
+    QCOMPARE(panel->markup().port(3)->direction, QStringLiteral("-Z"));
+    QCOMPARE(view->markup().port(3)->direction, QStringLiteral("-Z"));
 
     // Removed in the model → gone from the markup.
-    ports->setCurrentCell(rowOf(2), 0);
+    ports->setCurrentCell(rowOf(3), 0);
     auto *removeRow = w.findChild<QPushButton *>(QStringLiteral("btnReomovePort"));
     QVERIFY(removeRow);
     removeRow->click();
-    QVERIFY(!panel->markup().port(2));
+    QVERIFY(!panel->markup().port(3));
     QCOMPARE(ports->rowCount(), rowsBefore);
 
     // Removed in the markup → gone from the model.
     emit view->markupRectDrawn(LayoutView::MarkupTool::Port, QRectF(QPointF(98, 0), QPointF(100, 10)));
-    QVERIFY(rowOf(2) >= 0);
+    QVERIFY(rowOf(3) >= 0);
     markupPorts->selectRow(1);
     auto *removePort = panel->findChild<QPushButton *>(QStringLiteral("btnMarkupRemovePort"));
     QVERIFY(removePort && removePort->isEnabled());
     removePort->click();
-    QVERIFY(!panel->markup().port(2));
-    QCOMPARE(rowOf(2), -1);
+    QVERIFY(!panel->markup().port(3));
+    QCOMPARE(rowOf(3), -1);
 }
 
 namespace {
@@ -847,19 +847,19 @@ void EmMarkupTest::mainWindow_reshapeAndExportRenumbersMarkup()
     QVERIFY(panel && view && ports);
 
     emit view->markupRectDrawn(LayoutView::MarkupTool::Port, QRectF(QPointF(98, 0), QPointF(100, 10)));
-    QVERIFY(panel->markup().port(2));
+    QVERIFY(panel->markup().port(3));
     panel->removePort(1);
     QVERIFY(!panel->markup().port(1));
     const int rows = ports->rowCount();
 
     // Picked in the layout: the panel row follows; resized: shape only.
-    emit view->markupPortSelected(2);
-    QCOMPARE(panel->selectedPort(), 2);
-    const QString settings = panel->markup().port(2)->encode();
-    emit view->markupPortReshaped(2, QRectF(QPointF(96, 0), QPointF(100, 10)));
-    QCOMPARE(panel->markup().port(2)->shapesUm.size(), 1);
-    QCOMPARE(panel->markup().port(2)->shapesUm.first().boundingRect(), QRectF(QPointF(96, 0), QPointF(100, 10)));
-    QCOMPARE(panel->markup().port(2)->encode(), settings);
+    emit view->markupPortSelected(3);
+    QCOMPARE(panel->selectedPort(), 3);
+    const QString settings = panel->markup().port(3)->encode();
+    emit view->markupPortReshaped(3, QRectF(QPointF(96, 0), QPointF(100, 10)));
+    QCOMPARE(panel->markup().port(3)->shapesUm.size(), 1);
+    QCOMPARE(panel->markup().port(3)->shapesUm.first().boundingRect(), QRectF(QPointF(96, 0), QPointF(100, 10)));
+    QCOMPARE(panel->markup().port(3)->encode(), settings);
     QCOMPARE(ports->rowCount(), rows);
 
     QVERIFY(w.testExportEmLayout(dir.filePath(QStringLiteral("line_em.gds"))));

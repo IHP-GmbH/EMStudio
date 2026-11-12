@@ -129,6 +129,7 @@ struct RawBoundary
     int layer = 0;
     int datatype = 0;
     QVector<QPointF> xy; // DBU
+    QHash<int, QString> props;
 };
 
 /*!*******************************************************************************************************************
@@ -225,6 +226,8 @@ bool parseLibrary(QIODevice &file, QHash<QString, RawCell> *cells, double *dbuMe
     int cols = 1, rows = 1;
     QString sname;
     QVector<QPointF> xy;
+    QHash<int, QString> props;
+    int propAttr = -1;
 
     // Element state; reset after every element, also TEXT / NODE, whose STRANS / MAG / ANGLE
     // (text size) must not leak into the next reference.
@@ -237,6 +240,8 @@ bool parseLibrary(QIODevice &file, QHash<QString, RawCell> *cells, double *dbuMe
         cols = rows = 1;
         sname.clear();
         xy.clear();
+        props.clear();
+        propAttr = -1;
     };
 
     auto flushElement = [&]() {
@@ -250,6 +255,7 @@ bool parseLibrary(QIODevice &file, QHash<QString, RawCell> *cells, double *dbuMe
                 b.layer = layer;
                 b.datatype = datatype;
                 b.xy = xy;
+                b.props = props;
                 cur->boundaries.push_back(b);
             }
         } else if (elem == ElemKind::Path) {
@@ -287,6 +293,7 @@ bool parseLibrary(QIODevice &file, QHash<QString, RawCell> *cells, double *dbuMe
                     b.layer = layer;
                     b.datatype = datatype;
                     b.xy = outline;
+                    b.props = props;
                     cur->boundaries.push_back(b);
                 }
             }
@@ -508,6 +515,27 @@ bool parseLibrary(QIODevice &file, QHash<QString, RawCell> *cells, double *dbuMe
             }
             break;
         }
+        case 0x2B: // PROPATTR
+            if (dataType == 0x02 && dataSize >= 2) {
+                quint16 v = 0;
+                stream >> v;
+                propAttr = int(v);
+                if (!file.seek(recStart + size)) return false;
+            } else if (!skipRest()) {
+                return false;
+            }
+            break;
+        case 0x2C: // PROPVALUE
+            if (dataType == 0x06 && propAttr >= 0) {
+                QString value;
+                if (!readAscii(stream, dataSize, &value))
+                    return false;
+                props.insert(propAttr, value);
+                propAttr = -1;
+            } else if (!skipRest()) {
+                return false;
+            }
+            break;
         case 0x11: // ENDEL
             flushElement();
             if (!skipRest()) return false;
@@ -548,6 +576,7 @@ void emitBoundaries(const RawCell &cell,
         GdsFlatPolygon poly;
         poly.layer = b.layer;
         poly.datatype = b.datatype;
+        poly.properties = b.props;
         poly.pointsUm.reserve(b.xy.size());
         for (const QPointF &p : b.xy) {
             const QPointF m = xf.map(p.x(), p.y());
@@ -663,5 +692,119 @@ bool GdsLayout::flattenTopCell(const QString &filePath,
 
     const double scaleUm = dbuMeters * 1e6; // meters → µm
     flattenCell(top, cells, Aff2::identity(), scaleUm, 0, out);
+    return true;
+}
+
+namespace {
+
+QByteArray gdsRecord(quint8 type, quint8 dataType, const QByteArray &payloadIn = QByteArray())
+{
+    QByteArray payload = payloadIn;
+    if (payload.size() % 2)
+        payload.append('\0');
+    QByteArray rec;
+    const int size = payload.size() + 4;
+    rec.append(char((size >> 8) & 0xFF));
+    rec.append(char(size & 0xFF));
+    rec.append(char(type));
+    rec.append(char(dataType));
+    return rec + payload;
+}
+
+QByteArray gdsInt16(int v)
+{
+    QByteArray b;
+    b.append(char((v >> 8) & 0xFF));
+    b.append(char(v & 0xFF));
+    return b;
+}
+
+QByteArray gdsInt32(qint32 v)
+{
+    QByteArray b;
+    for (int shift = 24; shift >= 0; shift -= 8)
+        b.append(char((quint32(v) >> shift) & 0xFF));
+    return b;
+}
+
+/*! GDSII REAL8: sign, excess-64 base-16 exponent, 56-bit mantissa. */
+QByteArray gdsReal8(double v)
+{
+    QByteArray b(8, '\0');
+    if (v == 0.0)
+        return b;
+    const bool neg = v < 0;
+    double m = std::abs(v);
+    int exp = 64;
+    while (m >= 1.0) { m /= 16.0; ++exp; }
+    while (m < 1.0 / 16.0) { m *= 16.0; --exp; }
+    quint64 mant = quint64(std::llround(m * std::pow(2.0, 56)));
+    if (mant >> 56) { mant >>= 4; ++exp; }
+    b[0] = char((neg ? 0x80 : 0) | (exp & 0x7F));
+    for (int i = 1; i < 8; ++i)
+        b[i] = char((mant >> (8 * (7 - i))) & 0xFF);
+    return b;
+}
+
+} // namespace
+
+bool GdsLayout::writeFlat(const QString &filePath,
+                          const QString &cell,
+                          const QVector<GdsFlatPolygon> &polys,
+                          QString *errorMsg)
+{
+    const QByteArray timestamp = QByteArray(24, '\0');
+    QByteArray g;
+    g += gdsRecord(0x00, 0x02, gdsInt16(600));                    // HEADER
+    g += gdsRecord(0x01, 0x02, timestamp);                        // BGNLIB
+    g += gdsRecord(0x02, 0x06, "LIB");                            // LIBNAME
+    g += gdsRecord(0x03, 0x05, gdsReal8(1e-3) + gdsReal8(1e-9));  // UNITS: 1 nm, user unit µm
+    g += gdsRecord(0x05, 0x02, timestamp);                        // BGNSTR
+    g += gdsRecord(0x06, 0x06, cell.toLatin1());                  // STRNAME
+    for (const GdsFlatPolygon &p : polys) {
+        QVector<QPoint> pts;
+        pts.reserve(p.pointsUm.size() + 1);
+        for (const QPointF &pt : p.pointsUm) {
+            const QPoint q(int(std::llround(pt.x() * 1000.0)), int(std::llround(pt.y() * 1000.0)));
+            if (pts.isEmpty() || pts.last() != q)
+                pts << q;
+        }
+        if (pts.size() > 1 && pts.first() == pts.last())
+            pts.removeLast();
+        if (pts.size() < 2)
+            continue;
+        pts << pts.first();                                       // GDSII closes the boundary explicitly
+        if (pts.size() > 8191) {
+            if (errorMsg)
+                *errorMsg = QStringLiteral("A polygon on layer %1/%2 has %3 points (GDSII allows 8191).")
+                                .arg(p.layer).arg(p.datatype).arg(pts.size());
+            return false;
+        }
+        while (pts.size() < 4) {                                  // a zero-width port: a degenerate box
+            const QPoint corner = pts.at(1);
+            pts.insert(1, corner);
+        }
+        QByteArray xy;
+        for (const QPoint &q : pts)
+            xy += gdsInt32(q.x()) + gdsInt32(q.y());
+        g += gdsRecord(0x08, 0x00);                               // BOUNDARY
+        g += gdsRecord(0x0D, 0x02, gdsInt16(p.layer));
+        g += gdsRecord(0x0E, 0x02, gdsInt16(p.datatype));
+        g += gdsRecord(0x10, 0x03, xy);
+        for (auto it = p.properties.cbegin(); it != p.properties.cend(); ++it) {
+            g += gdsRecord(0x2B, 0x02, gdsInt16(it.key()));
+            g += gdsRecord(0x2C, 0x06, it.value().toLatin1());
+        }
+        g += gdsRecord(0x11, 0x00);                               // ENDEL
+    }
+    g += gdsRecord(0x07, 0x00);                                   // ENDSTR
+    g += gdsRecord(0x04, 0x00);                                   // ENDLIB
+
+    QFile f(filePath);
+    if (!f.open(QIODevice::WriteOnly) || f.write(g) != g.size()) {
+        if (errorMsg)
+            *errorMsg = QStringLiteral("Cannot write %1: %2").arg(filePath, f.errorString());
+        return false;
+    }
     return true;
 }

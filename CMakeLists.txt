@@ -142,6 +142,9 @@ set(SOURCES
     src/gdslayout.cpp
     src/layoutview.cpp
     src/layoutlayerpanel.cpp
+    src/emmarkup.cpp
+    src/emmarkuppanel.cpp
+    src/emexport.cpp
     src/sanitycheck.cpp
     src/resultscalculator.cpp
     src/exprparser.cpp
@@ -217,6 +220,9 @@ set(HEADERS
     src/gdslayout.h
     src/layoutview.h
     src/layoutlayerpanel.h
+    src/emmarkup.h
+    src/emmarkuppanel.h
+    src/emexport.h
     src/sanitycheck.h
     src/appsettings.h
     src/resultscalculator.h

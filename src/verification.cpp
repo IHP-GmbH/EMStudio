@@ -333,6 +333,11 @@ int MainWindow::testPortsRowCount() const
     return (m_ui && m_ui->tblPorts) ? m_ui->tblPorts->rowCount() : -1;
 }
 
+bool MainWindow::testExportEmLayout(const QString &gdsPath)
+{
+    return exportEmLayoutTo(gdsPath);
+}
+
 /*!*******************************************************************************************************************
  * \brief Programmatically toggles the "Use Substrate Layer Names" checkbox for tests.
  *

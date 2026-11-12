@@ -33,6 +33,7 @@ SOURCES += \
     tst_layout_layer_panel.cpp \
     tst_key_bindings.cpp \
     tst_gdslayout.cpp \
+    tst_emmarkup.cpp \
     tst_substrate_view.cpp \
     tst_tips.cpp \
     tst_preferences_dialog.cpp \
@@ -62,6 +63,7 @@ HEADERS += \
     tst_layout_layer_panel.h \
     tst_key_bindings.h \
     tst_gdslayout.h \
+    tst_emmarkup.h \
     tst_substrate_view.h \
     tst_tips.h \
     tst_preferences_dialog.h \

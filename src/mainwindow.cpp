@@ -19,6 +19,8 @@
  ************************************************************************/
 
 #include <QCoreApplication>
+#include <QTabWidget>
+#include <QPainterPath>
 #include <QMenu>
 #include <QFile>
 #include <QDebug>
@@ -34,6 +36,7 @@
 #include <QJsonValue>
 #include <QJsonObject>
 #include <QJsonDocument>
+#include <QCryptographicHash>
 #include <QScrollBar>
 #include <QFileDialog>
 #include <QTextStream>
@@ -79,6 +82,8 @@
 #include "layoutview.h"
 #include "layoutfile.h"
 #include "layoutlayerpanel.h"
+#include "emmarkuppanel.h"
+#include "emexport.h"
 #include "gdslayout.h"
 #include "substrate.h"
 #include "stackupeditor.h"
@@ -233,7 +238,9 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_ui->tblPorts, &QTableWidget::itemChanged, this,
             [this](QTableWidgetItem*){
-                if (!m_blockPortChanges) setStateChanged();
+                if (m_blockPortChanges) return;
+                setStateChanged();
+                pullPortsTableIntoMarkup();
             });
     connect(m_ui->tblPorts, &QTableWidget::itemSelectionChanged,
             this, &MainWindow::onPortsTableSelectionChanged);
@@ -3891,6 +3898,16 @@ void MainWindow::on_actionSave_triggered()
 
     // Save As and the first Save of a new model create a file: list it under File > Recent.
     addRecentPythonModel(QFileInfo(QDir::fromNativeSeparators(filePath)).absoluteFilePath());
+
+    // The markup sidecar belongs to the model: saved with it (also under a new name after Save As).
+    const QString markupPath = EmMarkup::sidecarPath(currentPythonScriptPath());
+    if (!markupPath.isEmpty() && (m_markupDirty || markupPath != m_markupPath)
+            && (!m_markup.isEmpty() || QFileInfo::exists(markupPath))) {
+        m_markupPath = markupPath;
+        if (!saveMarkup())
+            return;
+    }
+
     saveSettings();
     setStateSaved();
     info("All changes saved successfully.", true);
@@ -4105,7 +4122,7 @@ bool MainWindow::prepareLayoutForRun(QString *errorMsg)
 
     const QString layoutPath = m_ui && m_ui->txtGdsFile ? m_ui->txtGdsFile->text().trimmed() : QString();
     if (!isRoomLayoutPath(layoutPath))
-        return true;
+        return prepareMarkupLayoutForRun(errorMsg);
 
     const QString companion = companionLayoutGdsBesideModel();
     if (companion.isEmpty()) {
@@ -4147,7 +4164,7 @@ bool MainWindow::prepareLayoutForRun(QString *errorMsg)
     }
 
     info(tr("ROOM layout converted to GDS for this run:\n%1").arg(gdsPath));
-    return true;
+    return prepareMarkupLayoutForRun(errorMsg);
 }
 
 /*!*******************************************************************************************************************
@@ -4598,7 +4615,12 @@ void MainWindow::on_btnReomovePort_clicked()
 
     int row = m_ui->tblPorts->currentRow();
     if (row >= 0) {
+        const QTableWidgetItem *numItem = m_ui->tblPorts->item(row, 0);
+        bool ok = false;
+        const int number = numItem ? numItem->text().trimmed().toInt(&ok) : 0;
         m_ui->tblPorts->removeRow(row);
+        if (ok)
+            removeMarkupPorts({number});
         setStateChanged();
         refreshLayoutPreview();
     } else {
@@ -4616,7 +4638,15 @@ void MainWindow::on_btnRemovePorts_clicked()
         return;
     }
 
+    QSet<int> numbers;
+    for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
+        bool ok = false;
+        const int number = m_ui->tblPorts->item(r, 0) ? m_ui->tblPorts->item(r, 0)->text().trimmed().toInt(&ok) : 0;
+        if (ok)
+            numbers.insert(number);
+    }
     m_ui->tblPorts->setRowCount(0);
+    removeMarkupPorts(numbers);
     setStateChanged();
     refreshLayoutPreview();
 }
@@ -5039,6 +5069,7 @@ void MainWindow::refreshLayoutPreview()
         m_flatPolys.clear();
         if (m_layoutLayerPanel)
             m_layoutLayerPanel->clear();
+        syncMarkupWithLayout();
         return;
     }
 
@@ -5283,6 +5314,34 @@ void MainWindow::refreshLayoutPreview()
         }
     }
 
+    // Ports drawn in the markup have no shapes in the GDS yet: show them on their source layer (2D and 3D)
+    // as the EM layout will have them.
+    if (!m_markup.ports.isEmpty() && m_ui->tblPorts && !isElmerThermalKey(currentSimToolKey())) {
+        QSet<int> drawnLayers;
+        for (const GdsFlatPolygon &p : qAsConst(polys))
+            drawnLayers.insert(p.layer);
+        for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
+            bool ok = false;
+            const int number = m_ui->tblPorts->item(r, 0) ? m_ui->tblPorts->item(r, 0)->text().trimmed().toInt(&ok) : 0;
+            const EmMarkupPort *mp = ok ? m_markup.port(number) : nullptr;
+            const auto *srcBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 3));
+            if (!mp || !srcBox)
+                continue;
+            const QString src = srcBox->currentText().trimmed();
+            int gds = src.toInt(&ok);
+            if (!ok)
+                gds = m_subNameToGds.value(src, -1);
+            if (gds < 0 || drawnLayers.contains(gds))
+                continue;
+            for (const QPolygonF &shape : mp->shapesUm) {
+                GdsFlatPolygon p;
+                p.layer = gds;
+                p.pointsUm = shape.size() == 2 ? QPolygonF({shape.at(0), shape.at(1), shape.at(1), shape.at(0)}) : shape;
+                polys.append(p);
+            }
+        }
+    }
+
     m_ui->layoutView->setViaMergeSize(currentViaMergeSize());
     m_ui->layoutView->setPolygons(polys, styles, ports);
 
@@ -5384,6 +5443,29 @@ void MainWindow::refreshLayoutPreview()
                                              view->layoutOpacity());
     }
 
+    m_markupStackLayers.clear();
+    m_markupMetalGds.clear();
+    QList<QPair<int, LayoutView::LayerStyle>> metalStyles;
+    for (auto it = styles.cbegin(); it != styles.cend(); ++it) {
+        const LayoutView::LayerStyle &st = it.value();
+        if (st.hasZ)
+            m_markupStackLayers.insert(it.key());
+        if (st.hasZ && st.kind.compare(QLatin1String("conductor"), Qt::CaseInsensitive) == 0 && !st.name.isEmpty())
+            metalStyles << qMakePair(it.key(), st);
+    }
+    std::sort(metalStyles.begin(), metalStyles.end(),
+              [](const QPair<int, LayoutView::LayerStyle> &a, const QPair<int, LayoutView::LayerStyle> &b) {
+                  return a.second.order < b.second.order;
+              });
+    QStringList metals;
+    for (const auto &ms : qAsConst(metalStyles)) {
+        if (!metals.contains(ms.second.name))
+            metals << ms.second.name;
+        m_markupMetalGds.insert(ms.second.name, ms.first);
+    }
+    m_markupMetals = metals;
+    syncMarkupWithLayout(metals);
+
     QApplication::restoreOverrideCursor();
 }
 
@@ -5415,21 +5497,107 @@ void MainWindow::setupLayoutLayerPanel()
     m_ui->layoutView->setParent(left);
     leftLay->addWidget(m_ui->layoutView, 1);
 
-    auto *right = new QWidget(split);
-    auto *rightLay = new QVBoxLayout(right);
-    rightLay->setContentsMargins(0, 0, 0, 0);
-    rightLay->setSpacing(2);
-    auto *lblLayers = new QLabel(tr("Layers"), right);
-    lblLayers->setObjectName(QStringLiteral("lblLayersTitle"));
-    lblLayers->setStyleSheet(QStringLiteral("font-weight: bold;"));
-    rightLay->addWidget(lblLayers);
+    m_layoutSideTabs = new QTabWidget(split);
+    m_layoutSideTabs->setObjectName(QStringLiteral("tabLayoutSide"));
+    m_layoutSideTabs->setDocumentMode(true);
 
-    m_layoutLayerPanel = new LayoutLayerPanel(right);
+    m_layoutLayerPanel = new LayoutLayerPanel(m_layoutSideTabs);
     m_layoutLayerPanel->setTitleVisible(false);
-    rightLay->addWidget(m_layoutLayerPanel, 1);
+    m_layoutSideTabs->addTab(m_layoutLayerPanel, tr("Layers"));
+
+    m_markupPanel = new EmMarkupPanel(m_layoutSideTabs);
+    m_markupPanel->setObjectName(QStringLiteral("markupPanel"));
+    m_layoutSideTabs->addTab(m_markupPanel, tr("Markup"));
+    m_layoutSideTabs->setTabToolTip(1, tr("EM region and ports of the layout, kept beside the model "
+                                          "(<model>.markup.json), not in the GDS."));
+    applyMarkup(m_markup, false, tr("No markup yet."));
+
+    connect(m_markupPanel, &EmMarkupPanel::markupEdited, this, [this](const EmMarkup &markup) {
+        const QString layoutFile = m_markup.layoutFile;
+        const QString cell = m_markup.cell;
+        const EmMarkup before = m_markup;
+        m_markup = markup;
+        const QString current = m_ui->txtGdsFile->text().trimmed();
+        const bool showingExport = !current.isEmpty()
+                && QFileInfo(current).absoluteFilePath() == QFileInfo(markupExportPath()).absoluteFilePath();
+        // The markup belongs to the source layout, not to the exported one the model may show.
+        m_markup.layoutFile = showingExport ? layoutFile : current;
+        m_markup.cell = showingExport ? cell : m_ui->cbxTopCell->currentText().trimmed();
+        m_markupDirty = true;
+        if (m_ui->layoutView)
+            m_ui->layoutView->setMarkup(m_markup);
+        m_markupPanel->setStatus(tr("Unsaved changes (Ctrl+S saves them with the model)."));
+        pushMarkupPortsToTable(before);
+        setStateChanged();
+    });
+    auto *exportEm = new QAction(tr("Export EM Layout…"), this);
+    exportEm->setObjectName(QStringLiteral("actionExportEmLayout"));
+    exportEm->setToolTip(tr("Write the EM layout of the markup (stackup layers clipped to the region and merged, "
+                            "ports on 201..) with its .simcfg and _portmap.json to a file of your choice. "
+                            "Run does this by itself."));
+    m_ui->menuFile->insertAction(m_ui->actionConvertToSettings, exportEm);
+    connect(exportEm, &QAction::triggered, this, &MainWindow::exportEmLayoutAs);
+    connect(m_markupPanel, &EmMarkupPanel::drawToolRequested, this, [this](int tool) {
+        if (m_ui->layoutView)
+            m_ui->layoutView->setMarkupTool(tool == 1 ? LayoutView::MarkupTool::Region
+                                            : tool == 2 ? LayoutView::MarkupTool::Port
+                                                        : LayoutView::MarkupTool::None);
+    });
+    connect(m_ui->layoutView, &LayoutView::markupToolChanged, this, [this](LayoutView::MarkupTool tool) {
+        if (m_markupPanel)
+            m_markupPanel->setDrawTool(tool == LayoutView::MarkupTool::Region ? 1
+                                       : tool == LayoutView::MarkupTool::Port ? 2 : 0);
+    });
+    connect(m_ui->layoutView, &LayoutView::markupRectDrawn, this,
+            [this](LayoutView::MarkupTool tool, const QRectF &rectUm) {
+        if (!m_markupPanel)
+            return;
+        if (m_layoutSideTabs)
+            m_layoutSideTabs->setCurrentWidget(m_markupPanel);
+        if (tool == LayoutView::MarkupTool::Region) {
+            if (rectUm.width() <= 0.0 || rectUm.height() <= 0.0) {
+                info(tr("The EM region needs an area: drag a rectangle."));
+                return;
+            }
+            m_markupPanel->setRegion(rectUm);
+        } else if (tool == LayoutView::MarkupTool::Port) {
+            const EmMarkupPort port = markupPortFromRect(rectUm);
+            m_markupPanel->addPort(port);
+            info(tr("Markup: added %1").arg(port.summary()));
+        }
+    });
+    connect(m_markupPanel, &EmMarkupPanel::rulerRequested, m_ui->layoutView, &LayoutView::setMeasureArmed);
+    connect(m_ui->layoutView, &LayoutView::measureArmedChanged, m_markupPanel, &EmMarkupPanel::setRulerArmed);
+    connect(m_ui->layoutView, &LayoutView::markupPortSelected, m_markupPanel, &EmMarkupPanel::selectPort);
+    connect(m_markupPanel, &EmMarkupPanel::portSelected, m_ui->layoutView, &LayoutView::setSelectedMarkupPort);
+    connect(m_ui->layoutView, &LayoutView::markupPortRemoveRequested, m_markupPanel, &EmMarkupPanel::removePort);
+    connect(m_ui->layoutView, &LayoutView::markupPortReshaped, this, [this](int number, const QRectF &rectUm) {
+        if (!m_markupPanel)
+            return;
+        const QPolygonF shape = rectUm.width() <= 0.0 || rectUm.height() <= 0.0
+                ? QPolygonF(QVector<QPointF>{rectUm.topLeft(), rectUm.bottomRight()})
+                : QPolygonF(rectUm);
+        m_markupPanel->setPortShapes(number, {shape});
+        refreshLayoutPreview();
+        info(tr("Markup: P%1 is now %2 × %3 µm at (%4, %5)")
+                 .arg(number).arg(rectUm.width(), 0, 'f', 3).arg(rectUm.height(), 0, 'f', 3)
+                 .arg(rectUm.left(), 0, 'f', 3).arg(rectUm.top(), 0, 'f', 3));
+    });
+    connect(m_markupPanel, &EmMarkupPanel::importRequested, this, [this]() {
+        QStringList warnings;
+        EmMarkup imported = EmMarkup::fromLayout(m_flatPolys, &warnings);
+        imported.layoutFile = m_ui->txtGdsFile->text().trimmed();
+        imported.cell = m_ui->cbxTopCell->currentText().trimmed();
+        for (const QString &w : qAsConst(warnings))
+            info(tr("Markup import: %1").arg(w));
+        const EmMarkup before = m_markup;
+        applyMarkup(imported, true, tr("Imported from the layout (%n port(s)); not saved yet.", nullptr,
+                                       imported.ports.size()));
+        pushMarkupPortsToTable(before);
+    });
 
     split->addWidget(left);
-    split->addWidget(right);
+    split->addWidget(m_layoutSideTabs);
     split->setStretchFactor(0, 5);
     split->setStretchFactor(1, 1);
     split->setSizes({700, 200});
@@ -5520,6 +5688,614 @@ void MainWindow::setupLayoutLayerPanel()
             });
     if (m_ui->layoutView)
         m_ui->layoutView->setShowCoordinates(m_layoutLayerPanel->showCoordinates());
+}
+
+void MainWindow::applyMarkup(const EmMarkup &markup, bool dirty, const QString &status)
+{
+    m_markup = markup;
+    m_markupDirty = dirty;
+    if (m_ui && m_ui->layoutView)
+        m_ui->layoutView->setMarkup(m_markup);
+    if (m_markupPanel) {
+        m_markupPanel->setMarkup(m_markup);
+        m_markupPanel->setStatus(status);
+        if (m_ui && m_ui->layoutView)
+            m_markupPanel->selectPort(m_ui->layoutView->selectedMarkupPort());
+    }
+}
+
+void MainWindow::syncMarkupWithLayout(const QStringList &metals)
+{
+    if (!m_markupPanel)
+        return;
+    if (!metals.isEmpty())
+        m_markupPanel->setMetals(metals);
+    if (m_ui->layoutView)
+        m_markupPanel->setLayoutBounds(m_ui->layoutView->layoutContentBoundsUm());
+
+    const QString layoutFile = m_ui->txtGdsFile->text().trimmed();
+    const QString cell = m_ui->cbxTopCell->currentText().trimmed();
+    const QString path = EmMarkup::sidecarPath(currentPythonScriptPath());
+    const bool sidecarExists = !path.isEmpty() && QFileInfo::exists(path);
+    if (path != m_markupPath) {
+        m_markupPath = path;
+        m_markupLayoutKey.clear();
+        if (sidecarExists) {
+            EmMarkup loaded;
+            QString err;
+            if (EmMarkup::load(path, &loaded, &err)) {
+                applyMarkup(loaded, false, tr("Loaded from %1.").arg(QFileInfo(path).fileName()));
+                adoptPortsTableIntoMarkup();
+                pullPortsTableIntoMarkup();
+            } else {
+                error(err);
+                applyMarkup(EmMarkup(), false, err);
+            }
+        } else if (!m_markup.isEmpty() && m_markup.layoutFile == layoutFile && m_markup.cell == cell) {
+            // Same layout under a new model name (Save As): the markup goes along.
+            applyMarkup(m_markup, true, tr("Not saved beside this model yet."));
+        } else {
+            applyMarkup(EmMarkup(), false, tr("No markup yet."));
+        }
+    }
+
+    // klayout_em_export markup in the layout: scanned once per flattened layout.
+    if (m_flatPolysKey == m_markupLayoutKey) {
+        adoptPortsTableIntoMarkup();
+        return;
+    }
+    m_markupLayoutKey = m_flatPolysKey;
+    const bool layoutHasMarkup = EmMarkup::layoutHasMarkup(m_flatPolys);
+    m_markupPanel->setLayoutHasMarkup(layoutHasMarkup);
+    if (layoutHasMarkup && m_markup.isEmpty() && !m_markupDirty && !sidecarExists) {
+        QStringList warnings;
+        EmMarkup imported = EmMarkup::fromLayout(m_flatPolys, &warnings);
+        imported.layoutFile = layoutFile;
+        imported.cell = cell;
+        for (const QString &w : qAsConst(warnings))
+            info(tr("Markup import: %1").arg(w));
+        applyMarkup(imported, true, tr("Taken from the klayout_em_export markup in the layout (%n port(s)); "
+                                       "Save keeps it beside the model.", nullptr, imported.ports.size()));
+        pullPortsTableIntoMarkup();
+    }
+    adoptPortsTableIntoMarkup();
+}
+
+bool MainWindow::saveMarkup()
+{
+    if (m_markupPath.isEmpty()) {
+        error(tr("Save the model first: the markup is stored next to it (<model>.markup.json)."));
+        return false;
+    }
+    EmMarkup markup = m_markup;
+    markup.layoutFile = m_ui->txtGdsFile->text().trimmed();
+    markup.cell = m_ui->cbxTopCell->currentText().trimmed();
+    QString err;
+    if (!markup.save(m_markupPath, &err)) {
+        error(err);
+        return false;
+    }
+    applyMarkup(markup, false, tr("Saved to %1.").arg(QFileInfo(m_markupPath).fileName()));
+    info(tr("Markup saved to %1").arg(QDir::toNativeSeparators(m_markupPath)));
+    return true;
+}
+
+QString MainWindow::markupExportPath() const
+{
+    const QString model = currentPythonScriptPath();
+    if (model.isEmpty())
+        return QString();
+    const QFileInfo fi(model);
+    return fi.absoluteDir().filePath(fi.completeBaseName() + QStringLiteral("_em.gds"));
+}
+
+EmMarkupPort MainWindow::markupPortFromRect(const QRectF &rectUm) const
+{
+    // Metals drawn under the port, bottom to top.
+    const QRectF probe = rectUm.adjusted(-0.01, -0.01, 0.01, 0.01);
+    QSet<QString> present;
+    for (const GdsFlatPolygon &p : m_flatPolys) {
+        const QString name = m_markupMetalGds.key(p.layer);
+        if (name.isEmpty() || present.contains(name) || !p.pointsUm.boundingRect().intersects(probe))
+            continue;
+        QPainterPath path;
+        path.addPolygon(p.pointsUm);
+        path.closeSubpath();
+        if (path.intersects(probe))
+            present.insert(name);
+    }
+    QStringList atPort;
+    for (const QString &m : m_markupMetals)
+        if (present.contains(m))
+            atPort << m;
+
+    EmMarkupPort port;
+    port.number = freeMarkupPortNumber(m_markup);
+    port.shapesUm << QPolygonF(rectUm);
+    const QString top = !atPort.isEmpty() ? atPort.last() : (m_markupMetals.isEmpty() ? QString() : m_markupMetals.last());
+    if (rectUm.width() <= 0.0 || rectUm.height() <= 0.0) {
+        port.direction = rectUm.width() <= 0.0 ? QStringLiteral("X") : QStringLiteral("Y");
+        port.target = top;
+        port.shapesUm.first() = QPolygonF(QVector<QPointF>{rectUm.topLeft(), rectUm.bottomRight()});
+    } else {
+        port.direction = QStringLiteral("Z");
+        port.fromLayer = top;
+        QString bottom = atPort.size() > 1 ? atPort.first() : (m_markupMetals.isEmpty() ? QString() : m_markupMetals.first());
+        if (bottom == top && m_markupMetals.size() > 1)
+            bottom = m_markupMetals.first() == top ? m_markupMetals.at(1) : m_markupMetals.first();
+        port.toLayer = bottom;
+    }
+    return port;
+}
+
+void MainWindow::exportEmLayoutAs()
+{
+    if (m_markup.ports.isEmpty()) {
+        error(tr("The markup has no ports: draw or import them first (Layout → Markup)."));
+        return;
+    }
+    QString suggested = markupExportPath();
+    if (suggested.isEmpty())
+        suggested = QDir(QFileInfo(m_ui->txtGdsFile->text().trimmed()).absolutePath()).filePath(QStringLiteral("em.gds"));
+    const QString path = QFileDialog::getSaveFileName(this, tr("Export EM Layout"), suggested,
+                                                      tr("GDS files (*.gds);;All files (*)"));
+    if (!path.isEmpty())
+        exportEmLayoutTo(path);
+}
+
+bool MainWindow::exportEmLayoutTo(const QString &gdsPath)
+{
+    QString path = gdsPath;
+    if (!path.endsWith(QStringLiteral(".gds"), Qt::CaseInsensitive))
+        path += QStringLiteral(".gds");
+    QString err;
+    if (!exportMarkup(false, &err, nullptr, path)) {
+        error(err);
+        return false;
+    }
+    info(tr("Run makes its own EM layout (<model>_em.gds); the model keeps its Layout File."));
+    return true;
+}
+
+bool MainWindow::prepareMarkupLayoutForRun(QString *errorMsg)
+{
+    if (m_markup.ports.isEmpty() || isElmerThermalKey(currentSimToolKey()))
+        return true;
+    const QStringList problems = m_markup.problems(m_markupMetals);
+    if (!problems.isEmpty()) {
+        if (errorMsg)
+            *errorMsg = tr("The EM markup has problems (Layout → Markup):\n%1").arg(problems.join(QLatin1Char('\n')));
+        return false;
+    }
+    bool tableChanged = false;
+    if (!exportMarkup(true, errorMsg, &tableChanged))
+        return false;
+    if (tableChanged)
+        syncGuiSettingsToPythonEditor();
+
+    const QString scriptPath = m_simSettings.value(QStringLiteral("RunPythonScript")).toString().trimmed();
+    if (scriptPath.isEmpty() || !m_ui->editRunPythonScript) {
+        if (errorMsg)
+            *errorMsg = tr("Save the model first: the EM layout is written next to it.");
+        return false;
+    }
+    // The run reads <model>_em.gds; the model (editor) keeps the source layout, written back after the run.
+    QString text = m_ui->editRunPythonScript->toPlainText();
+    const QVariant gdsSetting = m_simSettings.value(QStringLiteral("GdsFile"));
+    m_simSettings[QStringLiteral("GdsFile")] = markupExportPath();
+    applyGdsAndXmlPaths(text, currentSimToolKey().toLower());
+    m_simSettings[QStringLiteral("GdsFile")] = gdsSetting;
+    QFile out(scriptPath);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        if (errorMsg)
+            *errorMsg = tr("Cannot write the model script for the EM layout run:\n%1").arg(scriptPath);
+        return false;
+    }
+    out.write(text.toUtf8());
+    out.close();
+    m_layoutPathPatchedForRun = true;
+    m_layoutPathPatchedScript = scriptPath;
+    info(tr("EM layout for this run: %1").arg(QDir::toNativeSeparators(markupExportPath())));
+    return true;
+}
+
+bool MainWindow::exportMarkup(bool forRun, QString *errorMsg, bool *tableChanged, const QString &outGds)
+{
+    auto fail = [errorMsg](const QString &msg) {
+        if (errorMsg)
+            *errorMsg = msg;
+        return false;
+    };
+    if (tableChanged)
+        *tableChanged = false;
+    const QString out = outGds.isEmpty() ? markupExportPath() : QFileInfo(outGds).absoluteFilePath();
+    if (out.isEmpty())
+        return fail(tr("Save the model first: the EM layout is written next to it (<model>_em.gds)."));
+    if (m_markup.ports.isEmpty())
+        return fail(tr("The markup has no ports: draw or import them first."));
+    if (m_markupStackLayers.isEmpty())
+        return fail(tr("Load a stackup first: only its layers go into the EM layout."));
+
+    const QString current = m_ui->txtGdsFile->text().trimmed();
+    const QString currentCell = m_ui->cbxTopCell->currentText().trimmed();
+    const QString source = m_markup.layoutFile.isEmpty() ? current : m_markup.layoutFile;
+    const QString cell = m_markup.cell.isEmpty() ? currentCell : m_markup.cell;
+    if (QFileInfo(source).absoluteFilePath() == QFileInfo(out).absoluteFilePath()) {
+        return fail(tr("The markup's layout is the EM layout itself (%1); import the markup on the source layout.")
+                        .arg(QDir::toNativeSeparators(out)));
+    }
+
+    EmExport::Options opt;
+    opt.outGds = out;
+    opt.cell = cell;
+    opt.substrateFile = m_ui->txtSubstrate->text().trimmed();
+    opt.stackLayers = m_markupStackLayers;
+    opt.purposes = currentGdsPurposes();
+    opt.metals = m_markupMetals;
+
+    // Same markup, layout file, cell and stackup as the last export: the EM layout on disk is still right.
+    auto exportKey = [&]() {
+        auto sortedText = [](const QSet<int> &set) {
+            QList<int> list = set.values();
+            std::sort(list.begin(), list.end());
+            QByteArray text;
+            for (int v : list)
+                text += QByteArray::number(v) + ',';
+            return text;
+        };
+        EmMarkup markup = m_markup;
+        markup.layoutFile = source;
+        markup.cell = cell;
+        const QFileInfo sourceInfo(source);
+        return QCryptographicHash::hash(
+            QJsonDocument(markup.toJson()).toJson(QJsonDocument::Compact)
+                + QByteArray::number(sourceInfo.lastModified().toMSecsSinceEpoch()) + ';'
+                + QByteArray::number(sourceInfo.size()) + ';' + sortedText(opt.stackLayers) + ';'
+                + sortedText(opt.purposes) + ';' + m_markupMetals.join(',').toUtf8() + ';'
+                + opt.substrateFile.toUtf8(),
+            QCryptographicHash::Sha1);
+    };
+    if (forRun && exportKey() == m_markupExportKey && QFileInfo::exists(out) && m_markupExportPath == out) {
+        info(tr("EM layout is up to date: %1").arg(QDir::toNativeSeparators(out)));
+        return true;
+    }
+
+    QVector<GdsFlatPolygon> polys;
+    if (source == current && cell == currentCell && !m_flatPolys.isEmpty()) {
+        polys = m_flatPolys;
+    } else {
+        QString err;
+        const QString gds = resolveLayoutGdsPath(source, &err);
+        if (gds.isEmpty() || !GdsLayout::flattenTopCell(gds, cell, &polys, &err))
+            return fail(tr("Cannot read the markup's layout %1: %2").arg(QDir::toNativeSeparators(source), err));
+    }
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const EmExport::Result r = EmExport::run(polys, m_markup, opt);
+    QApplication::restoreOverrideCursor();
+    if (!r.ok)
+        return fail(tr("EM export failed: %1").arg(r.error));
+
+    int kept = 0;
+    for (int n : r.kept)
+        kept += n;
+    int simPorts = 0;
+    for (const EmExport::ExportedPort &ep : r.ports)
+        simPorts += ep.inSimcfg ? 1 : 0;
+    info(tr("EM layout: %1 (%2 polygons on %3 layers, %4 ports, %5 in the .simcfg)")
+             .arg(QDir::toNativeSeparators(r.gds)).arg(kept).arg(r.kept.size()).arg(r.ports.size()).arg(simPorts));
+    info(tr("  %1%2").arg(QDir::toNativeSeparators(r.simcfg),
+                          r.updatedSimcfg ? tr(" (updated, setupEM settings kept)") : QString()));
+    info(tr("  %1").arg(QDir::toNativeSeparators(r.portmap)));
+    for (const QString &w : r.warnings)
+        info(tr("  Note: %1").arg(w));
+    if (!r.portWalls.isEmpty())
+        info(tr("  Port walls on %1: boundary PORTWALL there (gds2palace 0.10 or newer).")
+                 .arg(r.portWalls.join(QStringLiteral(", "))));
+
+    // The markup takes the exported numbers (ports outside the region follow them), so its ports and the
+    // Ports table rows keep matching by number.
+    QHash<int, int> renumbered;
+    for (const EmExport::ExportedPort &ep : r.ports)
+        renumbered.insert(ep.port.number, ep.number);
+    int next = r.ports.size();
+    bool changedNumbers = false;
+    for (EmMarkupPort &p : m_markup.ports) {
+        const int number = renumbered.contains(p.number) ? renumbered.value(p.number) : ++next;
+        changedNumbers = changedNumbers || number != p.number;
+        p.number = number;
+    }
+    std::sort(m_markup.ports.begin(), m_markup.ports.end(),
+              [](const EmMarkupPort &a, const EmMarkupPort &b) { return a.number < b.number; });
+    if (changedNumbers)
+        info(tr("  Markup ports renumbered 1..%1 like the EM layout.").arg(m_markup.ports.size()));
+
+    // The markup stays with the source layout; keep it beside the model with the export.
+    m_markup.layoutFile = source;
+    m_markup.cell = cell;
+    if (!m_markupPath.isEmpty())
+        saveMarkup();
+    else
+        applyMarkup(m_markup, true, tr("Exported; not saved yet."));
+    m_markupExportKey = exportKey();
+    m_markupExportPath = out;
+
+    if (isElmerThermalKey(currentSimToolKey())) {
+        info(tr("Elmer Thermal model: the Ports table is not changed."));
+    } else {
+        QVector<PortInfo> ports;
+        for (const EmExport::ExportedPort &ep : r.ports) {
+            if (!ep.inSimcfg)
+                continue;
+            PortInfo pi;
+            pi.portnumber = ep.number;
+            pi.voltage = ep.port.voltage;
+            pi.z0 = ep.port.z0;
+            pi.sourceLayer = QString::number(200 + ep.number);
+            pi.sourceIsNumber = true;
+            pi.direction = ep.port.direction.toLower();
+            if (ep.port.isVia()) {
+                pi.fromLayer = ep.port.fromLayer;
+                pi.toLayer = ep.port.toLayer;
+            } else {
+                pi.toLayer = ep.port.target;
+            }
+            ports << pi;
+        }
+        m_syncingMarkupPorts = true;
+        m_ui->tblPorts->setRowCount(0);
+        appendParsedPortsToTable(ports);
+        m_syncingMarkupPorts = false;
+        if (tableChanged)
+            *tableChanged = true;
+    }
+    setStateChanged();
+    if (!forRun)
+        refreshLayoutPreview();
+    return true;
+}
+
+int MainWindow::portsTableRow(int number) const
+{
+    if (!m_ui || !m_ui->tblPorts)
+        return -1;
+    for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
+        const QTableWidgetItem *it = m_ui->tblPorts->item(r, 0);
+        bool ok = false;
+        if (it && it->text().trimmed().toInt(&ok) == number && ok)
+            return r;
+    }
+    return -1;
+}
+
+void MainWindow::pushMarkupPortsToTable(const EmMarkup &before)
+{
+    if (!m_ui || !m_ui->tblPorts || m_syncingMarkupPorts || isElmerThermalKey(currentSimToolKey()))
+        return;
+    m_syncingMarkupPorts = true;
+    const bool wasBlocked = m_blockPortChanges;
+    m_blockPortChanges = true;
+    bool changed = false;
+
+    for (const EmMarkupPort &old : before.ports) {
+        if (m_markup.port(old.number))
+            continue;
+        const int row = portsTableRow(old.number);
+        if (row >= 0) {
+            m_ui->tblPorts->removeRow(row);
+            changed = true;
+        }
+    }
+
+    const bool namesMode = m_ui->cbSubLayerNames->isChecked();
+    auto tableLayer = [&](const QString &name) {
+        return !namesMode && m_subNameToGds.contains(name) ? QString::number(m_subNameToGds.value(name)) : name;
+    };
+    auto setCombo = [](QComboBox *box, const QString &val) {
+        if (!box)
+            return;
+        if (!val.isEmpty() && box->findText(val) < 0)
+            box->addItem(val);
+        box->setCurrentIndex(qMax(0, box->findText(val)));
+    };
+
+    QVector<PortInfo> added;
+    for (const EmMarkupPort &p : m_markup.ports) {
+        const EmMarkupPort *old = before.port(p.number);
+        if (old && old->encode() == p.encode())
+            continue;
+        PortInfo pi;
+        pi.portnumber = p.number;
+        pi.voltage = p.voltage;
+        pi.z0 = p.z0;
+        pi.direction = p.direction.toLower();
+        pi.fromLayer = p.isVia() ? tableLayer(p.fromLayer) : QString();
+        pi.toLayer = tableLayer(p.isVia() ? p.toLayer : p.target);
+        const int row = portsTableRow(p.number);
+        if (row < 0) {
+            pi.sourceLayer = QString::number(200 + p.number);
+            pi.sourceIsNumber = true;
+            added << pi;
+            continue;
+        }
+        m_ui->tblPorts->item(row, 1)->setText(QString::number(pi.voltage, 'g', 12));
+        m_ui->tblPorts->item(row, 2)->setText(QString::number(pi.z0, 'g', 12));
+        setCombo(qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(row, 4)), pi.fromLayer);
+        setCombo(qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(row, 5)), pi.toLayer);
+        setCombo(qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(row, 6)), pi.direction);
+        changed = true;
+    }
+    if (!added.isEmpty()) {
+        appendParsedPortsToTable(added);
+        changed = true;
+    }
+
+    m_blockPortChanges = wasBlocked;
+    if (changed) {
+        setStateChanged();
+        refreshLayoutPreview();
+    }
+    m_syncingMarkupPorts = false;
+}
+
+bool MainWindow::pullPortsTableIntoMarkup()
+{
+    if (!m_ui || !m_ui->tblPorts || m_syncingMarkupPorts || m_markup.ports.isEmpty()
+            || isElmerThermalKey(currentSimToolKey()))
+        return false;
+    auto markupLayer = [this](const QComboBox *box) {
+        const QString text = box ? box->currentText().trimmed() : QString();
+        bool ok = false;
+        const int gds = text.toInt(&ok);
+        return ok && m_gdsToSubName.contains(gds) ? m_gdsToSubName.value(gds) : text;
+    };
+
+    EmMarkup updated = m_markup;
+    for (EmMarkupPort &p : updated.ports) {
+        const int row = portsTableRow(p.number);
+        if (row < 0)
+            continue;
+        const auto *dirBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(row, 6));
+        if (dirBox && !dirBox->currentText().trimmed().isEmpty())
+            p.direction = dirBox->currentText().trimmed().toUpper();
+        const QString from = markupLayer(qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(row, 4)));
+        const QString to = markupLayer(qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(row, 5)));
+        if (p.isVia()) {
+            p.fromLayer = from;
+            p.toLayer = to;
+            p.target.clear();
+        } else {
+            p.target = to.isEmpty() ? from : to;
+            p.fromLayer.clear();
+            p.toLayer.clear();
+        }
+        bool ok = false;
+        const double v = m_ui->tblPorts->item(row, 1) ? m_ui->tblPorts->item(row, 1)->text().toDouble(&ok) : 0.0;
+        if (ok)
+            p.voltage = v;
+        const double z0 = m_ui->tblPorts->item(row, 2) ? m_ui->tblPorts->item(row, 2)->text().toDouble(&ok) : 0.0;
+        if (ok && z0 > 0.0)
+            p.z0 = z0;
+    }
+    if (updated == m_markup)
+        return false;
+    applyMarkup(updated, true, tr("Port settings taken from the model's Ports table; not saved yet."));
+    return true;
+}
+
+bool MainWindow::adoptPortsTableIntoMarkup()
+{
+    if (!m_ui || !m_ui->tblPorts || m_syncingMarkupPorts || m_flatPolys.isEmpty()
+            || isElmerThermalKey(currentSimToolKey()))
+        return false;
+    auto layerName = [this](const QComboBox *box) {
+        const QString text = box ? box->currentText().trimmed() : QString();
+        bool ok = false;
+        const int gds = text.toInt(&ok);
+        return ok && m_gdsToSubName.contains(gds) ? m_gdsToSubName.value(gds) : text;
+    };
+
+    auto shapeBoxes = [](const QVector<QPolygonF> &shapes) {
+        QStringList boxes;
+        for (const QPolygonF &s : shapes) {
+            const QRectF b = s.boundingRect();
+            boxes << QStringLiteral("%1,%2,%3,%4").arg(qRound64(b.left() * 1000)).arg(qRound64(b.top() * 1000))
+                         .arg(qRound64(b.right() * 1000)).arg(qRound64(b.bottom() * 1000));
+        }
+        boxes.sort();
+        return boxes;
+    };
+
+    const EmMarkup before = m_markup;
+    EmMarkup updated = m_markup;
+    bool moved = false;
+    for (int r = 0; r < m_ui->tblPorts->rowCount(); ++r) {
+        bool ok = false;
+        const int number = m_ui->tblPorts->item(r, 0) ? m_ui->tblPorts->item(r, 0)->text().trimmed().toInt(&ok) : 0;
+        if (!ok || number < 1 || number > EmMarkup::kLastPortLayer - 200)
+            continue;
+        const auto *srcBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 3));
+        const QString src = srcBox ? srcBox->currentText().trimmed() : QString();
+        int layer = src.toInt(&ok);
+        if (!ok)
+            layer = m_subNameToGds.value(src, -1);
+        if (layer < 0)
+            continue;
+
+        EmMarkupPort port;
+        port.number = number;
+        for (const GdsFlatPolygon &p : qAsConst(m_flatPolys))
+            if (p.layer == layer && p.pointsUm.size() >= 2)
+                port.shapesUm << p.pointsUm;
+        if (port.shapesUm.isEmpty())
+            continue;
+        if (const EmMarkupPort *existing = updated.port(number)) {
+            if (shapeBoxes(existing->shapesUm) == shapeBoxes(port.shapesUm))
+                continue;
+            // Same number, other shapes: a port drawn in the markup, not this layout port. It moves aside.
+            const int free = freeMarkupPortNumber(updated);
+            if (free < 1)
+                continue;
+            for (EmMarkupPort &p : updated.ports)
+                if (p.number == number)
+                    p.number = free;
+            info(tr("Markup: P%1 drawn in the markup is now P%2; P%1 is the port on layer %3 of the layout.")
+                     .arg(number).arg(free).arg(layer));
+            moved = true;
+        }
+        const auto *dirBox = qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 6));
+        port.direction = dirBox && !dirBox->currentText().trimmed().isEmpty()
+                ? dirBox->currentText().trimmed().toUpper() : QStringLiteral("Z");
+        const QString from = layerName(qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 4)));
+        const QString to = layerName(qobject_cast<QComboBox *>(m_ui->tblPorts->cellWidget(r, 5)));
+        if (port.isVia()) {
+            port.fromLayer = from;
+            port.toLayer = to;
+        } else {
+            port.target = to.isEmpty() ? from : to;
+        }
+        const double v = m_ui->tblPorts->item(r, 1) ? m_ui->tblPorts->item(r, 1)->text().toDouble(&ok) : 0.0;
+        if (ok)
+            port.voltage = v;
+        const double z0 = m_ui->tblPorts->item(r, 2) ? m_ui->tblPorts->item(r, 2)->text().toDouble(&ok) : 0.0;
+        if (ok && z0 > 0.0)
+            port.z0 = z0;
+        updated.ports << port;
+    }
+    if (updated.ports.size() == m_markup.ports.size() && !moved)
+        return false;
+    std::sort(updated.ports.begin(), updated.ports.end(),
+              [](const EmMarkupPort &a, const EmMarkupPort &b) { return a.number < b.number; });
+    if (updated.layoutFile.isEmpty()) {
+        updated.layoutFile = m_ui->txtGdsFile->text().trimmed();
+        updated.cell = m_ui->cbxTopCell->currentText().trimmed();
+    }
+    const int added = updated.ports.size() - m_markup.ports.size();
+    applyMarkup(updated, true, tr("%n port(s) taken from the model's Ports table; not saved yet.", nullptr, added));
+    if (moved)
+        pushMarkupPortsToTable(before);   // the moved ports get rows of their own
+    return true;
+}
+
+int MainWindow::freeMarkupPortNumber(const EmMarkup &markup) const
+{
+    for (int n = 1; n <= EmMarkup::kLastPortLayer - 200; ++n)
+        if (!markup.port(n) && portsTableRow(n) < 0)
+            return n;
+    return 0;
+}
+
+void MainWindow::removeMarkupPorts(const QSet<int> &numbers)
+{
+    if (m_syncingMarkupPorts || numbers.isEmpty())
+        return;
+    EmMarkup updated = m_markup;
+    for (int i = updated.ports.size() - 1; i >= 0; --i)
+        if (numbers.contains(updated.ports.at(i).number))
+            updated.ports.removeAt(i);
+    if (updated.ports.size() == m_markup.ports.size())
+        return;
+    applyMarkup(updated, true, tr("Ports removed in the model's Ports table; not saved yet."));
 }
 
 QHash<QString, QVariant> MainWindow::currentStackupOverrides() const
@@ -7327,12 +8103,14 @@ void MainWindow::hookPortCombo(QComboBox* box)
             [this](int){
                 if (m_blockPortChanges) return;
                 setStateChanged();
+                pullPortsTableIntoMarkup();
                 refreshLayoutPreview();
             });
     connect(box, &QComboBox::editTextChanged, this,
             [this](const QString&){
                 if (m_blockPortChanges) return;
                 setStateChanged();
+                pullPortsTableIntoMarkup();
                 refreshLayoutPreview();
             });
 }

@@ -41,6 +41,7 @@ set(TEST_SOURCES
     tst_layout_layer_panel.cpp
     tst_key_bindings.cpp
     tst_gdslayout.cpp
+    tst_emmarkup.cpp
     tst_substrate_view.cpp
     tst_tips.cpp
     tst_preferences_dialog.cpp

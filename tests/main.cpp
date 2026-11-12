@@ -35,6 +35,7 @@
 #include "tst_layout_layer_panel.h"
 #include "tst_key_bindings.h"
 #include "tst_gdslayout.h"
+#include "tst_emmarkup.h"
 #include "tst_substrate_view.h"
 #include "tst_tips.h"
 
@@ -173,6 +174,7 @@ int main(int argc, char **argv)
         ADD_TEST(LayoutLayerPanelTest),
         ADD_TEST(KeyBindingsTest),
         ADD_TEST(GdsLayoutTest),
+        ADD_TEST(EmMarkupTest),
         ADD_TEST(SubstrateViewTest),
         ADD_TEST(TipsTest),
         ADD_TEST(AboutDialogTest),

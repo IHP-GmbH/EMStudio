@@ -197,6 +197,8 @@ public:
     QVector<PortInfo>               testParsePortsFromEditor() const;
     bool                            testInitDefaultOpenemsModel();
     int                             testPortsRowCount() const;
+    /*! File → Export EM Layout without the file dialog: writes \a gdsPath (+ .simcfg, _portmap.json). */
+    bool                            testExportEmLayout(const QString &gdsPath);
     void                            testSetSubLayerNamesChecked(bool on);
     QString                         testWriteEditorToTempPyFile(const QString& fileNameHint = QString()) const;
     QString                         testSimulationLogText() const;
@@ -589,6 +591,66 @@ private:
         MainWindow                 *m_w;
     };
     void                            setupLayoutLayerPanel();
+    /*!
+     * \brief Brings the EM markup in line with the current model and layout.
+     *
+     * Loads \c <model>.markup.json when the model changed; without a sidecar, markup drawn with the
+     * klayout_em_export plugin is taken from the flattened layout (not saved until edited or saved).
+     */
+    void                            syncMarkupWithLayout(const QStringList &metals = {});
+    /*! Shows \a markup in the Markup tab and the layout overlay. */
+    void                            applyMarkup(const EmMarkup &markup, bool dirty, const QString &status);
+    /*! Writes the markup sidecar of the current model; false (with a message) without a model path. */
+    bool                            saveMarkup();
+    /*! EM layout written by the Markup export: \c <model dir>/<model>_em.gds; empty without a model path. */
+    QString                         markupExportPath() const;
+    /*! New markup port for a rectangle drawn in the layout, its layers taken from the metals under it. */
+    EmMarkupPort                    markupPortFromRect(const QRectF &rectUm) const;
+    /*!
+     * \brief Exports the markup (EmExport::run) and uses the result in the model.
+     *
+     * The model's Layout File becomes the exported GDS and its Ports table the exported ports; the
+     * markup keeps pointing at the source layout, so the export can be repeated after edits.
+     */
+    /*! File → Export EM Layout…: asks for the .gds file, then exportEmLayoutTo. */
+    void                            exportEmLayoutAs();
+    /*! Writes the EM layout of the markup to \a gdsPath (with .simcfg and _portmap.json beside it). */
+    bool                            exportEmLayoutTo(const QString &gdsPath);
+    /*!
+     * \brief Writes <model>_em.gds / .simcfg / _portmap.json from the markup, renumbers the markup like the
+     * export and fills the Ports table from it (\a tableChanged). For a run (\a forRun) an export with the same
+     * markup, layout file, cell and stackup as the last one is not repeated.
+     */
+    bool                            exportMarkup(bool forRun, QString *errorMsg, bool *tableChanged = nullptr,
+                                                 const QString &outGds = QString());
+    /*!
+     * \brief Before Run: with markup ports, the run uses <model>_em.gds (exported when out of date); the
+     * on-disk script points at it until restoreLayoutPathAfterRun. False (with \a errorMsg) on markup problems.
+     */
+    bool                            prepareMarkupLayoutForRun(QString *errorMsg);
+    /*!
+     * \brief Carries markup port edits into the model's Ports table (rows matched by port number).
+     *
+     * Changed ports update their row, new ports get a row (source layer 200 + number), ports gone since
+     * \a before lose their row. Other rows are left alone.
+     */
+    void                            pushMarkupPortsToTable(const EmMarkup &before);
+    /*!
+     * \brief Takes direction, layers, Z0 and voltage of Ports-table rows into the markup ports with the same
+     * number; true when the markup changed.
+     */
+    bool                            pullPortsTableIntoMarkup();
+    /*!
+     * \brief Ports-table rows without a markup port become markup ports, shaped like the polygons of their
+     * source layer in the layout (rows whose layer has none are left out); true when ports were added.
+     */
+    bool                            adoptPortsTableIntoMarkup();
+    /*! Lowest port number used neither by \a markup nor by a Ports-table row; 0 when all are taken. */
+    int                             freeMarkupPortNumber(const EmMarkup &markup) const;
+    /*! Ports-table rows removed by the user: drops the markup ports with these numbers. */
+    void                            removeMarkupPorts(const QSet<int> &numbers);
+    /*! Row of the Ports table with port number \a number, or -1. */
+    int                             portsTableRow(int number) const;
     /*! Moves the layout + Layers pane to the Fields page (Field mode on) or back to Substrate. */
     void                            placeLayoutPane(bool fieldsPage);
     /*! Opens a run control page by its list title (selects the list item too). */
@@ -873,6 +935,18 @@ private:
     QAction                        *m_actionAssistant = nullptr;
     QTableWidget                   *m_tblThermalObjects = nullptr;
     class LayoutLayerPanel         *m_layoutLayerPanel = nullptr;
+    class QTabWidget               *m_layoutSideTabs = nullptr;    //!< "Layers | Markup" beside the layout
+    class EmMarkupPanel            *m_markupPanel = nullptr;
+    EmMarkup                        m_markup;                      //!< Markup of the current model (overlay + sidecar)
+    QString                         m_markupPath;                  //!< Sidecar the markup belongs to ("" = no model path)
+    QString                         m_markupLayoutKey;             //!< m_flatPolysKey the layout markup scan ran for
+    bool                            m_markupDirty = false;
+    bool                            m_syncingMarkupPorts = false;  //!< Markup ↔ Ports table update in progress
+    QByteArray                      m_markupExportKey;             //!< Inputs of the last EM export (exportMarkup)
+    QString                         m_markupExportPath;            //!< EM layout that export wrote
+    QSet<int>                       m_markupStackLayers;           //!< GDS layers of the stackup (last preview)
+    QStringList                     m_markupMetals;                //!< Stackup metals, bottom to top
+    QHash<QString, int>             m_markupMetalGds;              //!< Metal name → GDS layer
     QMenu                          *m_newModelMenu = nullptr;      //!< File → New
     class QPushButton              *m_btnAddSetting = nullptr;     //!< "+ Add setting..." above the grid
     class QLineEdit                *m_settingsFilter = nullptr;    //!< Filter field above the grid

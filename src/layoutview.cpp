@@ -424,6 +424,19 @@ LayoutView::LayoutView(QWidget *parent)
                               "Requires a field dump (fdump / VTK / VTU)."));
     connect(m_fieldBtn, &QToolButton::toggled, this, &LayoutView::onFieldButtonToggled);
 
+    m_rulerBtn = new QToolButton(this);
+    m_rulerBtn->setObjectName(QStringLiteral("layoutViewRulerBtn"));
+    m_rulerBtn->setCheckable(true);
+    m_rulerBtn->setAutoRaise(false);
+    m_rulerBtn->setCursor(Qt::PointingHandCursor);
+    m_rulerBtn->setFixedSize(48, 26);
+    m_rulerBtn->setText(tr("Ruler"));
+    m_rulerBtn->setStyleSheet(m_fieldBtn->styleSheet());
+    m_rulerBtn->setToolTip(tr("Ruler (M): click the start and the end point; points snap to layout vertices.\n"
+                              "A third click starts a new measurement. Ctrl+Shift+click measures any time.\n"
+                              "Esc clears the ruler."));
+    connect(m_rulerBtn, &QToolButton::toggled, this, &LayoutView::setMeasureArmed);
+
     m_fieldPanel = new QWidget(this);
     m_fieldPanel->setObjectName(QStringLiteral("layoutViewFieldPanel"));
     m_fieldPanel->setStyleSheet(
@@ -529,6 +542,7 @@ void LayoutView::clear()
     m_zoomLocked = false;
     m_cursorValid = false;
     clearMeasure();
+    m_markupGroup = nullptr;
     m_scene->clear();
     m_scene->setSceneRect(QRectF());
     syncFloatingControls();
@@ -569,6 +583,303 @@ void LayoutView::setPolygons(const QVector<GdsFlatPolygon> &polys,
     m_zoomLocked = false;
     applyViaMerge();
     rebuildScene();
+}
+
+void LayoutView::setMarkup(const EmMarkup &markup)
+{
+    m_markup = markup;
+    if (!m_markup.port(m_selectedMarkupPort))
+        m_selectedMarkupPort = 0;
+    delete m_markupGroup;   // with its children
+    m_markupGroup = nullptr;
+    addMarkupItems();
+    viewport()->update();
+}
+
+void LayoutView::setSelectedMarkupPort(int number)
+{
+    const int sel = m_markup.port(number) ? number : 0;
+    if (sel == m_selectedMarkupPort)
+        return;
+    m_selectedMarkupPort = sel;
+    m_portDragHandle = 0;
+    viewport()->update();
+}
+
+QRectF LayoutView::selectedPortRect() const
+{
+    const EmMarkupPort *port = m_markup.port(m_selectedMarkupPort);
+    if (!port || port->shapesUm.size() != 1)
+        return QRectF();
+    const QPolygonF &shape = port->shapesUm.first();
+    const QRectF box = shape.boundingRect();
+    const qreal eps = 1e-6;
+    for (const QPointF &v : shape) {
+        const bool onX = std::abs(v.x() - box.left()) < eps || std::abs(v.x() - box.right()) < eps;
+        const bool onY = std::abs(v.y() - box.top()) < eps || std::abs(v.y() - box.bottom()) < eps;
+        if (!onX || !onY)
+            return QRectF();
+    }
+    return box;
+}
+
+int LayoutView::markupPortAt(const QPoint &pos) const
+{
+    if (m_viewMode == ViewMode::Iso3D)
+        return 0;
+    for (int i = m_markup.ports.size() - 1; i >= 0; --i) {
+        const EmMarkupPort &port = m_markup.ports.at(i);
+        for (const QPolygonF &shape : port.shapesUm) {
+            const QRectF b = shape.boundingRect();
+            const QRect view = QRect(mapFromScene(QPointF(b.left(), -b.bottom())),
+                                     mapFromScene(QPointF(b.right(), -b.top()))).normalized().adjusted(-4, -4, 4, 4);
+            if (view.contains(pos))
+                return port.number;
+        }
+    }
+    return 0;
+}
+
+namespace {
+
+/*! Handles of a port rectangle: corners and edge middles; a line only has its two ends. */
+QVector<int> portHandles(const QRectF &r)
+{
+    if (r.width() <= 0.0)
+        return {4, 8};
+    if (r.height() <= 0.0)
+        return {1, 2};
+    return {1 | 4, 2 | 4, 1 | 8, 2 | 8, 1, 2, 4, 8};
+}
+
+/*! Handle position in GDS µm (Y-up). */
+QPointF portHandlePoint(const QRectF &r, int handle)
+{
+    const qreal x = (handle & 1) ? r.left() : (handle & 2) ? r.right() : r.center().x();
+    const qreal y = (handle & 4) ? r.bottom() : (handle & 8) ? r.top() : r.center().y();
+    return QPointF(x, y);
+}
+
+} // namespace
+
+int LayoutView::markupPortHandleAt(const QPoint &pos) const
+{
+    const QRectF r = selectedPortRect();
+    if (r.isNull() || m_viewMode == ViewMode::Iso3D)
+        return 0;
+    for (int handle : portHandles(r)) {
+        const QPointF um = portHandlePoint(r, handle);
+        const QPoint v = mapFromScene(QPointF(um.x(), -um.y()));
+        if (std::abs(v.x() - pos.x()) <= 5 && std::abs(v.y() - pos.y()) <= 5)
+            return handle;
+    }
+    const QRect view = QRect(mapFromScene(QPointF(r.left(), -r.bottom())),
+                             mapFromScene(QPointF(r.right(), -r.top()))).normalized().adjusted(-3, -3, 3, 3);
+    return view.contains(pos) ? 16 : 0;
+}
+
+QRectF LayoutView::markupPortDragRect(int handle, const QPointF &startScene, const QPointF &scenePt) const
+{
+    const QRectF r = selectedPortRect();
+    if (r.isNull())
+        return r;
+    qreal x1 = r.left(), x2 = r.right(), y1 = r.top(), y2 = r.bottom();   // y1 < y2 (Y-up)
+    if (handle == 16) {
+        const QPointF d = sceneToGdsUm(scenePt) - sceneToGdsUm(startScene);
+        // Snap the moved outline to the layout: whichever corner finds a vertex nearby.
+        const QPointF lo(x1 + d.x(), y1 + d.y());
+        const QPointF hi(x2 + d.x(), y2 + d.y());
+        const QPointF loSnap = sceneToGdsUm(snapToLayout(QPointF(lo.x(), -lo.y())));
+        const QPointF hiSnap = sceneToGdsUm(snapToLayout(QPointF(hi.x(), -hi.y())));
+        auto snapped = [](qreal raw, qreal s) { return std::abs(s - raw) > 1e-4; };
+        qreal dx = std::round(d.x() * 1000.0) / 1000.0;
+        qreal dy = std::round(d.y() * 1000.0) / 1000.0;
+        if (snapped(lo.x(), loSnap.x()))
+            dx = loSnap.x() - x1;
+        else if (snapped(hi.x(), hiSnap.x()))
+            dx = hiSnap.x() - x2;
+        if (snapped(lo.y(), loSnap.y()))
+            dy = loSnap.y() - y1;
+        else if (snapped(hi.y(), hiSnap.y()))
+            dy = hiSnap.y() - y2;
+        return r.translated(dx, dy);
+    }
+    const QPointF p = sceneToGdsUm(snapToLayout(scenePt));
+    if (handle & 1)
+        x1 = p.x();
+    if (handle & 2)
+        x2 = p.x();
+    if (handle & 4)
+        y2 = p.y();
+    if (handle & 8)
+        y1 = p.y();
+    return QRectF(QPointF(qMin(x1, x2), qMin(y1, y2)), QPointF(qMax(x1, x2), qMax(y1, y2)));
+}
+
+void LayoutView::setMeasureArmed(bool on)
+{
+    if (on && m_markupTool != MarkupTool::None)
+        setMarkupTool(MarkupTool::None);
+    if (m_rulerBtn && m_rulerBtn->isChecked() != on) {
+        const QSignalBlocker block(m_rulerBtn);
+        m_rulerBtn->setChecked(on);
+    }
+    if (m_measureArmed == on)
+        return;
+    m_measureArmed = on;
+    viewport()->setCursor(on ? Qt::CrossCursor : Qt::ArrowCursor);
+    if (on)
+        setFocus(Qt::OtherFocusReason);
+    emit measureArmedChanged(on);
+}
+
+void LayoutView::setMarkupTool(MarkupTool tool)
+{
+    if (tool != MarkupTool::None && m_viewMode == ViewMode::Iso3D)
+        setViewMode(ViewMode::Top2D);
+    if (tool != MarkupTool::None)
+        setMeasureArmed(false);
+    m_markupDragging = false;
+    if (tool == m_markupTool)
+        return;
+    m_markupTool = tool;
+    viewport()->setCursor(tool == MarkupTool::None ? Qt::ArrowCursor : Qt::CrossCursor);
+    if (tool != MarkupTool::None)
+        setFocus(Qt::OtherFocusReason);
+    viewport()->update();
+    emit markupToolChanged(tool);
+}
+
+QPointF LayoutView::snapToLayout(const QPointF &scenePt) const
+{
+    const qreal tolScene = QLineF(mapToScene(QPoint(0, 0)), mapToScene(QPoint(6, 0))).length();
+    qreal bestDx = tolScene, bestDy = tolScene;
+    QPointF out = scenePt;
+    for (const GdsFlatPolygon &p : m_polys) {
+        if (isPortLayerNumber(p.layer) || !visibleFor(p.layer))
+            continue;
+        for (const QPointF &v : p.pointsUm) {
+            const qreal sx = v.x(), sy = -v.y();
+            const qreal dx = std::abs(sx - scenePt.x());
+            const qreal dy = std::abs(sy - scenePt.y());
+            if (dx < bestDx && dy < 20 * tolScene) {
+                bestDx = dx;
+                out.setX(sx);
+            }
+            if (dy < bestDy && dx < 20 * tolScene) {
+                bestDy = dy;
+                out.setY(sy);
+            }
+        }
+    }
+    // 1 nm grid, as the GDS stores it
+    return QPointF(std::round(out.x() * 1000.0) / 1000.0, std::round(out.y() * 1000.0) / 1000.0);
+}
+
+QRectF LayoutView::markupRectFromDrag(const QPointF &startScene, const QPointF &endScene) const
+{
+    const QPoint a = mapFromScene(startScene);
+    const QPoint b = mapFromScene(endScene);
+    QPointF s = snapToLayout(startScene);
+    QPointF e = snapToLayout(endScene);
+    const int wPx = std::abs(a.x() - b.x());
+    const int hPx = std::abs(a.y() - b.y());
+    if (wPx < 4 && hPx >= 4)
+        e.setX(s.x());          // vertical line
+    else if (hPx < 4 && wPx >= 4)
+        e.setY(s.y());          // horizontal line
+    return QRectF(sceneToGdsUm(s), sceneToGdsUm(e)).normalized();
+}
+
+int LayoutView::markupItemCount() const
+{
+    return m_markupGroup ? m_markupGroup->childItems().size() : 0;
+}
+
+void LayoutView::addMarkupItems(QRectF *bounds)
+{
+    m_markupGroup = nullptr;
+    if (m_markup.isEmpty() || m_viewMode == ViewMode::Iso3D || isFieldVolume())
+        return;
+
+    const QColor regionColor(255, 140, 0);
+    const QColor portColor(0, 170, 200);
+    QList<QGraphicsItem *> items;
+    auto toScene = [](const QPolygonF &um) {
+        QPolygonF out;
+        out.reserve(um.size());
+        for (const QPointF &p : um)
+            out << QPointF(p.x(), -p.y());
+        return out;
+    };
+    auto addLabel = [&](const QString &text, const QColor &color, const QPointF &scenePos) {
+        auto *label = new QGraphicsSimpleTextItem(text);
+        QFont f = label->font();
+        f.setBold(true);
+        f.setPointSize(9);
+        label->setFont(f);
+        label->setBrush(color);
+        label->setFlag(QGraphicsItem::ItemIgnoresTransformations, true);
+        label->setPos(scenePos);
+        items << label;
+        return label;
+    };
+
+    if (m_markup.hasRegion) {
+        const QRectF r = m_markup.regionUm.normalized();
+        const QRectF sceneRect(QPointF(r.left(), -r.bottom()), QPointF(r.right(), -r.top()));
+        QPen pen(regionColor, 2, Qt::DashLine);
+        pen.setCosmetic(true);
+        auto *box = new QGraphicsRectItem(sceneRect);
+        box->setPen(pen);
+        box->setBrush(Qt::NoBrush);
+        items << box;
+        setPixelOffset(addLabel(tr("EM region"), regionColor, sceneRect.topLeft()), 2, -18);
+        if (bounds)
+            *bounds = bounds->isNull() ? sceneRect : bounds->united(sceneRect);
+    }
+
+    for (const EmMarkupPort &port : m_markup.ports) {
+        QRectF portBox;
+        for (const QPolygonF &shape : port.shapesUm) {
+            const QPolygonF scenePoly = toScene(shape);
+            portBox = portBox.isNull() ? scenePoly.boundingRect() : portBox.united(scenePoly.boundingRect());
+            QPen pen(portColor, 3);
+            pen.setCosmetic(true);
+            QGraphicsItem *item = nullptr;
+            const QRectF b = scenePoly.boundingRect();
+            if (b.width() < 1e-9 || b.height() < 1e-9) {
+                // Zero-width port (port wall): a line along the edge.
+                auto *line = new QGraphicsLineItem(QLineF(b.topLeft(), b.bottomRight()));
+                line->setPen(pen);
+                item = line;
+            } else {
+                auto *poly = new QGraphicsPolygonItem(scenePoly);
+                QColor fill = portColor;
+                fill.setAlpha(70);
+                poly->setPen(pen);
+                poly->setBrush(fill);
+                item = poly;
+            }
+            item->setToolTip(port.summary());
+            items << item;
+        }
+        if (!portBox.isNull()) {
+            auto *label = addLabel(QStringLiteral("P%1").arg(port.number), portColor, portBox.center());
+            label->setToolTip(port.summary());
+            setPixelOffset(label, 6, 4);
+        }
+    }
+
+    for (QGraphicsItem *item : items) {
+        item->setData(kRoleMarkup, true);
+        item->setAcceptedMouseButtons(Qt::NoButton);
+        m_scene->addItem(item);
+    }
+    m_markupGroup = m_scene->createItemGroup(items);
+    m_markupGroup->setData(kRoleMarkup, true);
+    m_markupGroup->setZValue(1e6);   // above every layer and port marker
+    m_markupGroup->setAcceptedMouseButtons(Qt::NoButton);
 }
 
 /*!*******************************************************************************************************************
@@ -634,6 +945,7 @@ void LayoutView::rebuildScene(bool refit)
     const int vScroll = verticalScrollBar()->value();
     m_cursorValid = false;
     clearMeasure();
+    m_markupGroup = nullptr;
     m_scene->clear();
     m_scene->setSceneRect(QRectF());
 
@@ -1060,6 +1372,8 @@ void LayoutView::rebuildScene2D(bool refit)
         // Keep the full field domain in sceneRect so the user can zoom out to it.
         bounds = bounds.isNull() ? fieldNorm : bounds.united(fieldNorm);
     }
+
+    addMarkupItems(&bounds);
 
     if (!bounds.isNull()) {
         bounds.adjust(-bounds.width() * 0.05, -bounds.height() * 0.05,
@@ -2105,6 +2419,8 @@ void LayoutView::syncFloatingControls()
         m_mode3dBtn->setChecked(m_viewMode == ViewMode::Iso3D);
         updateModeToolTips();
     }
+    if (m_rulerBtn)
+        m_rulerBtn->setVisible(m_viewMode != ViewMode::Iso3D || m_fieldOn);
     if (m_fieldHotZBtn) {
         m_fieldHotZBtn->setToolTip(isFieldVolume()
                                        ? tr("Jump clip to hottest Z (max temperature or |E|).")
@@ -2294,6 +2610,12 @@ void LayoutView::repositionFloatingControls()
         x -= m_fieldBtn->width();
         m_fieldBtn->move(x, m);
         m_fieldBtn->raise();
+        x -= m;
+    }
+    if (m_rulerBtn && !m_rulerBtn->isHidden()) {
+        x -= m_rulerBtn->width();
+        m_rulerBtn->move(x, m);
+        m_rulerBtn->raise();
     }
     if (m_denseViaLabel && m_denseViaLabel->isVisible()) {
         const int w = qMin(560, qMax(200, viewport()->width() - 40));
@@ -2826,11 +3148,31 @@ bool LayoutView::viewportEvent(QEvent *event)
  **********************************************************************************************************************/
 void LayoutView::keyPressEvent(QKeyEvent *event)
 {
+    if (event->key() == Qt::Key_Escape && m_markupTool != MarkupTool::None) {
+        setMarkupTool(MarkupTool::None);
+        event->accept();
+        return;
+    }
+    if ((event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) && m_selectedMarkupPort) {
+        emit markupPortRemoveRequested(m_selectedMarkupPort);
+        event->accept();
+        return;
+    }
+    if (event->key() == Qt::Key_Escape && m_portDragHandle) {
+        m_portDragHandle = 0;
+        viewport()->update();
+        event->accept();
+        return;
+    }
     if (event->key() == Qt::Key_Escape) {
+        if (m_selectedMarkupPort) {
+            setSelectedMarkupPort(0);
+            emit markupPortSelected(0);
+        }
         clearHighlight();
         clearMeasure();
         clearFieldProbe();
-        m_measureArmed = false;
+        setMeasureArmed(false);
         m_spaceDown = false;
         viewport()->setCursor(Qt::ArrowCursor);
         emit highlightCleared();
@@ -2998,8 +3340,7 @@ bool LayoutView::handleViewKey(QKeyEvent *event)
     case Qt::Key_M:
         if (!plain)
             return false;
-        m_measureArmed = !m_measureArmed;
-        viewport()->setCursor(m_measureArmed ? Qt::CrossCursor : Qt::ArrowCursor);
+        setMeasureArmed(!m_measureArmed);
         return true;
     case Qt::Key_L:
         if (!plain || !m_fieldOn || !m_fieldLogChk)
@@ -3181,7 +3522,8 @@ void LayoutView::mousePressEvent(QMouseEvent *event)
                  || (m_measureArmed && mods == Qt::NoModifier))) {
         m_leftPressPending = false;
         setFocus(Qt::MouseFocusReason);
-        addMeasurePoint(mapToScene(event->pos()));
+        const QPointF pt = mapToScene(event->pos());
+        addMeasurePoint(iso ? pt : snapToLayout(pt));
         event->accept();
         return;
     }
@@ -3217,6 +3559,52 @@ void LayoutView::mousePressEvent(QMouseEvent *event)
                      || mods == Qt::AltModifier))) {
         beginDrag(&m_panning, Qt::ClosedHandCursor);
         return;
+    }
+
+    // Armed markup tool: a left drag draws its rectangle.
+    if (left && mods == Qt::NoModifier && m_markupTool != MarkupTool::None && !iso) {
+        setFocus(Qt::MouseFocusReason);
+        m_leftPressPending = false;
+        m_markupDragging = true;
+        m_markupDragStart = mapToScene(event->pos());
+        m_markupDragEnd = m_markupDragStart;
+        event->accept();
+        return;
+    }
+
+    // Markup port: a click picks it; its handles resize it, a drag on it moves it.
+    if (left && mods == Qt::NoModifier && !iso && !m_spaceDown && !m_markup.ports.isEmpty()) {
+        int handle = markupPortHandleAt(event->pos());
+        if (!handle) {
+            const int hit = markupPortAt(event->pos());
+            if (hit) {
+                if (hit != m_selectedMarkupPort) {
+                    setSelectedMarkupPort(hit);
+                    emit markupPortSelected(hit);
+                }
+                handle = selectedPortRect().isNull() ? 0 : 16;
+                if (!handle) {
+                    setFocus(Qt::MouseFocusReason);
+                    event->accept();
+                    return;
+                }
+            }
+        }
+        if (handle) {
+            setFocus(Qt::MouseFocusReason);
+            m_leftPressPending = false;
+            m_portDragHandle = handle;
+            m_portDragMoved = false;
+            m_portDragPressPos = event->pos();
+            m_portDragStart = mapToScene(event->pos());
+            m_portDragEnd = m_portDragStart;
+            event->accept();
+            return;
+        }
+        if (m_selectedMarkupPort) {
+            setSelectedMarkupPort(0);
+            emit markupPortSelected(0);
+        }
     }
 
     // Plain left: defer select vs drag (orbit in 3D / pan in 2D).
@@ -3287,8 +3675,36 @@ void LayoutView::mouseMoveEvent(QMouseEvent *event)
     const QPointF g = sceneToGdsUm(m_cursorScene);
     emit cursorUmChanged(g.x(), g.y());
 
+    if (m_markupDragging) {
+        m_markupDragEnd = m_cursorScene;
+        viewport()->update();
+        event->accept();
+        return;
+    }
+
+    if (m_portDragHandle) {
+        if ((event->pos() - m_portDragPressPos).manhattanLength() >= 3)
+            m_portDragMoved = true;
+        m_portDragEnd = m_cursorScene;
+        viewport()->update();
+        event->accept();
+        return;
+    }
+    if (m_selectedMarkupPort && m_markupTool == MarkupTool::None && !m_measureArmed && !m_spaceDown) {
+        Qt::CursorShape shape = Qt::ArrowCursor;
+        switch (markupPortHandleAt(event->pos())) {
+        case 1 | 4: case 2 | 8: shape = Qt::SizeFDiagCursor; break;
+        case 2 | 4: case 1 | 8: shape = Qt::SizeBDiagCursor; break;
+        case 1: case 2: shape = Qt::SizeHorCursor; break;
+        case 4: case 8: shape = Qt::SizeVerCursor; break;
+        case 16: shape = Qt::SizeAllCursor; break;
+        default: break;
+        }
+        viewport()->setCursor(shape);
+    }
+
     if (m_measureHasStart && !m_measureHasEnd) {
-        m_measureEnd = m_cursorScene;
+        m_measureEnd = m_viewMode == ViewMode::Iso3D ? m_cursorScene : snapToLayout(m_cursorScene);
         emitMeasure();
     }
     viewport()->update();
@@ -3297,6 +3713,33 @@ void LayoutView::mouseMoveEvent(QMouseEvent *event)
 
 void LayoutView::mouseReleaseEvent(QMouseEvent *event)
 {
+    if (event->button() == Qt::LeftButton && m_portDragHandle) {
+        const int handle = m_portDragHandle;
+        m_portDragHandle = 0;
+        if (m_portDragMoved || (event->pos() - m_portDragPressPos).manhattanLength() >= 3) {
+            const QRectF rect = markupPortDragRect(handle, m_portDragStart, mapToScene(event->pos()));
+            if (!rect.isNull() && rect != selectedPortRect())
+                emit markupPortReshaped(m_selectedMarkupPort, rect);
+        }
+        viewport()->update();
+        event->accept();
+        return;
+    }
+    if (event->button() == Qt::LeftButton && m_markupDragging) {
+        m_markupDragging = false;
+        m_markupDragEnd = mapToScene(event->pos());
+        const QPoint a = mapFromScene(m_markupDragStart);
+        const bool click = (event->pos() - a).manhattanLength() < 4;
+        const MarkupTool tool = m_markupTool;
+        if (!click) {
+            const QRectF rect = markupRectFromDrag(m_markupDragStart, m_markupDragEnd);
+            setMarkupTool(MarkupTool::None);
+            emit markupRectDrawn(tool, rect);
+        }
+        viewport()->update();
+        event->accept();
+        return;
+    }
     if (event->button() == Qt::LeftButton && m_leftPressPending) {
         m_leftPressPending = false;
         const QPointF scenePt = mapToScene(m_pressPos);
@@ -3386,18 +3829,106 @@ bool LayoutView::showCoordinates() const
 
 void LayoutView::drawForeground(QPainter *painter, const QRectF &/*rect*/)
 {
+    if (m_markupDragging) {
+        const QRectF um = markupRectFromDrag(m_markupDragStart, m_markupDragEnd);
+        const QRectF sceneRect(QPointF(um.left(), -um.bottom()), QPointF(um.right(), -um.top()));
+        const QColor color = m_markupTool == MarkupTool::Region ? QColor(255, 140, 0) : QColor(0, 170, 200);
+        QPen pen(color, 2, Qt::DashLine);
+        pen.setCosmetic(true);
+        painter->setPen(pen);
+        QColor fill = color;
+        fill.setAlpha(40);
+        painter->setBrush(fill);
+        if (um.width() <= 0.0 || um.height() <= 0.0)
+            painter->drawLine(sceneRect.topLeft(), sceneRect.bottomRight());
+        else
+            painter->drawRect(sceneRect);
+        painter->setBrush(Qt::NoBrush);
+    }
+
+    if (const EmMarkupPort *port = m_viewMode == ViewMode::Iso3D ? nullptr : m_markup.port(m_selectedMarkupPort)) {
+        const QColor color(0, 120, 150);
+        painter->save();
+        painter->resetTransform();
+        auto toView = [this](const QPointF &um) { return QPointF(mapFromScene(QPointF(um.x(), -um.y()))); };
+        QPen outline(color, 2);
+        painter->setPen(outline);
+        painter->setBrush(Qt::NoBrush);
+        for (const QPolygonF &shape : port->shapesUm) {
+            QPolygonF v;
+            for (const QPointF &p : shape)
+                v << toView(p);
+            if (shape.boundingRect().width() <= 0.0 || shape.boundingRect().height() <= 0.0)
+                painter->drawPolyline(v);
+            else
+                painter->drawPolygon(v);
+        }
+        const QRectF r = selectedPortRect();
+        if (m_portDragHandle && m_portDragMoved && !r.isNull()) {
+            const QRectF um = markupPortDragRect(m_portDragHandle, m_portDragStart, m_portDragEnd);
+            QPen pen(color, 2, Qt::DashLine);
+            painter->setPen(pen);
+            QColor fill(0, 170, 200, 50);
+            painter->setBrush(fill);
+            const QPointF a = toView(QPointF(um.left(), um.bottom()));
+            const QPointF b = toView(QPointF(um.right(), um.top()));
+            if (um.width() <= 0.0 || um.height() <= 0.0)
+                painter->drawLine(a, b);
+            else
+                painter->drawRect(QRectF(a, b).normalized());
+            painter->setPen(QColor(20, 20, 20));
+            painter->drawText(QRectF(a, b).normalized().bottomRight() + QPointF(6, 14),
+                              QStringLiteral("%1 × %2 µm").arg(um.width(), 0, 'f', 3).arg(um.height(), 0, 'f', 3));
+        } else if (!r.isNull()) {
+            painter->setPen(QPen(color, 1));
+            painter->setBrush(Qt::white);
+            for (int handle : portHandles(r)) {
+                const QPointF c = toView(portHandlePoint(r, handle));
+                painter->drawRect(QRectF(c.x() - 4, c.y() - 4, 8, 8));
+            }
+        }
+        painter->restore();
+    }
+
     // Measure line in scene coordinates (view transform still active).
     if (m_measureHasStart) {
-        const QPointF end = (m_measureHasEnd || m_cursorValid) ? m_measureEnd : m_measureStart;
-        QPen pen(QColor(0, 0, 0));
-        pen.setWidth(0);
-        pen.setStyle(Qt::DashLine);
+        // Drawn in pixels: a thin line with end ticks across it, whatever the zoom.
+        const QPointF a = mapFromScene(m_measureStart);
+        const QPointF b = mapFromScene((m_measureHasEnd || m_cursorValid) ? m_measureEnd : m_measureStart);
+        painter->save();
+        painter->resetTransform();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        QPen pen(QColor(0, 0, 0), 1);
         painter->setPen(pen);
-        painter->drawLine(m_measureStart, end);
-        const qreal r = 0.2;
-        painter->setBrush(Qt::black);
-        painter->drawEllipse(m_measureStart, r, r);
-        painter->drawEllipse(end, r, r);
+        painter->drawLine(a, b);
+        const QLineF seg(a, b);
+        QPointF n(0.0, 1.0);
+        if (seg.length() > 0.5)
+            n = QPointF(-seg.dy() / seg.length(), seg.dx() / seg.length());
+        const qreal tick = 5.0;
+        painter->drawLine(a - n * tick, a + n * tick);
+        painter->drawLine(b - n * tick, b + n * tick);
+
+        // Length at the middle of the ruler, kept after the second click.
+        if (seg.length() > 0.5) {
+            const QPointF ga = sceneToGdsUm(m_measureStart);
+            const QPointF gb = sceneToGdsUm((m_measureHasEnd || m_cursorValid) ? m_measureEnd : m_measureStart);
+            const QString text = QStringLiteral("%1 µm").arg(std::hypot(gb.x() - ga.x(), gb.y() - ga.y()), 0, 'f', 3);
+            QFont font = painter->font();
+            font.setPointSize(9);
+            font.setBold(true);
+            painter->setFont(font);
+            const QFontMetrics fm(font);
+            QRectF box(0, 0, fm.horizontalAdvance(text) + 8, fm.height() + 2);
+            const QPointF side = n.y() > 0 ? -n : n;   // the label sits above / left of the line
+            box.moveCenter((a + b) / 2 + side * (box.height() / 2 + 6));
+            painter->setPen(QPen(QColor(0, 0, 0, 90), 1));
+            painter->setBrush(QColor(255, 255, 255, 230));
+            painter->drawRoundedRect(box, 3, 3);
+            painter->setPen(QColor(20, 20, 20));
+            painter->drawText(box, Qt::AlignCenter, text);
+        }
+        painter->restore();
     }
 
     if (m_fieldProbeActive && fieldShowTemp()) {

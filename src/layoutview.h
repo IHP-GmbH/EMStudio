@@ -31,6 +31,7 @@
 #include <QGraphicsView>
 #include <QGraphicsScene>
 
+#include "emmarkup.h"
 #include "gdslayout.h"
 #include "navigationstyle.h"
 
@@ -156,6 +157,48 @@ public:
     QStringList                 denseViaLayers() const;
     /*! Polygons as drawn (via layers merged per setViaMergeSize). */
     const QVector<GdsFlatPolygon> &drawnPolygons() const { return m_polys; }
+    /*!
+     * \brief EM markup (region, ports) drawn on top of the layout in the top view.
+     *
+     * The markup is an overlay: it is not part of the layout polygons, kept across layout reloads
+     * and not drawn in Iso3D.
+     */
+    void                        setMarkup(const EmMarkup &markup);
+    const EmMarkup             &markup() const { return m_markup; }
+    /*! Scene items currently drawing the markup (0 in Iso3D or without markup). */
+    int                         markupItemCount() const;
+
+    /*! Mouse tool that draws markup: a left drag gives a rectangle (top view only). */
+    enum class MarkupTool { None, Region, Port };
+    Q_ENUM(MarkupTool)
+    /*! Arms \a tool (cross cursor); one rectangle is drawn, then the tool is off again. Esc cancels. */
+    void                        setMarkupTool(MarkupTool tool);
+    MarkupTool                  markupTool() const { return m_markupTool; }
+    /*!
+     * \brief Rectangle for a drawn drag in GDS µm (Y-up), corners snapped to layout vertices nearby.
+     *
+     * A drag thinner than a few pixels gives a zero-width rectangle (a line: an edge port).
+     */
+    QRectF                      markupRectFromDrag(const QPointF &startScene, const QPointF &endScene) const;
+    /*!
+     * \brief Markup port picked in the top view (0 = none): its handles resize it, a drag on it moves it.
+     *
+     * Ports drawn as one rectangle or line can be reshaped; other shapes only get selected.
+     */
+    void                        setSelectedMarkupPort(int number);
+    int                         selectedMarkupPort() const { return m_selectedMarkupPort; }
+    /*!
+     * \brief Port rectangle (GDS µm, Y-up) after dragging \a handle of the selected port to \a scenePt.
+     *
+     * \a handle: edge flags (1 left, 2 right, 4 top, 8 bottom) or 16 = move; the moved edges snap to the
+     * layout like drawing does. Lines keep zero width.
+     */
+    QRectF                      markupPortDragRect(int handle, const QPointF &startScene,
+                                                   const QPointF &scenePt) const;
+    /*! Handle of the selected port under viewport point \a pos (see markupPortDragRect), 0 = none. */
+    int                         markupPortHandleAt(const QPoint &pos) const;
+    /*! Arms or disarms the ruler (M): left clicks set start and end, snapped to layout vertices. */
+    void                        setMeasureArmed(bool on);
     void                        setHighlightedLayer(const QString &name);
     void                        clearHighlight();
 
@@ -310,6 +353,18 @@ signals:
     void                        cursorUmChanged(qreal xUm, qreal yUm);
     /*! Measure segment in GDS micrometres; both ends valid when \a active. */
     void                        measureChanged(bool active, qreal dxUm, qreal dyUm, qreal lenUm);
+    /*! A markup tool finished a drag: \a rectUm in GDS µm (Y-up; zero width or height for a line). */
+    void                        markupRectDrawn(LayoutView::MarkupTool tool, const QRectF &rectUm);
+    /*! The armed markup tool changed (also when a drag finished or Esc cancelled it). */
+    void                        markupToolChanged(LayoutView::MarkupTool tool);
+    /*! A markup port was picked (or 0: the selection was cleared) in the layout. */
+    void                        markupPortSelected(int number);
+    /*! The selected port was resized or moved: its new rectangle in GDS µm (Y-up; zero width = line). */
+    void                        markupPortReshaped(int number, const QRectF &rectUm);
+    /*! Delete pressed with a markup port selected. */
+    void                        markupPortRemoveRequested(int number);
+    /*! The ruler was armed or disarmed (button, M or Esc). */
+    void                        measureArmedChanged(bool on);
 
 protected:
     void                        drawBackground(QPainter *painter, const QRectF &rect) override;
@@ -366,6 +421,8 @@ private:
     void                        addFieldOverlayItems();
     /*! Full-pane volume screenshot (Field+3D); scene = image pixel rectangle. */
     void                        addFieldVolumeItems();
+    /*! Adds the markup overlay group (top view); grows \a bounds by the region when given. */
+    void                        addMarkupItems(QRectF *bounds = nullptr);
     /*! Syncs Z slider / Log widgets from \c m_field without re-export. */
     void                        updateFieldControlsFromOverlay();
     /*! Shows/hides Field panel, updates status line, repositions floating controls. */
@@ -479,6 +536,25 @@ private:
     class QLabel               *m_denseViaLabel = nullptr; //!< Shown instead of the layout over the limit
     QHash<int, LayerStyle>      m_styles;
     QHash<int, PortInfo>        m_ports;
+    EmMarkup                    m_markup;
+    class QGraphicsItemGroup   *m_markupGroup = nullptr; //!< Owned by m_scene; reset on every scene clear
+    MarkupTool                  m_markupTool = MarkupTool::None;
+    bool                        m_markupDragging = false;
+    QPointF                     m_markupDragStart;       //!< Scene coordinates
+    QPointF                     m_markupDragEnd;
+    int                         m_selectedMarkupPort = 0;
+    int                         m_portDragHandle = 0;    //!< Handle being dragged (markupPortDragRect), 0 = none
+    bool                        m_portDragMoved = false;
+    QPoint                      m_portDragPressPos;
+    QPointF                     m_portDragStart;         //!< Scene coordinates
+    QPointF                     m_portDragEnd;
+    /*! Selected port as one rectangle (GDS µm, Y-up), or a null rect when it cannot be reshaped. */
+    QRectF                      selectedPortRect() const;
+    /*! Markup port whose shapes are under viewport point \a pos (a few pixels of slack), or 0. */
+    int                         markupPortAt(const QPoint &pos) const;
+    /*! Scene point snapped (per axis) to a layout vertex within a few pixels. */
+    QPointF                     snapToLayout(const QPointF &scenePt) const;
+    class QToolButton          *m_rulerBtn = nullptr;
 
     bool                        m_zoomLocked = false;
     QString                     m_highlightedName;
@@ -527,6 +603,7 @@ private:
     static constexpr int        kRolePen = 5;   // original QColor for port line pen
     static constexpr int        kRoleOutline = 6; // 2D layer outline item: its normal QPen (no fill)
     static constexpr int        kRoleFade = 7;  // item faded by the layout opacity (fill group, 3D pixmap)
+    static constexpr int        kRoleMarkup = 8; // EM markup overlay item (setMarkup)
     static constexpr int        kBaseFillAlpha = 150;
     static constexpr int        kPortPenWidth = 4;
 };

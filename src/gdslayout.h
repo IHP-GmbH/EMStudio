@@ -21,6 +21,7 @@
 #ifndef GDSLAYOUT_H
 #define GDSLAYOUT_H
 
+#include <QHash>
 #include <QString>
 #include <QVector>
 #include <QPolygonF>
@@ -35,12 +36,15 @@
  * \var layer      GDS layer number.
  * \var datatype   GDS datatype.
  * \var pointsUm   Closed polygon vertices in µm (caller may close/open; ≥3 points required to draw).
+ * \var properties GDS user properties of the shape (PROPATTR → PROPVALUE), e.g. the EM port settings
+ *                 that klayout_em_export keeps under key 200.
  **********************************************************************************************************************/
 struct GdsFlatPolygon
 {
-    int         layer = -1;
-    int         datatype = 0;
-    QPolygonF   pointsUm;
+    int                 layer = -1;
+    int                 datatype = 0;
+    QPolygonF           pointsUm;
+    QHash<int, QString> properties;
 };
 
 namespace GdsLayout {
@@ -62,6 +66,17 @@ bool flattenTopCell(const QString &filePath,
                     const QString &topCell,
                     QVector<GdsFlatPolygon> *out,
                     QString *errorMsg = nullptr);
+
+/*!
+ * \brief Writes \a polys as BOUNDARY elements of one structure \a cell (1 nm database unit).
+ *
+ * Coordinates are rounded to the database grid; properties are written as PROPATTR / PROPVALUE.
+ * Polygons above the GDSII vertex limit are refused (\a errorMsg names the layer).
+ */
+bool writeFlat(const QString &filePath,
+               const QString &cell,
+               const QVector<GdsFlatPolygon> &polys,
+               QString *errorMsg = nullptr);
 
 } // namespace GdsLayout
 

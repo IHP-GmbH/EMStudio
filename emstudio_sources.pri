@@ -40,6 +40,9 @@ SOURCES += \
     $$TOP/src/gdslayout.cpp \
     $$TOP/src/layoutview.cpp \
     $$TOP/src/layoutlayerpanel.cpp \
+    $$TOP/src/emmarkup.cpp \
+    $$TOP/src/emmarkuppanel.cpp \
+    $$TOP/src/emexport.cpp \
     $$TOP/src/sanitycheck.cpp \
     $$TOP/src/resultscalculator.cpp \
     $$TOP/src/exprparser.cpp \
@@ -111,6 +114,9 @@ HEADERS += \
     $$TOP/src/gdslayout.h \
     $$TOP/src/layoutview.h \
     $$TOP/src/layoutlayerpanel.h \
+    $$TOP/src/emmarkup.h \
+    $$TOP/src/emmarkuppanel.h \
+    $$TOP/src/emexport.h \
     $$TOP/src/sanitycheck.h \
     $$TOP/src/appsettings.h \
     $$TOP/src/resultscalculator.h \

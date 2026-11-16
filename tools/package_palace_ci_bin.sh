@@ -33,6 +33,12 @@ BINDIR="$(dirname "$BIN")"
 echo "palace: $BIN"
 mkdir -p /out/palace/bin /out/palace/lib
 cp -a "$BINDIR"/. /out/palace/bin/
+# Ship the image MPI launcher so LD_LIBRARY_PATH=lib/ matches mpirun (system Open MPI ABI differs).
+for mpi in mpirun mpiexec orterun; do
+  if command -v "$mpi" >/dev/null 2>&1; then
+    cp -L "$(command -v "$mpi")" "/out/palace/bin/$mpi" 2>/dev/null || true
+  fi
+done
 chmod -R a+rX /out/palace/bin
 
 # Collect absolute lib paths from every ELF under bin/, then copy dereferenced.

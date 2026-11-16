@@ -15,6 +15,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+# shutil used for which(mpirun) fallback
+
 ROOT = Path(__file__).resolve().parents[1]
 GDS = ROOT / "tests" / "golden" / "line_simple_viaport.gds"
 XML = ROOT / "tests" / "golden" / "SG13G2_200um.xml"
@@ -139,10 +141,13 @@ def main() -> int:
         for cand in sorted(bindir.glob("palace*.bin")):
             elf = cand
             break
-        print(f"Using solver binary {elf} via mpirun -np 1", flush=True)
+        mpirun = bindir / "mpirun"
+        if not mpirun.is_file():
+            mpirun = Path(shutil.which("mpirun") or "mpirun")
+        print(f"Using {mpirun} -np 1 {elf}", flush=True)
         env.setdefault("OMPI_ALLOW_RUN_AS_ROOT", "1")
         env.setdefault("OMPI_ALLOW_RUN_AS_ROOT_CONFIRM", "1")
-        cmd = ["mpirun", "--allow-run-as-root", "-np", "1", str(elf), str(cfg)]
+        cmd = [str(mpirun), "--allow-run-as-root", "-np", "1", str(elf), str(cfg)]
         subprocess.check_call(cmd, cwd=run_dir, env=env)
 
         print("CSV → Touchstone …", flush=True)

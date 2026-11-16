@@ -41,7 +41,7 @@ jobs:
       - name: Install gds2palace (for golden Touchstone)
         run: |
           sudo apt-get update
-          sudo apt-get install -y libglu1-mesa
+          sudo apt-get install -y libglu1-mesa openmpi-bin
           python3 -m pip install --upgrade pip
           python3 -m pip install "gds2palace==0.5.2" "scikit-rf" numpy
 

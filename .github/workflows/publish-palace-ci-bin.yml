@@ -31,8 +31,12 @@ jobs:
       - name: Smoke-test bin/palace
         run: |
           tar -xzf dist-palace-ci/palace-linux-x64.tar.gz
-          ./palace/bin/palace --help | head -n 5 || ./palace/bin/palace -h | head -n 5 || true
+          # shellcheck disable=SC1091
+          source palace/env.sh
+          palace --help | head -n 5 || palace -h | head -n 5 || true
           test -x palace/bin/palace
+          # Must actually resolve the solver binary (not only the launcher --help path).
+          palace 2>&1 | head -n 20 || true
 
       - name: Install gds2palace (for golden Touchstone)
         run: |
@@ -47,6 +51,8 @@ jobs:
           PALACE_CI_VERSION: ${{ inputs.palace_version }}
         run: |
           tar -xzf dist-palace-ci/palace-linux-x64.tar.gz
+          # shellcheck disable=SC1091
+          source palace/env.sh
           python3 tools/regen_palace_e2e_golden.py
           cp tests/golden/palace_e2e/line_viaport.s2p dist-palace-ci/line_viaport.s2p
 

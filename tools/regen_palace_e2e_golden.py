@@ -128,10 +128,12 @@ def main() -> int:
         print(f"Running Palace on {cfg} …", flush=True)
         env = os.environ.copy()
         lib = Path(palace_root) / "lib"
+        bindir = Path(palace_root) / "bin"
         if lib.is_dir():
             env["LD_LIBRARY_PATH"] = str(lib) + (
                 (":" + env["LD_LIBRARY_PATH"]) if env.get("LD_LIBRARY_PATH") else ""
             )
+        env["PATH"] = str(bindir) + (os.pathsep + env["PATH"] if env.get("PATH") else "")
         subprocess.check_call([str(palace), str(cfg)], cwd=run_dir, env=env)
 
         print("CSV → Touchstone …", flush=True)

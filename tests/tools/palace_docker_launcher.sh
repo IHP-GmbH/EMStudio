@@ -8,7 +8,7 @@ CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
 WORKDIR="$(dirname "$CONFIG")"
 IMAGE="${PALACE_CI_DOCKER_IMAGE:-ghcr.io/benvial/palace:v${PALACE_CI_VERSION:-0.16.0}}"
 
-# Soft wall clock for CI smoke (full E2E budget ≈ 10 min including mesh).
+# Soft wall clock for CI rectangle smoke (mesh+solve, keep well under 5 min).
 # Host uid so post-process on the mount is not blocked by root-owned files.
 RUN=(docker run --rm
   -u "$(id -u):$(id -g)"
@@ -17,6 +17,6 @@ RUN=(docker run --rm
   "$IMAGE"
   palace "$(basename "$CONFIG")")
 if command -v timeout >/dev/null 2>&1; then
-  exec timeout --signal=KILL 480 "${RUN[@]}"
+  exec timeout --signal=KILL 240 "${RUN[@]}"
 fi
 exec "${RUN[@]}"

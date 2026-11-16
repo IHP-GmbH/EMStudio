@@ -9,7 +9,7 @@ End-to-end check: EMStudio → gds2palace → Palace → Touchstone, compared to
 `PALACE_CI_VERSION=0.16.0`.
 
 The case is a short line with two via-port rectangles, **one frequency (5 GHz)**
-and a coarse mesh — full flow, but meant to finish in about **10 minutes**.
+and a coarse mesh — full flow smoke, meant to finish in about **5 minutes**.
 
 Optional native tarball (same image, packaged for offline/`PALACE_INSTALL_PATH`):
 

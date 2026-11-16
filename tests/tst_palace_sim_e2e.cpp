@@ -198,8 +198,7 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
         dir->setCurrentText(QStringLiteral("z"));
     }
 
-    // Smoke geometry (line + two via-port rectangles): one frequency, coarse mesh.
-    // Whole E2E must finish within ~10 minutes on CI.
+    // Smoke: line + two via-port rectangles, one freq, coarse mesh (full flow, short CI).
     w.testSetSimSetting(QStringLiteral("fstart"), 5e9);
     w.testSetSimSetting(QStringLiteral("fstop"), 5e9);
     w.testSetSimSetting(QStringLiteral("fstep"), 5e9);
@@ -226,15 +225,22 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
 
     w.testRunPalace(false);
 
+    auto dumpLogs = [&w]() {
+        return QStringLiteral("sim log:\n%1\nmain log:\n%2")
+                .arg(w.testSimulationLogText(), w.testMainLogText());
+    };
+
     const bool finished = QTest::qWaitFor([&w]() { return !w.testIsSimulationRunning(); },
-                                          10 * 60 * 1000);
-    QVERIFY2(finished, qPrintable(QStringLiteral("Palace E2E timed out.\n%1").arg(w.testSimulationLogText())));
+                                          5 * 60 * 1000);
+    QVERIFY2(finished, qPrintable(QStringLiteral("Palace E2E timed out.\n%1").arg(dumpLogs())));
 
     const QString log = w.testSimulationLogText();
+    QVERIFY2(!log.trimmed().isEmpty(),
+             qPrintable(QStringLiteral("Simulation never started.\n%1").arg(dumpLogs())));
     QVERIFY2(log.contains(QStringLiteral("Palace solver finished with exit code 0"))
                  || log.contains(QStringLiteral("Palace launcher finished with exit code 0"))
                  || log.contains(QStringLiteral("finished with exit code 0")),
-             qPrintable(QStringLiteral("Solver did not finish OK:\n%1").arg(log)));
+             qPrintable(QStringLiteral("Solver did not finish OK:\n%1").arg(dumpLogs())));
 
     QString runDir;
     {
@@ -246,8 +252,8 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     if (runDir.isEmpty())
         runDir = dir.filePath(QStringLiteral("palace_model/palace_e2e_line_data"));
 
-    // Headless-ish path still has m_headless=false for testRunPalace, so CSV→Touchstone
-    // should already have run; ensure a .s2p exists either way.
+    // testRunPalace(false) leaves m_headless unset so CSV→Touchstone may already have run;
+    // fall back to ResultsViewer if not.
     QString snp = findProducedTouchstone(runDir);
     if (snp.isEmpty()) {
         auto *rv = w.findChild<ResultsViewer *>();
@@ -258,7 +264,7 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
                  qPrintable(QStringLiteral("CSV→Touchstone failed: %1").arg(convertLog)));
         snp = findProducedTouchstone(runDir);
     }
-    QVERIFY2(!snp.isEmpty(), qPrintable(QStringLiteral("No Touchstone under %1\n%2").arg(runDir, log)));
+    QVERIFY2(!snp.isEmpty(), qPrintable(QStringLiteral("No Touchstone under %1\n%2").arg(runDir, dumpLogs())));
 
     TouchstoneNetwork got;
     QString loadErr;

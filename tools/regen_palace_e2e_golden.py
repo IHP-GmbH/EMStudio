@@ -44,7 +44,7 @@ settings["purpose"] = [0]
 settings["preprocess_gds"] = True
 settings["merge_polygon_size"] = 0.5
 settings["unit"] = 1e-6
-# Tiny smoke case: two via-port rectangles, one frequency, coarse mesh (whole E2E ≤ ~10 min).
+# Tiny smoke case: two via-port rectangles, one frequency, coarse mesh (whole E2E ≤ ~5 min).
 settings["margin"] = 10
 settings["fstart"] = 5e9
 settings["fstop"] = 5e9
@@ -130,7 +130,7 @@ def main() -> int:
             run_dir = cfg.parent
 
         print(f"Running Palace in Docker ({image}) on {cfg.name} …", flush=True)
-        # Hard cap: full golden (mesh+solve+snp) must stay under ~10 minutes on CI.
+        # Hard cap: rectangle smoke golden (mesh+solve+snp) under ~5 minutes on CI.
         # Match host uid so combine_extend_snp can rewrite Touchstone in the mount.
         uid = os.getuid() if hasattr(os, "getuid") else 1001
         gid = os.getgid() if hasattr(os, "getgid") else 1001
@@ -149,7 +149,7 @@ def main() -> int:
             cfg.name,
         ]
         if shutil.which("timeout"):
-            docker_cmd = ["timeout", "--signal=KILL", "480"] + docker_cmd
+            docker_cmd = ["timeout", "--signal=KILL", "240"] + docker_cmd
         subprocess.check_call(docker_cmd)
         # Best-effort if the image ignored -u (root-owned files).
         for p in run_dir.rglob("*"):

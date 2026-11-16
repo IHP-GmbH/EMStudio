@@ -17,6 +17,7 @@
 #include <QtMath>
 #include <cmath>
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QTableWidget>
 
@@ -180,7 +181,13 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &terr), qPrintable(terr));
     QVERIFY2(w.testInitDefaultPalaceModel(), "default Palace model failed");
 
-    // Two via ports on the golden GDS layers 201 / 202 (same as examples/palace/line_viaport).
+    // Via ports need from/to metal *names* in the script (gds2palace z-port rules).
+    auto *names = w.findChild<QCheckBox *>(QStringLiteral("cbSubLayerNames"));
+    QVERIFY(names);
+    QVERIFY2(names->isEnabled(), "stackup name map missing for Metal1/TopMetal2");
+    names->setChecked(true);
+
+    // Two via-port rectangles on golden GDS layers 201 / 202 (examples/palace/line_viaport).
     auto *tblPorts = w.findChild<QTableWidget *>(QStringLiteral("tblPorts"));
     QVERIFY(tblPorts);
     for (const char *layer : {"201", "202"}) {
@@ -196,6 +203,8 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
         from->setCurrentText(QStringLiteral("Metal1"));
         to->setCurrentText(QStringLiteral("TopMetal2"));
         dir->setCurrentText(QStringLiteral("z"));
+        QCOMPARE(from->currentText(), QStringLiteral("Metal1"));
+        QCOMPARE(to->currentText(), QStringLiteral("TopMetal2"));
     }
 
     // Smoke: line + two via-port rectangles, one freq, coarse mesh (full flow, short CI).
@@ -212,6 +221,10 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     QString genErr;
     const QString script = w.testGenerateScriptFromGuiState(&genErr);
     QVERIFY2(!script.isEmpty(), qPrintable(genErr));
+    QVERIFY2(script.contains(QStringLiteral("from_layername='Metal1'"))
+                 && script.contains(QStringLiteral("to_layername='TopMetal2'"))
+                 && script.contains(QStringLiteral("direction='z'")),
+             qPrintable(QStringLiteral("via-port lines missing in generated script:\n%1").arg(script)));
     w.testSetEditorText(script);
 
     const QString scriptPath = dir.filePath(QStringLiteral("palace_e2e_line.py"));

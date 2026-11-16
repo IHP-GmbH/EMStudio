@@ -2,97 +2,95 @@
 # Build palace-linux-x64.tar.gz from a prebuilt Docker image (no Palace compile).
 # Usage: package_palace_ci_bin.sh [palace_version] [out_dir]
 #
-# Layout: palace/bin/palace (+ sibling ELFs), palace/lib/*.
-# Callers: source palace/env.sh  (sets PATH + LD_LIBRARY_PATH).
+# Layout: palace/bin/palace (+ sibling ELFs), palace/lib/*.so* (dereferenced).
+# Callers: source palace/env.sh
 set -euo pipefail
 
 VERSION="${1:-0.16.0}"
 OUT_DIR="${2:-.}"
 IMAGE="${PALACE_CI_DOCKER_IMAGE:-ghcr.io/benvial/palace:v${VERSION}}"
 STAGE="$(mktemp -d)"
-cleanup() {
-  [[ -n "${CID:-}" ]] && docker rm -f "$CID" >/dev/null 2>&1 || true
-  rm -rf "$STAGE"
-}
-trap cleanup EXIT
+trap 'rm -rf "$STAGE"' EXIT
+
+mkdir -p "$OUT_DIR"
+OUT_ABS="$(cd "$OUT_DIR" && pwd)"
+TAR="$OUT_ABS/palace-linux-x64.tar.gz"
 
 echo "Pulling $IMAGE ..."
 docker pull "$IMAGE"
 
-CID="$(docker create "$IMAGE")"
-ROOT="$STAGE/palace"
-mkdir -p "$ROOT/bin" "$ROOT/lib"
+# Do the whole package inside the image so symlinks are resolved (cp -L).
+docker run --rm -v "$STAGE:/out" --entrypoint bash "$IMAGE" -lc '
+set -euo pipefail
+BIN="$(command -v palace)"
+BINDIR="$(dirname "$BIN")"
+echo "palace: $BIN"
+mkdir -p /out/palace/bin /out/palace/lib
+cp -a "$BINDIR"/. /out/palace/bin/
+chmod -R a+rX /out/palace/bin
 
-BIN_IN_IMAGE="$(docker run --rm --entrypoint bash "$IMAGE" -lc 'command -v palace')"
-BIN_DIR_IN_IMAGE="$(docker run --rm --entrypoint bash "$IMAGE" -lc 'dirname "$(command -v palace)"')"
-echo "palace in image: $BIN_IN_IMAGE (dir $BIN_DIR_IN_IMAGE)"
-
-docker cp "$CID:$BIN_DIR_IN_IMAGE/." "$ROOT/bin/"
-find "$ROOT/bin" -type f -exec chmod +x {} + 2>/dev/null || true
-test -x "$ROOT/bin/palace"
-
-# Resolve every shared library needed by every ELF under bin/ (inside the image).
-mapfile -t ELFS < <(docker run --rm --entrypoint bash "$IMAGE" -lc \
-  "find '$BIN_DIR_IN_IMAGE' -maxdepth 1 -type f -executable -print")
-LIBS_FILE="$STAGE/libs.txt"
-: > "$LIBS_FILE"
-for elf in "${ELFS[@]}"; do
-  docker run --rm --entrypoint bash "$IMAGE" -lc "ldd '$elf' 2>/dev/null" \
-    | awk '/=> \// {print $3} /^\t\// {print $1}' >> "$LIBS_FILE" || true
+# Collect absolute lib paths from every ELF under bin/, then copy dereferenced.
+TMPLIBS="$(mktemp)"
+for f in /out/palace/bin/*; do
+  [[ -f "$f" && -x "$f" ]] || continue
+  if head -c 4 "$f" 2>/dev/null | grep -q ELF; then
+    # ldd the file as it exists in the image path (same inode names).
+    src="$BINDIR/$(basename "$f")"
+    ldd "$src" 2>/dev/null | awk "/=> \\// {print \$3} /^\\t\\// {print \$1}" >> "$TMPLIBS" || true
+  fi
 done
-sort -u "$LIBS_FILE" -o "$LIBS_FILE"
-
+sort -u "$TMPLIBS" -o "$TMPLIBS"
 while IFS= read -r lib; do
   [[ -z "$lib" || "$lib" == *not* ]] && continue
   case "$lib" in
-    */ld-linux*.so*|*/libc.so*|*/libm.so*|*/libdl.so*|*/libpthread.so*|*/librt.so*|*/libresolv.so*|*/libstdc++.so*|*/libgcc_s.so*) continue ;;
+    */ld-linux*.so*|*/libc.so*|*/libm.so*|*/libdl.so*|*/libpthread.so*|*/librt.so*|*/libresolv.so*) continue ;;
   esac
   base="$(basename "$lib")"
-  [[ -f "$ROOT/lib/$base" ]] && continue
-  echo "lib: $lib"
-  docker cp "$CID:$lib" "$ROOT/lib/$base" 2>/dev/null || true
-done < "$LIBS_FILE"
+  # Dereference so SONAME symlinks become real files in the tarball.
+  if [[ -e "$lib" ]]; then
+    cp -L "$lib" "/out/palace/lib/$base" 2>/dev/null || cp -a "$lib" "/out/palace/lib/$base" || true
+  fi
+done < "$TMPLIBS"
+rm -f "$TMPLIBS"
 
-# Some Spack installs keep libs only as SONAME links; copy the real file too when needed.
-# Also grab common MPI / PETSc / HYPRE / MFEM / CEED trees if present beside the ELF.
-EXTRA_DIRS="$(docker run --rm --entrypoint bash "$IMAGE" -lc \
-  "ldd '$BIN_DIR_IN_IMAGE'/palace*.bin 2>/dev/null | awk '/=> \// {print \$3}' | xargs -r -n1 dirname | sort -u" || true)"
-for d in $EXTRA_DIRS; do
-  [[ -z "$d" || "$d" == /lib* || "$d" == /usr/lib* ]] && continue
-  echo "extra lib dir: $d"
-  # Copy *.so* from that directory (best-effort).
-  docker run --rm --entrypoint bash "$IMAGE" -lc "ls -1 '$d'/*.so* 2>/dev/null" | while read -r lib; do
-    [[ -z "$lib" ]] && continue
-    base="$(basename "$lib")"
-    [[ -f "$ROOT/lib/$base" ]] && continue
-    docker cp "$CID:$lib" "$ROOT/lib/$base" 2>/dev/null || true
-  done
+# If a copied entry is still a symlink to a missing target, try again via readlink -f.
+for link in /out/palace/lib/*; do
+  [[ -L "$link" ]] || continue
+  tgt="$(readlink -f "$link" 2>/dev/null || true)"
+  if [[ -n "$tgt" && -f "$tgt" ]]; then
+    cp -L "$tgt" "$link"
+  fi
 done
 
-cat > "$ROOT/env.sh" <<'EOF'
+cat > /out/palace/env.sh <<EOF
 # shellcheck shell=bash
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export PATH="$ROOT/bin:$PATH"
-export LD_LIBRARY_PATH="$ROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+ROOT="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+export PATH="\$ROOT/bin:\$PATH"
+export LD_LIBRARY_PATH="\$ROOT/lib\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 EOF
 
-cat > "$ROOT/PALACE_CI_BIN.txt" <<EOF
-version=$VERSION
-image=$IMAGE
-packaged_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cat > /out/palace/PALACE_CI_BIN.txt <<EOF
+version='"$VERSION"'
+image='"$IMAGE"'
+packaged_utc=\$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 
-# Sanity: ELF must see libpetsc when LD_LIBRARY_PATH is set.
-if compgen -G "$ROOT/bin/palace*.bin" >/dev/null; then
-  ELF="$(echo "$ROOT"/bin/palace*.bin | awk '{print $1}')"
-  if [[ ! -f "$ROOT/lib/libpetsc.so.3.24" ]] && [[ ! -f "$ROOT/lib/libpetsc.so" ]]; then
-    echo "WARNING: libpetsc not packaged; listing lib/:" >&2
-    ls -la "$ROOT/lib" >&2 || true
-  fi
+# Quick in-container check before we tar.
+# shellcheck disable=SC1091
+source /out/palace/env.sh
+ELF="$(echo /out/palace/bin/palace*.bin | awk "{print \$1}")"
+echo "ELF=$ELF"
+ldd "$ELF" | tee /out/ldd.txt
+if grep -E "not found" /out/ldd.txt; then
+  echo "Missing libs after packaging" >&2
+  ls -la /out/palace/lib >&2
+  exit 1
 fi
 
-mkdir -p "$OUT_DIR"
-TAR="$(cd "$OUT_DIR" && pwd)/palace-linux-x64.tar.gz"
-tar -C "$STAGE" -czf "$TAR" palace
-echo "Wrote $TAR ($(du -h "$TAR" | awk '{print $1}'))"
+tar -C /out -czf /out/palace-linux-x64.tar.gz palace
+ls -lh /out/palace-linux-x64.tar.gz
+'
+
+cp -f "$STAGE/palace-linux-x64.tar.gz" "$TAR"
+echo "Wrote $TAR"
 ls -lh "$TAR"

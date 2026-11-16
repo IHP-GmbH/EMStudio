@@ -131,10 +131,15 @@ def main() -> int:
 
         print(f"Running Palace in Docker ({image}) on {cfg.name} …", flush=True)
         # Hard cap: full golden (mesh+solve+snp) must stay under ~10 minutes on CI.
+        # Match host uid so combine_extend_snp can rewrite Touchstone in the mount.
+        uid = os.getuid() if hasattr(os, "getuid") else 1001
+        gid = os.getgid() if hasattr(os, "getgid") else 1001
         docker_cmd = [
             "docker",
             "run",
             "--rm",
+            "-u",
+            f"{uid}:{gid}",
             "-v",
             f"{run_dir.resolve()}:/sim",
             "-w",
@@ -146,6 +151,12 @@ def main() -> int:
         if shutil.which("timeout"):
             docker_cmd = ["timeout", "--signal=KILL", "480"] + docker_cmd
         subprocess.check_call(docker_cmd)
+        # Best-effort if the image ignored -u (root-owned files).
+        for p in run_dir.rglob("*"):
+            try:
+                p.chmod(p.stat().st_mode | 0o666 if p.is_file() else p.stat().st_mode | 0o777)
+            except OSError:
+                pass
 
         print("CSV → Touchstone …", flush=True)
         subprocess.check_call([sys.executable, str(COMBINE)], cwd=run_dir)

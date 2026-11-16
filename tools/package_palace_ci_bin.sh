@@ -10,7 +10,12 @@ VERSION="${1:-0.16.0}"
 OUT_DIR="${2:-.}"
 IMAGE="${PALACE_CI_DOCKER_IMAGE:-ghcr.io/benvial/palace:v${VERSION}}"
 STAGE="$(mktemp -d)"
-trap 'rm -rf "$STAGE"' EXIT
+cleanup() {
+  # Files inside STAGE are often root-owned (docker write); best-effort remove.
+  chmod -R u+w "$STAGE" 2>/dev/null || true
+  rm -rf "$STAGE" 2>/dev/null || sudo rm -rf "$STAGE" 2>/dev/null || true
+}
+trap cleanup EXIT
 
 mkdir -p "$OUT_DIR"
 OUT_ABS="$(cd "$OUT_DIR" && pwd)"
@@ -20,7 +25,8 @@ echo "Pulling $IMAGE ..."
 docker pull "$IMAGE"
 
 # Do the whole package inside the image so symlinks are resolved (cp -L).
-docker run --rm -v "$STAGE:/out" --entrypoint bash "$IMAGE" -lc '
+# Run as the host user so the tarball is removable without root.
+docker run --rm -u "$(id -u):$(id -g)" -v "$STAGE:/out" --entrypoint bash "$IMAGE" -lc '
 set -euo pipefail
 BIN="$(command -v palace)"
 BINDIR="$(dirname "$BIN")"

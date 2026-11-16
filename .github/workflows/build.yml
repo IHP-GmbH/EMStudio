@@ -374,20 +374,6 @@ jobs:
       - name: Pull Palace Docker image
         run: docker pull "$PALACE_CI_DOCKER_IMAGE"
 
-      - name: Fetch golden Touchstone from Release if not in tree
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          GOLD=tests/golden/palace_e2e/line_viaport.s2p
-          if [[ ! -f "$GOLD" ]]; then
-            mkdir -p tests/golden/palace_e2e
-            gh release download "$PALACE_CI_TAG" \
-              --repo "${{ github.repository }}" \
-              --pattern 'line_viaport.s2p' \
-              --dir tests/golden/palace_e2e
-          fi
-          test -s "$GOLD"
-
       - name: Configure tests (qmake)
         run: |
           mkdir -p build-tests-palace

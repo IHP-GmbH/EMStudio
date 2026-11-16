@@ -1,6 +1,7 @@
-# Palace E2E golden (CI)
+# Palace E2E (CI)
 
-End-to-end check: EMStudio → gds2palace → Palace → Touchstone, compared to `line_viaport.s2p`.
+End-to-end smoke: EMStudio → gds2palace → Palace → Touchstone on
+`line_simple_viaport.gds` (line + two via-port rectangles).
 
 ## How CI runs Palace (never compiled on every PR)
 
@@ -8,8 +9,9 @@ End-to-end check: EMStudio → gds2palace → Palace → Touchstone, compared to
 `tests/tools/palace_docker_launcher.sh` (EMStudio script mode). Pin:
 `PALACE_CI_VERSION=0.16.0`.
 
-The case is a short line with two via-port rectangles, **one frequency (5 GHz)**
-and a coarse mesh — full flow smoke, typically a few minutes (CI allows up to ~7).
+Settings are intentionally very coarse (**1 GHz**, large cells) so the job stays
+a short full-flow check. The Qt test asserts solver exit 0 and a valid 2-port
+`.s2p` — it does not compare magnitudes to a golden file.
 
 Optional native tarball (same image, packaged for offline/`PALACE_INSTALL_PATH`):
 
@@ -17,14 +19,11 @@ Optional native tarball (same image, packaged for offline/`PALACE_INSTALL_PATH`)
 - Asset: `palace-linux-x64.tar.gz` → extract to `palace/bin/palace` + `palace/lib/`
 - Publish (rare): Actions → **Publish Palace CI binary**, or `./tools/publish_palace_ci_bin.sh 0.16.0`
 
-## Regenerating the golden Touchstone
+## Optional golden Touchstone
 
-Needs Docker, `gds2palace==0.5.2`, and `scikit-rf`:
+`line_viaport.s2p` can still be regenerated for offline inspection:
 
 ```bash
 export PALACE_CI_VERSION=0.16.0
 python3 tools/regen_palace_e2e_golden.py
-# writes tests/golden/palace_e2e/line_viaport.s2p
 ```
-
-The `!` header in `line_viaport.s2p` records the image / gds2palace versions.

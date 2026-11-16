@@ -44,17 +44,17 @@ settings["purpose"] = [0]
 settings["preprocess_gds"] = True
 settings["merge_polygon_size"] = 0.5
 settings["unit"] = 1e-6
-# Tiny smoke case: two via-port rectangles, one frequency, coarse mesh (whole E2E ≤ ~5 min).
-settings["margin"] = 10
-settings["fstart"] = 5e9
-settings["fstop"] = 5e9
-settings["fstep"] = 5e9
+# Tiny smoke case: two via-port rectangles, one frequency, very coarse mesh (CI ≤ ~5 min).
+settings["margin"] = 5
+settings["fstart"] = 1e9
+settings["fstop"] = 1e9
+settings["fstep"] = 1e9
 settings["fpoint"] = []
 settings["fdump"] = []
 settings["boundary"] = ["ABC", "ABC", "ABC", "ABC", "ABC", "ABC"]
-settings["refined_cellsize"] = 20
+settings["refined_cellsize"] = 50
 settings["cells_per_wavelength"] = 10
-settings["meshsize_max"] = 200
+settings["meshsize_max"] = 500
 settings["adaptive_mesh_iterations"] = 0
 settings["no_gui"] = True  # headless CI / regen
 
@@ -172,7 +172,7 @@ def main() -> int:
         header = (
             f"! Palace E2E golden for line_simple_viaport\n"
             f"! palace={version} image={image} "
-            f"gds2palace=0.5.2 f=5GHz (single point, coarse mesh)\n"
+            f"gds2palace=0.5.2 f=1GHz (single point, very coarse mesh)\n"
         )
         if not text.lstrip().startswith("!"):
             text = header + text

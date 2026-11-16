@@ -2,34 +2,29 @@
 
 End-to-end check: EMStudio → gds2palace → Palace → Touchstone, compared to `line_viaport.s2p`.
 
-## Prebuilt Palace (never built on every CI run)
+## How CI runs Palace (never compiled on every PR)
 
-| Item | Value |
-|------|--------|
-| GitHub Release tag | `palace-bin-v0.16.0` |
-| Asset | `palace-linux-x64.tar.gz` |
-| Layout after extract | `palace/bin/palace` (+ shared libs under `palace/`) |
-| Workflow env pin | `PALACE_CI_VERSION=0.16.0` |
+`sim-palace` pulls `ghcr.io/benvial/palace:v0.16.0` and launches it through
+`tests/tools/palace_docker_launcher.sh` (EMStudio script mode). Pin:
+`PALACE_CI_VERSION=0.16.0`.
 
-Publish / refresh the Release (rare) with:
+The case is a short line with two via-port rectangles, **one frequency (5 GHz)**
+and a coarse mesh — full flow, but meant to finish in about **10 minutes**.
 
-```bash
-# on a machine with Docker, or via Actions → "Publish Palace CI binary"
-./tools/publish_palace_ci_bin.sh 0.16.0
-```
+Optional native tarball (same image, packaged for offline/`PALACE_INSTALL_PATH`):
 
-Source image for packaging: `ghcr.io/benvial/palace:v0.16.0` (CPU). Bump the tag and `PALACE_CI_VERSION` together when upgrading.
+- Release tag: `palace-bin-v0.16.0`
+- Asset: `palace-linux-x64.tar.gz` → extract to `palace/bin/palace` + `palace/lib/`
+- Publish (rare): Actions → **Publish Palace CI binary**, or `./tools/publish_palace_ci_bin.sh 0.16.0`
 
 ## Regenerating the golden Touchstone
 
-Requires the same Palace version as CI and `gds2palace==0.5.2`:
+Needs Docker, `gds2palace==0.5.2`, and `scikit-rf`:
 
 ```bash
-export PALACE_INSTALL_PATH=/path/to/palace   # contains bin/palace
-export EMSTUDIO_PALACE_E2E=1
-# after building emstudio_golden_tests:
-./emstudio_golden_tests PalaceSimE2E -platform offscreen
-# copy the produced .s2p over line_viaport.s2p (see test log for path)
+export PALACE_CI_VERSION=0.16.0
+python3 tools/regen_palace_e2e_golden.py
+# writes tests/golden/palace_e2e/line_viaport.s2p
 ```
 
-Versions used for the checked-in golden are noted in the `!` header of `line_viaport.s2p`.
+The `!` header in `line_viaport.s2p` records the image / gds2palace versions.

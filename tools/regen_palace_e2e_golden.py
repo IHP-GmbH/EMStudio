@@ -139,8 +139,11 @@ def main() -> int:
         for cand in sorted(bindir.glob("palace*.bin")):
             elf = cand
             break
-        print(f"Using solver binary {elf}", flush=True)
-        subprocess.check_call([str(elf), str(cfg)], cwd=run_dir, env=env)
+        print(f"Using solver binary {elf} via mpirun -np 1", flush=True)
+        env.setdefault("OMPI_ALLOW_RUN_AS_ROOT", "1")
+        env.setdefault("OMPI_ALLOW_RUN_AS_ROOT_CONFIRM", "1")
+        cmd = ["mpirun", "--allow-run-as-root", "-np", "1", str(elf), str(cfg)]
+        subprocess.check_call(cmd, cwd=run_dir, env=env)
 
         print("CSV → Touchstone …", flush=True)
         # combine_extend_snp.py uses cwd as the results folder (no path argv).

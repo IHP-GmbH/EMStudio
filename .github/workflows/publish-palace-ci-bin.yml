@@ -45,6 +45,20 @@ jobs:
           fi
           "$ELF" --help 2>&1 | head -n 20 || "$ELF" -h 2>&1 | head -n 20 || true
 
+      - name: Publish binary Release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="palace-bin-v${PALACE_CI_VERSION}"
+          TAR=dist-palace-ci/palace-linux-x64.tar.gz
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$TAR" --clobber
+          else
+            gh release create "$TAG" "$TAR" \
+              --title "Palace CI binary v${PALACE_CI_VERSION}" \
+              --notes "Prebuilt Linux x86_64 Palace for EMStudio sim-palace CI (palace/bin/palace + lib/). Packaged from ghcr.io/benvial/palace:v${PALACE_CI_VERSION}."
+          fi
+
       - name: Install gds2palace (for golden Touchstone)
         run: |
           sudo apt-get update
@@ -54,16 +68,21 @@ jobs:
 
       - name: Regenerate E2E golden Touchstone
         env:
+          GH_TOKEN: ${{ github.token }}
           PALACE_INSTALL_PATH: ${{ github.workspace }}/palace
           PALACE_CI_VERSION: ${{ inputs.palace_version }}
+          OMPI_ALLOW_RUN_AS_ROOT: '1'
+          OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: '1'
         run: |
-          tar -xzf dist-palace-ci/palace-linux-x64.tar.gz
           # shellcheck disable=SC1091
           source palace/env.sh
           python3 tools/regen_palace_e2e_golden.py
           cp tests/golden/palace_e2e/line_viaport.s2p dist-palace-ci/line_viaport.s2p
+          TAG="palace-bin-v${PALACE_CI_VERSION}"
+          gh release upload "$TAG" dist-palace-ci/line_viaport.s2p --clobber
 
       - name: Upload packaged assets
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: palace-ci-bin-${{ inputs.palace_version }}
@@ -71,18 +90,4 @@ jobs:
             dist-palace-ci/palace-linux-x64.tar.gz
             dist-palace-ci/line_viaport.s2p
             tests/golden/palace_e2e/line_viaport.s2p
-
-      - name: Publish GitHub Release asset
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="palace-bin-v${PALACE_CI_VERSION}"
-          TAR=dist-palace-ci/palace-linux-x64.tar.gz
-          SNP=dist-palace-ci/line_viaport.s2p
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$TAR" "$SNP" --clobber
-          else
-            gh release create "$TAG" "$TAR" "$SNP" \
-              --title "Palace CI binary v${PALACE_CI_VERSION}" \
-              --notes "Prebuilt Linux x86_64 Palace for EMStudio sim-palace CI (palace/bin/palace). Packaged from ghcr.io/benvial/palace:v${PALACE_CI_VERSION}. Also ships line_viaport.s2p golden for PalaceSimE2E."
-          fi
+          if-no-files-found: warn

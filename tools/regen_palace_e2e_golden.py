@@ -134,10 +134,13 @@ def main() -> int:
                 (":" + env["LD_LIBRARY_PATH"]) if env.get("LD_LIBRARY_PATH") else ""
             )
         env["PATH"] = str(bindir) + (os.pathsep + env["PATH"] if env.get("PATH") else "")
-        # GitHub runners have no default MPI launcher; force serial.
-        subprocess.check_call(
-            [str(palace), "--launcher", "false", str(cfg)], cwd=run_dir, env=env
-        )
+        # Prefer the solver ELF (palace is a launcher that needs MPI). Serial CI: run the ELF.
+        elf = palace
+        for cand in sorted(bindir.glob("palace*.bin")):
+            elf = cand
+            break
+        print(f"Using solver binary {elf}", flush=True)
+        subprocess.check_call([str(elf), str(cfg)], cwd=run_dir, env=env)
 
         print("CSV → Touchstone …", flush=True)
         # combine_extend_snp.py uses cwd as the results folder (no path argv).

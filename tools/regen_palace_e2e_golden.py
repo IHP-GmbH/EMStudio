@@ -94,16 +94,18 @@ utilities.create_run_script(sim_path)
 
 
 def main() -> int:
-    palace_root = os.environ.get("PALACE_INSTALL_PATH", "").strip()
-    palace = Path(palace_root) / "bin" / "palace"
-    if not palace.is_file():
-        print(f"PALACE_INSTALL_PATH/bin/palace missing ({palace})", file=sys.stderr)
-        return 2
+    version = os.environ.get("PALACE_CI_VERSION", "0.16.0").strip()
+    image = os.environ.get(
+        "PALACE_CI_DOCKER_IMAGE", f"ghcr.io/benvial/palace:v{version}"
+    ).strip()
     if not GDS.is_file() or not XML.is_file():
         print("golden GDS/XML missing", file=sys.stderr)
         return 2
     if not COMBINE.is_file():
         print(f"missing {COMBINE}", file=sys.stderr)
+        return 2
+    if shutil.which("docker") is None:
+        print("docker is required to run Palace for the golden", file=sys.stderr)
         return 2
 
     work = Path(tempfile.mkdtemp(prefix="palace_e2e_golden_"))
@@ -119,7 +121,6 @@ def main() -> int:
         run_dir = work / "palace_model" / "palace_e2e_line_data"
         cfg = run_dir / "config.json"
         if not cfg.is_file():
-            # gds2palace may use a slightly different folder name
             candidates = list((work / "palace_model").glob("*_data/config.json"))
             if not candidates:
                 print("config.json not found under palace_model/", file=sys.stderr)
@@ -127,31 +128,23 @@ def main() -> int:
             cfg = candidates[0]
             run_dir = cfg.parent
 
-        print(f"Running Palace on {cfg} …", flush=True)
-        env = os.environ.copy()
-        lib = Path(palace_root) / "lib"
-        bindir = Path(palace_root) / "bin"
-        if lib.is_dir():
-            env["LD_LIBRARY_PATH"] = str(lib) + (
-                (":" + env["LD_LIBRARY_PATH"]) if env.get("LD_LIBRARY_PATH") else ""
-            )
-        env["PATH"] = str(bindir) + (os.pathsep + env["PATH"] if env.get("PATH") else "")
-        # Prefer the solver ELF (palace is a launcher that needs MPI). Serial CI: run the ELF.
-        elf = palace
-        for cand in sorted(bindir.glob("palace*.bin")):
-            elf = cand
-            break
-        mpirun = bindir / "mpirun"
-        if not mpirun.is_file():
-            mpirun = Path(shutil.which("mpirun") or "mpirun")
-        print(f"Using {mpirun} -np 1 {elf}", flush=True)
-        env.setdefault("OMPI_ALLOW_RUN_AS_ROOT", "1")
-        env.setdefault("OMPI_ALLOW_RUN_AS_ROOT_CONFIRM", "1")
-        cmd = [str(mpirun), "--allow-run-as-root", "-np", "1", str(elf), str(cfg)]
-        subprocess.check_call(cmd, cwd=run_dir, env=env)
+        print(f"Running Palace in Docker ({image}) on {cfg.name} …", flush=True)
+        subprocess.check_call(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{run_dir.resolve()}:/sim",
+                "-w",
+                "/sim",
+                image,
+                "palace",
+                cfg.name,
+            ]
+        )
 
         print("CSV → Touchstone …", flush=True)
-        # combine_extend_snp.py uses cwd as the results folder (no path argv).
         subprocess.check_call([sys.executable, str(COMBINE)], cwd=run_dir)
 
         snps = sorted(run_dir.rglob("*.s2p")) + sorted(run_dir.rglob("*.S2P"))
@@ -164,7 +157,7 @@ def main() -> int:
         text = snps[0].read_text(encoding="utf-8", errors="replace")
         header = (
             f"! Palace E2E golden for line_simple_viaport\n"
-            f"! palace={os.environ.get('PALACE_CI_VERSION', 'unknown')} "
+            f"! palace={version} image={image} "
             f"gds2palace=0.5.2 f=0..10GHz step=5GHz\n"
         )
         if not text.lstrip().startswith("!"):

@@ -69,13 +69,10 @@ jobs:
       - name: Regenerate E2E golden Touchstone
         env:
           GH_TOKEN: ${{ github.token }}
-          PALACE_INSTALL_PATH: ${{ github.workspace }}/palace
           PALACE_CI_VERSION: ${{ inputs.palace_version }}
-          OMPI_ALLOW_RUN_AS_ROOT: '1'
-          OMPI_ALLOW_RUN_AS_ROOT_CONFIRM: '1'
+          PALACE_CI_DOCKER_IMAGE: ghcr.io/benvial/palace:v${{ inputs.palace_version }}
         run: |
-          # shellcheck disable=SC1091
-          source palace/env.sh
+          # Solver runs inside the same Docker image the tarball was packaged from.
           python3 tools/regen_palace_e2e_golden.py
           cp tests/golden/palace_e2e/line_viaport.s2p dist-palace-ci/line_viaport.s2p
           TAG="palace-bin-v${PALACE_CI_VERSION}"

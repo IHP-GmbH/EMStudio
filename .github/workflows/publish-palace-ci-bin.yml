@@ -67,12 +67,13 @@ jobs:
           python3 -m pip install "gds2palace==0.5.2" "scikit-rf" numpy
 
       - name: Regenerate E2E golden Touchstone
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
           PALACE_CI_VERSION: ${{ inputs.palace_version }}
           PALACE_CI_DOCKER_IMAGE: ghcr.io/benvial/palace:v${{ inputs.palace_version }}
         run: |
-          # Solver runs inside the same Docker image the tarball was packaged from.
+          # One-frequency coarse rectangle/line case; Docker Palace (≤10 min hard cap).
           python3 tools/regen_palace_e2e_golden.py
           cp tests/golden/palace_e2e/line_viaport.s2p dist-palace-ci/line_viaport.s2p
           TAG="palace-bin-v${PALACE_CI_VERSION}"

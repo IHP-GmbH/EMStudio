@@ -44,16 +44,17 @@ settings["purpose"] = [0]
 settings["preprocess_gds"] = True
 settings["merge_polygon_size"] = 0.5
 settings["unit"] = 1e-6
-settings["margin"] = 20
-settings["fstart"] = 0e9
-settings["fstop"] = 10e9
+# Tiny smoke case: two via-port rectangles, one frequency, coarse mesh (whole E2E ≤ ~10 min).
+settings["margin"] = 10
+settings["fstart"] = 5e9
+settings["fstop"] = 5e9
 settings["fstep"] = 5e9
 settings["fpoint"] = []
 settings["fdump"] = []
 settings["boundary"] = ["ABC", "ABC", "ABC", "ABC", "ABC", "ABC"]
-settings["refined_cellsize"] = 5
+settings["refined_cellsize"] = 20
 settings["cells_per_wavelength"] = 10
-settings["meshsize_max"] = 100
+settings["meshsize_max"] = 200
 settings["adaptive_mesh_iterations"] = 0
 settings["no_gui"] = True  # headless CI / regen
 
@@ -129,20 +130,22 @@ def main() -> int:
             run_dir = cfg.parent
 
         print(f"Running Palace in Docker ({image}) on {cfg.name} …", flush=True)
-        subprocess.check_call(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "-v",
-                f"{run_dir.resolve()}:/sim",
-                "-w",
-                "/sim",
-                image,
-                "palace",
-                cfg.name,
-            ]
-        )
+        # Hard cap: full golden (mesh+solve+snp) must stay under ~10 minutes on CI.
+        docker_cmd = [
+            "docker",
+            "run",
+            "--rm",
+            "-v",
+            f"{run_dir.resolve()}:/sim",
+            "-w",
+            "/sim",
+            image,
+            "palace",
+            cfg.name,
+        ]
+        if shutil.which("timeout"):
+            docker_cmd = ["timeout", "--signal=KILL", "480"] + docker_cmd
+        subprocess.check_call(docker_cmd)
 
         print("CSV → Touchstone …", flush=True)
         subprocess.check_call([sys.executable, str(COMBINE)], cwd=run_dir)
@@ -158,7 +161,7 @@ def main() -> int:
         header = (
             f"! Palace E2E golden for line_simple_viaport\n"
             f"! palace={version} image={image} "
-            f"gds2palace=0.5.2 f=0..10GHz step=5GHz\n"
+            f"gds2palace=0.5.2 f=5GHz (single point, coarse mesh)\n"
         )
         if not text.lstrip().startswith("!"):
             text = header + text

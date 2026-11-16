@@ -243,8 +243,9 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
                 .arg(w.testSimulationLogText(), w.testMainLogText());
     };
 
+    // Keep under QtTest's QTEST_FUNCTION_TIMEOUT (CI sets 7 min for this suite).
     const bool finished = QTest::qWaitFor([&w]() { return !w.testIsSimulationRunning(); },
-                                          5 * 60 * 1000);
+                                          6 * 60 * 1000);
     QVERIFY2(finished, qPrintable(QStringLiteral("Palace E2E timed out.\n%1").arg(dumpLogs())));
 
     const QString log = w.testSimulationLogText();

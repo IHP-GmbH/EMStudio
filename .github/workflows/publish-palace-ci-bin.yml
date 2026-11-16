@@ -1,0 +1,75 @@
+# Rare job: package a prebuilt Palace from Docker and publish the GitHub Release
+# asset used by sim-palace. Does not compile Palace from source.
+name: Publish Palace CI binary
+
+on:
+  workflow_dispatch:
+    inputs:
+      palace_version:
+        description: Palace version tag (without v), e.g. 0.16.0
+        required: true
+        default: '0.16.0'
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      PALACE_CI_VERSION: ${{ inputs.palace_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Package palace-linux-x64.tar.gz
+        run: |
+          chmod +x tools/package_palace_ci_bin.sh tools/publish_palace_ci_bin.sh
+          ./tools/package_palace_ci_bin.sh "$PALACE_CI_VERSION" dist-palace-ci
+
+      - name: Smoke-test bin/palace
+        run: |
+          tar -xzf dist-palace-ci/palace-linux-x64.tar.gz
+          ./palace/bin/palace --help | head -n 5 || ./palace/bin/palace -h | head -n 5 || true
+          test -x palace/bin/palace
+
+      - name: Install gds2palace (for golden Touchstone)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglu1-mesa
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "gds2palace==0.5.2" "scikit-rf" numpy
+
+      - name: Regenerate E2E golden Touchstone
+        env:
+          PALACE_INSTALL_PATH: ${{ github.workspace }}/palace
+          PALACE_CI_VERSION: ${{ inputs.palace_version }}
+        run: |
+          tar -xzf dist-palace-ci/palace-linux-x64.tar.gz
+          python3 tools/regen_palace_e2e_golden.py
+          cp tests/golden/palace_e2e/line_viaport.s2p dist-palace-ci/line_viaport.s2p
+
+      - name: Upload packaged assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: palace-ci-bin-${{ inputs.palace_version }}
+          path: |
+            dist-palace-ci/palace-linux-x64.tar.gz
+            dist-palace-ci/line_viaport.s2p
+            tests/golden/palace_e2e/line_viaport.s2p
+
+      - name: Publish GitHub Release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="palace-bin-v${PALACE_CI_VERSION}"
+          TAR=dist-palace-ci/palace-linux-x64.tar.gz
+          SNP=dist-palace-ci/line_viaport.s2p
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$TAR" "$SNP" --clobber
+          else
+            gh release create "$TAG" "$TAR" "$SNP" \
+              --title "Palace CI binary v${PALACE_CI_VERSION}" \
+              --notes "Prebuilt Linux x86_64 Palace for EMStudio sim-palace CI (palace/bin/palace). Packaged from ghcr.io/benvial/palace:v${PALACE_CI_VERSION}. Also ships line_viaport.s2p golden for PalaceSimE2E."
+          fi

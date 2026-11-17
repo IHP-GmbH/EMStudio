@@ -215,9 +215,9 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     const QString log = w.testSimulationLogText();
     QVERIFY2(!log.trimmed().isEmpty(),
              qPrintable(QStringLiteral("Simulation never started.\n%1").arg(dumpLogs())));
+    // Prefer the solver/launcher line — a bare "exit code 0" can match unrelated stages.
     QVERIFY2(log.contains(QStringLiteral("Palace solver finished with exit code 0"))
-                 || log.contains(QStringLiteral("Palace launcher finished with exit code 0"))
-                 || log.contains(QStringLiteral("finished with exit code 0")),
+                 || log.contains(QStringLiteral("Palace launcher finished with exit code 0")),
              qPrintable(QStringLiteral("Solver did not finish OK:\n%1").arg(dumpLogs())));
 
     QString runDir;
@@ -230,6 +230,26 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     if (runDir.isEmpty())
         runDir = dir.filePath(QStringLiteral("palace_model/palace_e2e_line_data"));
 
+    auto listRunDir = [&runDir]() {
+        QStringList names;
+        QDirIterator it(runDir, QDir::Files, QDirIterator::Subdirectories);
+        while (it.hasNext()) {
+            it.next();
+            names << QDir(runDir).relativeFilePath(it.filePath());
+            if (names.size() >= 40)
+                break;
+        }
+        return names.join(QLatin1Char('\n'));
+    };
+
+    // Mesh stub is still set as PALACE_PYTHON; point convert at a real interpreter.
+    {
+        const QByteArray py = qgetenv("EMSTUDIO_TEST_PYTHON");
+        w.testSetPreference(QStringLiteral("PALACE_PYTHON"),
+                            py.isEmpty() ? QStringLiteral("python3")
+                                         : QString::fromLocal8Bit(py));
+    }
+
     QString snp = findProducedTouchstone(runDir);
     if (snp.isEmpty()) {
         auto *rv = w.findChild<ResultsViewer *>();
@@ -237,10 +257,13 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
         rv->setTargetDirectory(runDir);
         QString convertLog;
         QVERIFY2(rv->tryConvertPalaceCsv(&convertLog),
-                 qPrintable(QStringLiteral("CSV→Touchstone failed: %1").arg(convertLog)));
+                 qPrintable(QStringLiteral("CSV→Touchstone failed: %1\nfiles:\n%2")
+                                    .arg(convertLog, listRunDir())));
         snp = findProducedTouchstone(runDir);
     }
-    QVERIFY2(!snp.isEmpty(), qPrintable(QStringLiteral("No Touchstone under %1\n%2").arg(runDir, dumpLogs())));
+    QVERIFY2(!snp.isEmpty(),
+             qPrintable(QStringLiteral("No Touchstone under %1\nfiles:\n%2\n%3")
+                                .arg(runDir, listRunDir(), dumpLogs())));
 
     TouchstoneNetwork got;
     QString loadErr;

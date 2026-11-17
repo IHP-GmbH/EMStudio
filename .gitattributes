@@ -1,0 +1,2 @@
+# Keep Palace E2E prebaked mesh binary (avoid CRLF corruption on Windows checkouts).
+tests/golden/palace_e2e/prebaked/*.msh binary

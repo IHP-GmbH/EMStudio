@@ -410,6 +410,7 @@ jobs:
           EMSTUDIO_PALACE_E2E: '1'
           EMSTUDIO_PALACE_DOCKER: '1'
           EMSTUDIO_PALACE_E2E_TIMEOUT_MS: '600000'
+          EMSTUDIO_TEST_PYTHON: 'python3'
           QTEST_FUNCTION_TIMEOUT: '720000'
           PYTHONUNBUFFERED: '1'
         run: |

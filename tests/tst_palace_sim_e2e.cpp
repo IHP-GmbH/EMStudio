@@ -30,6 +30,11 @@ bool e2eEnabled()
     return qgetenv("EMSTUDIO_PALACE_E2E") == "1";
 }
 
+bool liveMesh()
+{
+    return qgetenv("EMSTUDIO_PALACE_LIVE_MESH") == "1";
+}
+
 QString palaceInstallPath()
 {
     const QByteArray env = qgetenv("PALACE_INSTALL_PATH");
@@ -66,18 +71,22 @@ QString findProducedTouchstone(const QString &runDir)
 } // namespace
 
 /*!*******************************************************************************************************************
- * \brief Full-flow smoke: line_viaPort rectangles through EMStudio → gds2palace → Palace → Touchstone.
+ * \brief Palace E2E: EMStudio script mode → (prebaked mesh) → Docker Palace → Touchstone.
+ *
+ * Live gds2palace/gmsh OCC Fragments hangs on GitHub-hosted runners; CI stages a checked-in
+ * tiny mesh unless EMSTUDIO_PALACE_LIVE_MESH=1.
  **********************************************************************************************************************/
 void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
 {
 #ifndef Q_OS_LINUX
-    QSKIP("Palace E2E uses a native Linux Palace binary (see tests/golden/palace_e2e/README.md).");
+    QSKIP("Palace E2E uses Linux Docker Palace (see tests/golden/palace_e2e/README.md).");
 #endif
 
     if (!e2eEnabled())
         QSKIP("Set EMSTUDIO_PALACE_E2E=1 to run the Palace simulation E2E test.");
 
     const QString dockerLauncher = QFINDTESTDATA("tools/palace_docker_launcher.sh");
+    const QString meshStub = QFINDTESTDATA("tools/palace_e2e_mesh_stub.sh");
     const QString root = palaceInstallPath();
     const QString exe = palaceBinary(root);
     const bool useDocker = QFileInfo::exists(dockerLauncher)
@@ -86,9 +95,9 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
         QSKIP(qPrintable(QStringLiteral(
                 "Need Docker launcher or PALACE_INSTALL_PATH/bin/palace (%1).").arg(exe)));
     }
+    if (!liveMesh() && meshStub.isEmpty())
+        QSKIP("palace_e2e_mesh_stub.sh / prebaked mesh missing.");
 
-    // Smoke GDS: real via-port *rectangles* (golden line_simple_viaport uses zero-area
-    // lines on 201/202 → gds2palace warns and OCC Fragments can hang for tens of minutes).
     const QString gdsPath = QFINDTESTDATA("golden/palace_e2e/line_viaport_smoke.gds");
     const QString xmlPath = QFINDTESTDATA("golden/palace_e2e/SG13G2_smoke.xml");
     QVERIFY2(!gdsPath.isEmpty() && !xmlPath.isEmpty(), "palace_e2e smoke GDS/XML missing");
@@ -108,7 +117,6 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     w.setTopCell(QStringLiteral("t1"));
     w.setSubstrateFile(dir.filePath(QStringLiteral("SG13G2_smoke.xml")));
 
-    // Prefer Docker launcher on CI (MPI stack matches the image). Else native install.
     if (useDocker) {
         QFile::setPermissions(dockerLauncher,
                               QFile::permissions(dockerLauncher) | QFileDevice::ExeUser
@@ -121,22 +129,29 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
         w.testSetPreference(QStringLiteral("PALACE_INSTALL_PATH"), root);
         w.testSetPreference(QStringLiteral("PALACE_RUN_SCRIPT"), QString());
     }
-    const QByteArray py = qgetenv("EMSTUDIO_TEST_PYTHON");
-    if (!py.isEmpty())
-        w.testSetPreference(QStringLiteral("PALACE_PYTHON"), QString::fromLocal8Bit(py));
+
+    if (liveMesh()) {
+        const QByteArray py = qgetenv("EMSTUDIO_TEST_PYTHON");
+        w.testSetPreference(QStringLiteral("PALACE_PYTHON"),
+                            py.isEmpty() ? QStringLiteral("python3")
+                                         : QString::fromLocal8Bit(py));
+    } else {
+        QFile::setPermissions(meshStub,
+                              QFile::permissions(meshStub) | QFileDevice::ExeUser
+                                      | QFileDevice::ExeGroup | QFileDevice::ExeOther);
+        w.testSetPreference(QStringLiteral("PALACE_PYTHON"), meshStub);
+    }
     w.refreshSimToolOptionsForTests();
 
     QString terr;
     QVERIFY2(w.testSetSimToolKey(QStringLiteral("palace"), &terr), qPrintable(terr));
     QVERIFY2(w.testInitDefaultPalaceModel(), "default Palace model failed");
 
-    // Via ports need from/to metal *names* in the script (gds2palace z-port rules).
     auto *names = w.findChild<QCheckBox *>(QStringLiteral("cbSubLayerNames"));
     QVERIFY(names);
     QVERIFY2(names->isEnabled(), "stackup name map missing for Metal1/TopMetal2");
     names->setChecked(true);
 
-    // Two via-port rectangles on golden GDS layers 201 / 202 (examples/palace/line_viaport).
     auto *tblPorts = w.findChild<QTableWidget *>(QStringLiteral("tblPorts"));
     QVERIFY(tblPorts);
     for (const char *layer : {"201", "202"}) {
@@ -156,15 +171,9 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
         QCOMPARE(to->currentText(), QStringLiteral("TopMetal2"));
     }
 
-    // Smoke: line + two via-port rectangles — very coarse mesh so CI finishes in a few minutes.
     w.testSetSimSetting(QStringLiteral("fstart"), 1e9);
     w.testSetSimSetting(QStringLiteral("fstop"), 1e9);
     w.testSetSimSetting(QStringLiteral("fstep"), 1e9);
-    w.testSetSimSetting(QStringLiteral("margin"), 5);
-    w.testSetSimSetting(QStringLiteral("refined_cellsize"), 50);
-    w.testSetSimSetting(QStringLiteral("cells_per_wavelength"), 10);
-    w.testSetSimSetting(QStringLiteral("meshsize_max"), 500);
-    w.testSetSimSetting(QStringLiteral("adaptive_mesh_iterations"), 0);
     w.testSetSimSetting(QStringLiteral("no_gui"), true);
 
     QString genErr;
@@ -192,8 +201,8 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
                 .arg(w.testSimulationLogText(), w.testMainLogText());
     };
 
-    // Nightly sets EMSTUDIO_PALACE_E2E_TIMEOUT_MS (default 25 min) below QTEST_FUNCTION_TIMEOUT.
-    int waitMs = 25 * 60 * 1000;
+    // Prebaked mesh + one-freq Palace should finish in a few minutes.
+    int waitMs = 5 * 60 * 1000;
     {
         bool ok = false;
         const int fromEnv = QString::fromLocal8Bit(qgetenv("EMSTUDIO_PALACE_E2E_TIMEOUT_MS")).toInt(&ok);
@@ -221,8 +230,6 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     if (runDir.isEmpty())
         runDir = dir.filePath(QStringLiteral("palace_model/palace_e2e_line_data"));
 
-    // testRunPalace(false) leaves m_headless unset so CSV→Touchstone may already have run;
-    // fall back to ResultsViewer if not.
     QString snp = findProducedTouchstone(runDir);
     if (snp.isEmpty()) {
         auto *rv = w.findChild<ResultsViewer *>();
@@ -235,8 +242,6 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     }
     QVERIFY2(!snp.isEmpty(), qPrintable(QStringLiteral("No Touchstone under %1\n%2").arg(runDir, dumpLogs())));
 
-    // Full-flow smoke: valid 2-port Touchstone at the single sweep point (no golden mag match —
-    // mesh is intentionally too coarse for that).
     TouchstoneNetwork got;
     QString loadErr;
     QVERIFY2(got.load(snp, &loadErr), qPrintable(loadErr));

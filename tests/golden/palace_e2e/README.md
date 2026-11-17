@@ -1,17 +1,21 @@
-# Palace E2E (nightly / long PR check)
+# Palace E2E
 
-Full flow: EMStudio → gds2palace → Palace → Touchstone.
+EMStudio script mode → **prebaked mesh** → Docker Palace → Touchstone.
+
+Live `gds2palace`/gmsh OCC **Fragments hangs on GitHub-hosted runners** (even for a
+tiny rectangle GDS). CI therefore stages `prebaked/` via
+`tests/tools/palace_e2e_mesh_stub.sh`. Set `EMSTUDIO_PALACE_LIVE_MESH=1` locally
+to run real meshing.
 
 ## Fixtures
 
-- `line_viaport_smoke.gds` — short Metal1/TopMetal2 line with **real** via-port
-  rectangles on layers 201/202 (the classic `line_simple_viaport.gds` uses
-  zero-area lines there; gds2palace warns and OCC Fragments can hang).
-- `SG13G2_smoke.xml` — Metal1 + TopMetal2 only (no bulk Si).
+- `line_viaport_smoke.gds` / `SG13G2_smoke.xml` — GUI script generation
+- `prebaked/config.json` + `prebaked/smoke.msh` — solver input (from a small
+  resistors example, single 1 GHz point)
 
-## Where it runs
+## CI
 
+- PR / `workflow_dispatch` (`palace_e2e=true`): `build.yml` job `sim-palace`
 - Nightly: `.github/workflows/palace-e2e-nightly.yml`
-- Optional long PR / `workflow_dispatch` on Build EMStudio (`palace_e2e=true`)
 
-Palace: `ghcr.io/benvial/palace:v0.16.0`. Asserts exit 0 + valid 2-port `.s2p`.
+Palace image: `ghcr.io/benvial/palace:v0.16.0`.

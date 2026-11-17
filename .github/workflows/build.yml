@@ -350,11 +350,11 @@ jobs:
   # .github/workflows/palace-e2e-nightly.yml. Manual check before relying on nightly:
   #   gh workflow run "Build EMStudio" -f palace_e2e=true --ref <branch>
   sim-palace:
-    # PR: long-budget verification (Fragments). After green, keep nightly + optional
-    # workflow_dispatch (-f palace_e2e=true); drop the pull_request arm if desired.
+    # Prebaked mesh + Docker Palace (live gmsh Fragments hangs on GH runners).
+    # Also on nightly: palace-e2e-nightly.yml. After green, drop pull_request if desired.
     if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.palace_e2e)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 25
     env:
       PALACE_CI_VERSION: '0.16.0'
       PALACE_CI_TAG: palace-bin-v0.16.0
@@ -373,12 +373,13 @@ jobs:
           arch: 'gcc_64'
           modules: 'qtcharts'
 
-      - name: Install test deps (xvfb + gds2palace)
+      - name: Install test deps (xvfb + scikit-rf)
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb libglu1-mesa
           python3 -m pip install --upgrade pip
-          python3 -m pip install "gds2palace==0.5.2" "scikit-rf" numpy
+          # Touchstone post-process only (mesh is prebaked; no gds2palace/gmsh on CI).
+          python3 -m pip install "scikit-rf" numpy
 
       - name: Pull Palace Docker image
         run: docker pull "$PALACE_CI_DOCKER_IMAGE"
@@ -401,15 +402,15 @@ jobs:
           cp -R ../keywords ./keywords
           cp -R ../icons ./icons || true
           chmod +x ../tests/tools/palace_docker_launcher.sh
+          chmod +x ../tests/tools/palace_e2e_mesh_stub.sh
 
       - name: Run PalaceSimE2E
-        timeout-minutes: 45
+        timeout-minutes: 15
         env:
           EMSTUDIO_PALACE_E2E: '1'
           EMSTUDIO_PALACE_DOCKER: '1'
-          EMSTUDIO_TEST_PYTHON: python3
-          EMSTUDIO_PALACE_E2E_TIMEOUT_MS: '1500000'
-          QTEST_FUNCTION_TIMEOUT: '1800000'
+          EMSTUDIO_PALACE_E2E_TIMEOUT_MS: '600000'
+          QTEST_FUNCTION_TIMEOUT: '720000'
           PYTHONUNBUFFERED: '1'
         run: |
           cd build-tests-palace

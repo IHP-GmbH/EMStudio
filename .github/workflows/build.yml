@@ -340,70 +340,8 @@ jobs:
           chmod +x ../tools/get_code_coverage.sh
           ../tools/get_code_coverage.sh .
 
-  # Full EMStudio → gds2palace → Palace → Touchstone. Palace runs in Docker
-  # (ghcr.io/benvial/palace); never compiled on CI. Independent of tests-linux stubs.
-  # Pin: bump PALACE_CI_VERSION with the image tag / Release from "Publish Palace CI binary".
-  sim-palace:
-    runs-on: ubuntu-24.04
-    env:
-      PALACE_CI_VERSION: '0.16.0'
-      PALACE_CI_TAG: palace-bin-v0.16.0
-      PALACE_CI_DOCKER_IMAGE: ghcr.io/benvial/palace:v0.16.0
-
-    steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '5.15.2'
-          host: 'linux'
-          target: 'desktop'
-          arch: 'gcc_64'
-          modules: 'qtcharts'
-
-      - name: Install test deps (xvfb + gds2palace)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb libglu1-mesa
-          python3 -m pip install --upgrade pip
-          # scikit-rf: scripts/combine_extend_snp.py (CSV → Touchstone after Palace)
-          python3 -m pip install "gds2palace==0.5.2" "scikit-rf" numpy
-
-      - name: Pull Palace Docker image
-        run: docker pull "$PALACE_CI_DOCKER_IMAGE"
-
-      - name: Configure tests (qmake)
-        run: |
-          mkdir -p build-tests-palace
-          cd build-tests-palace
-          qmake ../tests/tests.pro
-
-      - name: Build tests
-        run: |
-          cd build-tests-palace
-          make -j"$(nproc)"
-
-      - name: Stage runtime files for tests
-        run: |
-          cd build-tests-palace
-          cp -R ../scripts ./scripts
-          cp -R ../keywords ./keywords
-          cp -R ../icons ./icons || true
-          chmod +x ../tests/tools/palace_docker_launcher.sh
-
-      - name: Run PalaceSimE2E
-        timeout-minutes: 8
-        env:
-          EMSTUDIO_PALACE_E2E: '1'
-          EMSTUDIO_PALACE_DOCKER: '1'
-          EMSTUDIO_TEST_PYTHON: python3
-          # QtTest default is 5 min; rectangle smoke (mesh+Palace) can exceed that.
-          QTEST_FUNCTION_TIMEOUT: '420000'
-        run: |
-          cd build-tests-palace
-          xvfb-run -a ./emstudio_golden_tests PalaceSimE2E -platform offscreen
+  # Palace full E2E (gds2palace Fragments + Docker Palace) lives in
+  # .github/workflows/palace-e2e-nightly.yml — too slow for every PR.
 
   # Model converter + golden scripts as Python (stand-in workflows; no gmsh / openEMS).
   # Matrix covers the users' solver Python range; converter AST checks depend on the version.

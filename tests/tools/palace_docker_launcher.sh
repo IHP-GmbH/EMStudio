@@ -8,8 +8,9 @@ CONFIG="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
 WORKDIR="$(dirname "$CONFIG")"
 IMAGE="${PALACE_CI_DOCKER_IMAGE:-ghcr.io/benvial/palace:v${PALACE_CI_VERSION:-0.16.0}}"
 
-# Soft wall for solver stage only (mesh is outside Docker). Whole E2E ≤ ~7 min.
+# Soft wall for solver stage only (mesh is outside Docker). Nightly budget is larger.
 # Host uid so post-process on the mount is not blocked by root-owned files.
+PALACE_DOCKER_TIMEOUT_SEC="${PALACE_DOCKER_TIMEOUT_SEC:-900}"
 RUN=(docker run --rm
   -u "$(id -u):$(id -g)"
   -v "$WORKDIR:$WORKDIR"
@@ -17,6 +18,6 @@ RUN=(docker run --rm
   "$IMAGE"
   palace "$(basename "$CONFIG")")
 if command -v timeout >/dev/null 2>&1; then
-  exec timeout --signal=KILL 300 "${RUN[@]}"
+  exec timeout --signal=KILL "$PALACE_DOCKER_TIMEOUT_SEC" "${RUN[@]}"
 fi
 exec "${RUN[@]}"

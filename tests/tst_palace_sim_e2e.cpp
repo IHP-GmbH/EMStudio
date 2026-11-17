@@ -191,9 +191,15 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
                 .arg(w.testSimulationLogText(), w.testMainLogText());
     };
 
-    // CI sets QTEST_FUNCTION_TIMEOUT=7 min; keep wait below that.
-    const bool finished = QTest::qWaitFor([&w]() { return !w.testIsSimulationRunning(); },
-                                          5 * 60 * 1000);
+    // Nightly sets EMSTUDIO_PALACE_E2E_TIMEOUT_MS (default 25 min) below QTEST_FUNCTION_TIMEOUT.
+    int waitMs = 25 * 60 * 1000;
+    {
+        bool ok = false;
+        const int fromEnv = QString::fromLocal8Bit(qgetenv("EMSTUDIO_PALACE_E2E_TIMEOUT_MS")).toInt(&ok);
+        if (ok && fromEnv > 0)
+            waitMs = fromEnv;
+    }
+    const bool finished = QTest::qWaitFor([&w]() { return !w.testIsSimulationRunning(); }, waitMs);
     QVERIFY2(finished, qPrintable(QStringLiteral("Palace E2E timed out.\n%1").arg(dumpLogs())));
 
     const QString log = w.testSimulationLogText();

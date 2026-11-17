@@ -1,22 +1,28 @@
-# Palace E2E (CI)
+# Palace E2E (nightly)
 
-End-to-end smoke: EMStudio → gds2palace → Palace → Touchstone on
-`line_simple_viaport.gds` (line + two via-port rectangles) with the thin stackup
-`SG13G2_smoke.xml` (Metal1 + TopMetal2 only, **no bulk Si**).
+Full flow: EMStudio → gds2palace → Palace → Touchstone on
+`line_simple_viaport.gds` with thin stackup `SG13G2_smoke.xml`
+(Metal1 + TopMetal2, no bulk Si).
 
-Full `SG13G2_200um.xml` makes gmsh Fragments exceed PR time budgets.
+## Where it runs
 
-## How CI runs Palace
+Not on every PR — gmsh OCC **Fragments** is too slow on 2-vCPU runners for PR CI.
 
-`sim-palace` pulls `ghcr.io/benvial/palace:v0.16.0` via
-`tests/tools/palace_docker_launcher.sh`. Pin: `PALACE_CI_VERSION=0.16.0`.
+Workflow: `.github/workflows/palace-e2e-nightly.yml`
 
-The Qt test asserts solver exit 0 and a valid 2-port `.s2p` (no golden magnitude
-match). Coarse mesh: 1 GHz, large cells.
+- schedule: nightly
+- `workflow_dispatch`: run on demand (Actions → **Palace E2E nightly** → Run workflow)
 
-## Optional Touchstone regen
+Palace image: `ghcr.io/benvial/palace:v0.16.0` via `tests/tools/palace_docker_launcher.sh`.
+Pin: `PALACE_CI_VERSION=0.16.0`.
+
+The Qt test asserts solver exit 0 and a valid 2-port `.s2p`.
+
+## Local
 
 ```bash
-export PALACE_CI_VERSION=0.16.0
-python3 tools/regen_palace_e2e_golden.py
+export EMSTUDIO_PALACE_E2E=1 EMSTUDIO_PALACE_DOCKER=1 EMSTUDIO_TEST_PYTHON=python3
+export EMSTUDIO_PALACE_E2E_TIMEOUT_MS=1500000 QTEST_FUNCTION_TIMEOUT=1800000
+# build tests, then:
+./emstudio_golden_tests PalaceSimE2E -platform offscreen
 ```

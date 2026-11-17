@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Stackup schemaVersion="2.0">
+  <!-- CI Palace smoke only: Metal1↔TopMetal2 via ports, no bulk Si substrate.
+       Full SG13G2_200um makes gmsh Fragments exceed PR budgets. -->
+  <Materials>
+    <Material Name="Metal1" Type="Conductor" Conductivity="21640000.0" Color="39bfff" />
+    <Material Name="TopMetal2" Type="Conductor" Conductivity="30300000.0" Color="ff8000" />
+    <Material Name="SiO2" Type="Dielectric" Permittivity="4.1" DielectricLossTangent="0.0" Color="fffcad" />
+    <Material Name="AIR" Type="Dielectric" Permittivity="1.0" DielectricLossTangent="0.0" Color="d0d0d0" />
+  </Materials>
+  <ELayers LengthUnit="um">
+    <Dielectrics>
+      <Dielectric Name="AIR" Material="AIR" Thickness="30.0000" />
+      <Dielectric Name="SiO2" Material="SiO2" Thickness="15.7303" />
+    </Dielectrics>
+    <Layers>
+      <Substrate Offset="0" />
+      <Layer Name="Metal1" Type="conductor" Zmin="1.0400" Zmax="1.4600" Material="Metal1" Layer="8" />
+      <Layer Name="TopMetal2" Type="conductor" Zmin="11.2303" Zmax="14.2303" Material="TopMetal2" Layer="134" />
+    </Layers>
+  </ELayers>
+</Stackup>

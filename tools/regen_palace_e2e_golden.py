@@ -19,7 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 GDS = ROOT / "tests" / "golden" / "line_simple_viaport.gds"
-XML = ROOT / "tests" / "golden" / "SG13G2_200um.xml"
+XML = ROOT / "tests" / "golden" / "palace_e2e" / "SG13G2_smoke.xml"
 OUT = ROOT / "tests" / "golden" / "palace_e2e" / "line_viaport.s2p"
 COMBINE = ROOT / "scripts" / "combine_extend_snp.py"
 
@@ -31,7 +31,7 @@ start_simulation = False
 run_command = ['./run_sim']
 gds_filename = "line_simple_viaport.gds"
 cellname = "t1"
-XML_filename = "SG13G2_200um.xml"
+XML_filename = "SG13G2_smoke.xml"
 script_path = utilities.get_script_path(__file__)
 model_basename = utilities.get_basename(__file__)
 sim_path = utilities.create_sim_path(script_path, model_basename)
@@ -112,7 +112,7 @@ def main() -> int:
     work = Path(tempfile.mkdtemp(prefix="palace_e2e_golden_"))
     try:
         shutil.copy(GDS, work / "line_simple_viaport.gds")
-        shutil.copy(XML, work / "SG13G2_200um.xml")
+        shutil.copy(XML, work / "SG13G2_smoke.xml")
         model = work / "palace_e2e_line.py"
         model.write_text(MODEL, encoding="utf-8")
 

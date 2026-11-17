@@ -1,27 +1,20 @@
 # Palace E2E (CI)
 
 End-to-end smoke: EMStudio → gds2palace → Palace → Touchstone on
-`line_simple_viaport.gds` (line + two via-port rectangles).
+`line_simple_viaport.gds` (line + two via-port rectangles) with the thin stackup
+`SG13G2_smoke.xml` (Metal1 + TopMetal2 only, **no bulk Si**).
 
-## How CI runs Palace (never compiled on every PR)
+Full `SG13G2_200um.xml` makes gmsh Fragments exceed PR time budgets.
 
-`sim-palace` pulls `ghcr.io/benvial/palace:v0.16.0` and launches it through
-`tests/tools/palace_docker_launcher.sh` (EMStudio script mode). Pin:
-`PALACE_CI_VERSION=0.16.0`.
+## How CI runs Palace
 
-Settings are intentionally very coarse (**1 GHz**, large cells) so the job stays
-a short full-flow check. The Qt test asserts solver exit 0 and a valid 2-port
-`.s2p` — it does not compare magnitudes to a golden file.
+`sim-palace` pulls `ghcr.io/benvial/palace:v0.16.0` via
+`tests/tools/palace_docker_launcher.sh`. Pin: `PALACE_CI_VERSION=0.16.0`.
 
-Optional native tarball (same image, packaged for offline/`PALACE_INSTALL_PATH`):
+The Qt test asserts solver exit 0 and a valid 2-port `.s2p` (no golden magnitude
+match). Coarse mesh: 1 GHz, large cells.
 
-- Release tag: `palace-bin-v0.16.0`
-- Asset: `palace-linux-x64.tar.gz` → extract to `palace/bin/palace` + `palace/lib/`
-- Publish (rare): Actions → **Publish Palace CI binary**, or `./tools/publish_palace_ci_bin.sh 0.16.0`
-
-## Optional golden Touchstone
-
-`line_viaport.s2p` can still be regenerated for offline inspection:
+## Optional Touchstone regen
 
 ```bash
 export PALACE_CI_VERSION=0.16.0

@@ -88,13 +88,14 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     }
 
     const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
-    const QString xmlPath = QFINDTESTDATA("golden/SG13G2_200um.xml");
-    QVERIFY2(!gdsPath.isEmpty() && !xmlPath.isEmpty(), "golden GDS/XML missing");
+    // Thin stackup (no bulk Si): full SG13G2_200um stalls gmsh Fragments on CI.
+    const QString xmlPath = QFINDTESTDATA("golden/palace_e2e/SG13G2_smoke.xml");
+    QVERIFY2(!gdsPath.isEmpty() && !xmlPath.isEmpty(), "golden GDS / palace_e2e smoke XML missing");
 
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     QVERIFY(QFile::copy(gdsPath, dir.filePath(QStringLiteral("line_simple_viaport.gds"))));
-    QVERIFY(QFile::copy(xmlPath, dir.filePath(QStringLiteral("SG13G2_200um.xml"))));
+    QVERIFY(QFile::copy(xmlPath, dir.filePath(QStringLiteral("SG13G2_smoke.xml"))));
 
     MainWindow w;
     w.setAttribute(Qt::WA_DontShowOnScreen, true);
@@ -104,7 +105,7 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
 
     w.setGdsFile(dir.filePath(QStringLiteral("line_simple_viaport.gds")));
     w.setTopCell(QStringLiteral("t1"));
-    w.setSubstrateFile(dir.filePath(QStringLiteral("SG13G2_200um.xml")));
+    w.setSubstrateFile(dir.filePath(QStringLiteral("SG13G2_smoke.xml")));
 
     // Prefer Docker launcher on CI (MPI stack matches the image). Else native install.
     if (useDocker) {

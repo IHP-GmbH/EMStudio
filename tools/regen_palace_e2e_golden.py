@@ -18,7 +18,7 @@ from pathlib import Path
 # shutil used for which(mpirun) fallback
 
 ROOT = Path(__file__).resolve().parents[1]
-GDS = ROOT / "tests" / "golden" / "line_simple_viaport.gds"
+GDS = ROOT / "tests" / "golden" / "palace_e2e" / "line_viaport_smoke.gds"
 XML = ROOT / "tests" / "golden" / "palace_e2e" / "SG13G2_smoke.xml"
 OUT = ROOT / "tests" / "golden" / "palace_e2e" / "line_viaport.s2p"
 COMBINE = ROOT / "scripts" / "combine_extend_snp.py"
@@ -29,7 +29,7 @@ import os
 
 start_simulation = False
 run_command = ['./run_sim']
-gds_filename = "line_simple_viaport.gds"
+gds_filename = "line_viaport_smoke.gds"
 cellname = "t1"
 XML_filename = "SG13G2_smoke.xml"
 script_path = utilities.get_script_path(__file__)
@@ -111,7 +111,7 @@ def main() -> int:
 
     work = Path(tempfile.mkdtemp(prefix="palace_e2e_golden_"))
     try:
-        shutil.copy(GDS, work / "line_simple_viaport.gds")
+        shutil.copy(GDS, work / "line_viaport_smoke.gds")
         shutil.copy(XML, work / "SG13G2_smoke.xml")
         model = work / "palace_e2e_line.py"
         model.write_text(MODEL, encoding="utf-8")
@@ -170,7 +170,7 @@ def main() -> int:
         OUT.parent.mkdir(parents=True, exist_ok=True)
         text = snps[0].read_text(encoding="utf-8", errors="replace")
         header = (
-            f"! Palace E2E golden for line_simple_viaport\n"
+            f"! Palace E2E golden for line_viaport_smoke\n"
             f"! palace={version} image={image} "
             f"gds2palace=0.5.2 f=1GHz (single point, very coarse mesh)\n"
         )

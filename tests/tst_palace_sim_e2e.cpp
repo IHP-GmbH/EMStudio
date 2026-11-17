@@ -87,14 +87,15 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
                 "Need Docker launcher or PALACE_INSTALL_PATH/bin/palace (%1).").arg(exe)));
     }
 
-    const QString gdsPath = QFINDTESTDATA("golden/line_simple_viaport.gds");
-    // Thin stackup (no bulk Si): full SG13G2_200um stalls gmsh Fragments on CI.
+    // Smoke GDS: real via-port *rectangles* (golden line_simple_viaport uses zero-area
+    // lines on 201/202 → gds2palace warns and OCC Fragments can hang for tens of minutes).
+    const QString gdsPath = QFINDTESTDATA("golden/palace_e2e/line_viaport_smoke.gds");
     const QString xmlPath = QFINDTESTDATA("golden/palace_e2e/SG13G2_smoke.xml");
-    QVERIFY2(!gdsPath.isEmpty() && !xmlPath.isEmpty(), "golden GDS / palace_e2e smoke XML missing");
+    QVERIFY2(!gdsPath.isEmpty() && !xmlPath.isEmpty(), "palace_e2e smoke GDS/XML missing");
 
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    QVERIFY(QFile::copy(gdsPath, dir.filePath(QStringLiteral("line_simple_viaport.gds"))));
+    QVERIFY(QFile::copy(gdsPath, dir.filePath(QStringLiteral("line_viaport_smoke.gds"))));
     QVERIFY(QFile::copy(xmlPath, dir.filePath(QStringLiteral("SG13G2_smoke.xml"))));
 
     MainWindow w;
@@ -103,7 +104,7 @@ void PalaceSimE2E::lineViaPort_runsPalace_andMatchesGoldenSparams()
     w.show();
     QTest::qWait(30);
 
-    w.setGdsFile(dir.filePath(QStringLiteral("line_simple_viaport.gds")));
+    w.setGdsFile(dir.filePath(QStringLiteral("line_viaport_smoke.gds")));
     w.setTopCell(QStringLiteral("t1"));
     w.setSubstrateFile(dir.filePath(QStringLiteral("SG13G2_smoke.xml")));
 

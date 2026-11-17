@@ -5,6 +5,12 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      palace_e2e:
+        description: 'Run PalaceSimE2E (long; Fragments+Docker Palace)'
+        type: boolean
+        default: false
 
 jobs:
   build-linux:
@@ -340,8 +346,74 @@ jobs:
           chmod +x ../tools/get_code_coverage.sh
           ../tools/get_code_coverage.sh .
 
-  # Palace full E2E (gds2palace Fragments + Docker Palace) lives in
-  # .github/workflows/palace-e2e-nightly.yml — too slow for every PR.
+  # Full Palace E2E is not on every PR (OCC Fragments). Nightly:
+  # .github/workflows/palace-e2e-nightly.yml. Manual check before relying on nightly:
+  #   gh workflow run "Build EMStudio" -f palace_e2e=true --ref <branch>
+  sim-palace:
+    # PR: long-budget verification (Fragments). After green, keep nightly + optional
+    # workflow_dispatch (-f palace_e2e=true); drop the pull_request arm if desired.
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.palace_e2e)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      PALACE_CI_VERSION: '0.16.0'
+      PALACE_CI_TAG: palace-bin-v0.16.0
+      PALACE_CI_DOCKER_IMAGE: ghcr.io/benvial/palace:v0.16.0
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'gcc_64'
+          modules: 'qtcharts'
+
+      - name: Install test deps (xvfb + gds2palace)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libglu1-mesa
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "gds2palace==0.5.2" "scikit-rf" numpy
+
+      - name: Pull Palace Docker image
+        run: docker pull "$PALACE_CI_DOCKER_IMAGE"
+
+      - name: Configure tests (qmake)
+        run: |
+          mkdir -p build-tests-palace
+          cd build-tests-palace
+          qmake ../tests/tests.pro
+
+      - name: Build tests
+        run: |
+          cd build-tests-palace
+          make -j"$(nproc)"
+
+      - name: Stage runtime files for tests
+        run: |
+          cd build-tests-palace
+          cp -R ../scripts ./scripts
+          cp -R ../keywords ./keywords
+          cp -R ../icons ./icons || true
+          chmod +x ../tests/tools/palace_docker_launcher.sh
+
+      - name: Run PalaceSimE2E
+        timeout-minutes: 45
+        env:
+          EMSTUDIO_PALACE_E2E: '1'
+          EMSTUDIO_PALACE_DOCKER: '1'
+          EMSTUDIO_TEST_PYTHON: python3
+          EMSTUDIO_PALACE_E2E_TIMEOUT_MS: '1500000'
+          QTEST_FUNCTION_TIMEOUT: '1800000'
+          PYTHONUNBUFFERED: '1'
+        run: |
+          cd build-tests-palace
+          xvfb-run -a ./emstudio_golden_tests PalaceSimE2E -platform offscreen
 
   # Model converter + golden scripts as Python (stand-in workflows; no gmsh / openEMS).
   # Matrix covers the users' solver Python range; converter AST checks depend on the version.

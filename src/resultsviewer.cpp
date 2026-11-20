@@ -397,7 +397,7 @@ void addSeriesToChart(QChart *chart,
     pen.setCosmetic(true);
     pen.setWidthF(selected ? 4.0 : 1.8);
     series->setPen(pen);
-    series->setPointsVisible(true);
+        series->setPointsVisible(true);
     if (singlePoint || selected) {
         pen.setWidthF(selected ? 4.0 : 3.0);
         series->setPen(pen);
@@ -748,7 +748,6 @@ QStringList ResultsViewer::findTouchstoneFiles(const QString &targetDir) const
     while (it.hasNext()) {
         const QString path = it.next();
         const QFileInfo fi(path);
-        // Skip hidden path segments (Volker filters dirnames starting with '.')
         const QString rel = QDir::fromNativeSeparators(QDir(targetDir).relativeFilePath(path));
         bool skip = false;
         for (const QString &part : rel.split(QLatin1Char('/'))) {
@@ -2061,13 +2060,13 @@ void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
         QChart *phChart = nullptr;
         if (showDb) {
             dbChart = new QChart();
-            dbChart->legend()->hide();
-            dbChart->setTitle(QStringLiteral("dB S%1%2").arg(m).arg(n));
+        dbChart->legend()->hide();
+        dbChart->setTitle(QStringLiteral("dB S%1%2").arg(m).arg(n));
         }
         if (showPhase) {
             phChart = new QChart();
-            phChart->legend()->hide();
-            phChart->setTitle(QStringLiteral("phase S%1%2").arg(m).arg(n));
+        phChart->legend()->hide();
+        phChart->setTitle(QStringLiteral("phase S%1%2").arg(m).arg(n));
         }
 
         for (const PlottedTrace &t : plotted) {
@@ -2076,15 +2075,15 @@ void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
             QVector<QPointF> dbPts;
             QVector<QPointF> phPts;
             if (showDb)
-                dbPts.reserve(freqs.size());
+            dbPts.reserve(freqs.size());
             if (showPhase)
-                phPts.reserve(freqs.size());
+            phPts.reserve(freqs.size());
             for (int i = 0; i < freqs.size(); ++i) {
                 const double ghz = freqs.at(i) / 1e9;
                 if (showDb)
-                    dbPts.append(QPointF(ghz, toDb(svals.at(i))));
+                dbPts.append(QPointF(ghz, toDb(svals.at(i))));
                 if (showPhase)
-                    phPts.append(QPointF(ghz, toPhaseDeg(svals.at(i))));
+                phPts.append(QPointF(ghz, toPhaseDeg(svals.at(i))));
             }
             const bool single = freqs.size() == 1;
             const bool selected = m_calcSelectedPaths.contains(t.path);
@@ -2097,23 +2096,23 @@ void ResultsViewer::drawDbPhase(const QVector<PlottedTrace> &plotted,
         }
 
         if (dbChart) {
-            dbChart->createDefaultAxes();
-            if (auto *axX = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Horizontal).value(0)))
-                configureFreqAxis(axX);
-            if (auto *axY = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Vertical).value(0)))
-                axY->setTitleText(QStringLiteral("dB"));
+        dbChart->createDefaultAxes();
+        if (auto *axX = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Horizontal).value(0)))
+            configureFreqAxis(axX);
+        if (auto *axY = qobject_cast<QValueAxis *>(dbChart->axes(Qt::Vertical).value(0)))
+            axY->setTitleText(QStringLiteral("dB"));
             colLayout->addWidget(makeChartView(dbChart, this), 1);
         }
         if (phChart) {
             phChart->createDefaultAxes();
             if (auto *axX = qobject_cast<QValueAxis *>(phChart->axes(Qt::Horizontal).value(0)))
                 configureFreqAxis(axX);
-            if (auto *axY = qobject_cast<QValueAxis *>(phChart->axes(Qt::Vertical).value(0))) {
+        if (auto *axY = qobject_cast<QValueAxis *>(phChart->axes(Qt::Vertical).value(0))) {
                 axY->setTitleText(QStringLiteral("°"));
-                axY->setRange(-180.0, 180.0);
+            axY->setRange(-180.0, 180.0);
                 axY->setTickCount(5); // -180,-90,0,90,180 — readable in narrow panes
                 axY->setLabelFormat(QStringLiteral("%.0f"));
-            }
+        }
             colLayout->addWidget(makeChartView(phChart, this), 1);
         }
         rowLayout->addWidget(col, 1);

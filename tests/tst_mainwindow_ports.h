@@ -42,6 +42,7 @@ private slots:
     void layoutPreview_withGoldenGds_populatesLayerPanel();
     void loadPythonModel_buildsLayoutPreviewOnce();
     void gdsCache_rereadsChangedFile();
+    void readGdsFileInfo_skipsCadenceContextInfoTop();
     void layoutPreview_showsOnlyModelPurposes();
     void convertLooseModel_backsUpConvertsAndReloads();
     void convertLooseModel_refusalLeavesModelUntouched();

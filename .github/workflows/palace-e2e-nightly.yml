@@ -1,0 +1,77 @@
+# EMStudio → (prebaked mesh) → Docker Palace → Touchstone.
+# Live gds2palace/gmsh OCC Fragments hangs on GitHub-hosted runners.
+name: Palace E2E nightly
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: palace-e2e-nightly
+  cancel-in-progress: true
+
+jobs:
+  sim-palace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PALACE_CI_VERSION: '0.16.0'
+      PALACE_CI_TAG: palace-bin-v0.16.0
+      PALACE_CI_DOCKER_IMAGE: ghcr.io/benvial/palace:v0.16.0
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '5.15.2'
+          host: 'linux'
+          target: 'desktop'
+          arch: 'gcc_64'
+          modules: 'qtcharts'
+
+      - name: Install test deps (xvfb + scikit-rf)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libglu1-mesa
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "scikit-rf" numpy
+
+      - name: Pull Palace Docker image
+        run: docker pull "$PALACE_CI_DOCKER_IMAGE"
+
+      - name: Configure tests (qmake)
+        run: |
+          mkdir -p build-tests-palace
+          cd build-tests-palace
+          qmake ../tests/tests.pro
+
+      - name: Build tests
+        run: |
+          cd build-tests-palace
+          make -j"$(nproc)"
+
+      - name: Stage runtime files for tests
+        run: |
+          cd build-tests-palace
+          cp -R ../scripts ./scripts
+          cp -R ../keywords ./keywords
+          cp -R ../icons ./icons || true
+          chmod +x ../tests/tools/palace_docker_launcher.sh
+          chmod +x ../tests/tools/palace_e2e_mesh_stub.sh
+
+      - name: Run PalaceSimE2E
+        timeout-minutes: 15
+        env:
+          EMSTUDIO_PALACE_E2E: '1'
+          EMSTUDIO_PALACE_DOCKER: '1'
+          EMSTUDIO_PALACE_E2E_TIMEOUT_MS: '600000'
+          EMSTUDIO_TEST_PYTHON: 'python3'
+          QTEST_FUNCTION_TIMEOUT: '720000'
+          PYTHONUNBUFFERED: '1'
+        run: |
+          cd build-tests-palace
+          xvfb-run -a ./emstudio_golden_tests PalaceSimE2E -platform offscreen

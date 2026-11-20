@@ -1306,6 +1306,74 @@ void MainWindowPortsTest::gdsCache_rereadsChangedFile()
 }
 
 /*!*******************************************************************************************************************
+ * \brief Cadence's $$$CONTEXT_INFO$$$ is never returned as a GDS top cell: when it is a sibling of
+ *        the design top it is skipped; when it is the only top, its SREF children become the tops.
+ **********************************************************************************************************************/
+void MainWindowPortsTest::readGdsFileInfo_skipsCadenceContextInfoTop()
+{
+    using namespace GdsTestWriter;
+    const QVector<QPoint> rect = {QPoint(0, 0), QPoint(1000, 0), QPoint(1000, 1000), QPoint(0, 1000),
+                                  QPoint(0, 0)};
+
+    auto writeLib = [](const QString &path, const QByteArray &body) {
+        QFile f(path);
+        return f.open(QIODevice::WriteOnly) && f.write(body) == body.size();
+    };
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // Sibling tops: CONTEXT_INFO first in the file, design second → design is the only reported top.
+    {
+        QByteArray g;
+        g += record(0x00, 0x02, int16(600));
+        g += record(0x01, 0x02, QByteArray(24, '\0'));
+        g += record(0x02, 0x06, "LIB");
+        g += record(0x05, 0x02, QByteArray(24, '\0'));
+        g += record(0x06, 0x06, "$$$CONTEXT_INFO$$$");
+        g += record(0x07, 0x00);
+        g += record(0x05, 0x02, QByteArray(24, '\0'));
+        g += record(0x06, 0x06, "line");
+        g += record(0x08, 0x00) + record(0x0D, 0x02, int16(1)) + record(0x0E, 0x02, int16(0))
+             + xy(rect) + record(0x11, 0x00);
+        g += record(0x07, 0x00);
+        g += record(0x04, 0x00);
+        const QString gds = dir.filePath(QStringLiteral("sibling.gds"));
+        QVERIFY(writeLib(gds, g));
+        QStringList cells, tops;
+        QSet<QPair<int, int>> layers;
+        QVERIFY(MainWindow::testReadGdsFileInfo(gds, &cells, &tops, &layers));
+        QCOMPARE(cells, (QStringList{QStringLiteral("$$$CONTEXT_INFO$$$"), QStringLiteral("line")}));
+        QCOMPARE(tops, QStringList{QStringLiteral("line")});
+    }
+
+    // CONTEXT_INFO is the only unreferenced cell and SREFs the design → design becomes the top.
+    {
+        QByteArray g;
+        g += record(0x00, 0x02, int16(600));
+        g += record(0x01, 0x02, QByteArray(24, '\0'));
+        g += record(0x02, 0x06, "LIB");
+        g += record(0x05, 0x02, QByteArray(24, '\0'));
+        g += record(0x06, 0x06, "line");
+        g += record(0x08, 0x00) + record(0x0D, 0x02, int16(201)) + record(0x0E, 0x02, int16(0))
+             + xy(rect) + record(0x11, 0x00);
+        g += record(0x07, 0x00);
+        g += record(0x05, 0x02, QByteArray(24, '\0'));
+        g += record(0x06, 0x06, "$$$CONTEXT_INFO$$$");
+        g += record(0x0A, 0x00) + record(0x12, 0x06, "line") + xy({QPoint(0, 0)}) + record(0x11, 0x00);
+        g += record(0x07, 0x00);
+        g += record(0x04, 0x00);
+        const QString gds = dir.filePath(QStringLiteral("parent.gds"));
+        QVERIFY(writeLib(gds, g));
+        QStringList cells, tops;
+        QSet<QPair<int, int>> layers;
+        QVERIFY(MainWindow::testReadGdsFileInfo(gds, &cells, &tops, &layers));
+        QCOMPARE(tops, QStringList{QStringLiteral("line")});
+        QVERIFY(layers.contains(qMakePair(201, 0)));
+    }
+}
+
+/*!*******************************************************************************************************************
  * \brief The settings grid groups settings by the topics of the keyword file (file order), unknown
  *        keys go under "Other", loose variables follow the workflow parameter they are passed to,
  *        and collapsed topics stay collapsed when the grid is rebuilt.

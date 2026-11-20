@@ -398,12 +398,23 @@ void Preferences::setupPreferencesPanel()
     klayoutOptionsProp->setValue(m_preferences.value(QStringLiteral("KLAYOUT_OPTIONS"), QString()));
     klayoutGroup->addSubProperty(klayoutOptionsProp);
 
+    QtVariantProperty *roomPathProp =
+        m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("ROOM_PATH"));
+    roomPathProp->setWhatsThis("folder");
+    roomPathProp->setToolTip(tr(
+        "Path to the Room checkout (…/Room) or its python package (…/Room/python).\n"
+        "Converters such as room_to_gds are looked up under this tree (build/, build-*/).\n"
+        "Same idea as Door → Preferences → Room → Path."));
+    roomPathProp->setValue(m_preferences.value(QStringLiteral("ROOM_PATH"), QString()));
+    klayoutGroup->addSubProperty(roomPathProp);
+
     QtVariantProperty *roomToGdsProp =
         m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("ROOM_TO_GDS"));
     roomToGdsProp->setWhatsThis("file");
     roomToGdsProp->setToolTip(tr(
-        "CommonDB room_to_gds converter (ROOM layout → GDS for preview and solvers).\n"
-        "Required when Layout File is a *.layout.room. Leave empty to auto-detect."));
+        "room_to_gds converter (ROOM layout → GDS for preview and solvers).\n"
+        "Required when Layout File is a *.layout.room.\n"
+        "Leave empty to use PATH or <ROOM_PATH>/build*/room_to_gds."));
     roomToGdsProp->setValue(m_preferences.value(QStringLiteral("ROOM_TO_GDS"), QString()));
     klayoutGroup->addSubProperty(roomToGdsProp);
 

@@ -443,6 +443,8 @@ private:
     static QString                  gdsFileKey(const QString &filePath);
     static bool                     readGdsFileInfo(const QString &filePath, GdsFileInfo *info);
 
+    /*! ROOM_TO_GDS preference, else room_to_gds under ROOM_PATH / PATH. */
+    QString                         resolvedRoomToGdsExe() const;
     /*! Resolve Layout File to a GDS path (identity for .gds; room_to_gds for ROOM). */
     QString                         resolveLayoutGdsPath(const QString &layoutPath, QString *errorMsg = nullptr) const;
     /*! Companion GDS beside the model: <modelDir>/<layoutOrCellStem>.gds (not the .py stem). */

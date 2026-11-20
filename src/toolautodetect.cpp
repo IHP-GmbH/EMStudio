@@ -219,23 +219,70 @@ QString findPalaceInstallRoot()
     return {};
 }
 
-QString findRoomToGds()
+QString normalizeRoomRoot(QString roomPath)
 {
+    roomPath = QDir::fromNativeSeparators(roomPath.trimmed());
+    if (roomPath.isEmpty())
+        return {};
+    QFileInfo fi(roomPath);
+    if (!fi.exists())
+        return {};
+    QDir dir = fi.isDir() ? QDir(fi.absoluteFilePath()) : fi.absoluteDir();
+    // Preferences may point at …/Room/python — converters live under the checkout root.
+    if (dir.dirName().compare(QStringLiteral("python"), Qt::CaseInsensitive) == 0)
+        dir.cdUp();
+    return QDir::fromNativeSeparators(dir.absolutePath());
+}
+
+QString findRoomToGdsUnderRoot(const QString &roomRoot)
+{
+    const QString root = normalizeRoomRoot(roomRoot);
+    if (root.isEmpty())
+        return {};
+
+    QStringList candidates;
 #ifdef Q_OS_WIN
-    return firstExistingFile({
-        QStandardPaths::findExecutable(QStringLiteral("room_to_gds")),
-        QStandardPaths::findExecutable(QStringLiteral("room_to_gds.exe")),
-        QDir::homePath() + QStringLiteral("/Documents/CommonDB/build/room_to_gds.exe"),
-        QDir::homePath() + QStringLiteral("/Documents/Room/build/room_to_gds.exe"),
-    });
+    const QString exeName = QStringLiteral("room_to_gds.exe");
 #else
-    return firstExistingFile({
-        QStandardPaths::findExecutable(QStringLiteral("room_to_gds")),
-        QDir::homePath() + QStringLiteral("/CommonDB/build/room_to_gds"),
-        QDir::homePath() + QStringLiteral("/Room/build/room_to_gds"),
-        QStringLiteral("/usr/local/bin/room_to_gds"),
-    });
+    const QString exeName = QStringLiteral("room_to_gds");
 #endif
+    const QStringList buildDirs = {
+        QStringLiteral("build"),
+        QStringLiteral("build-release"),
+        QStringLiteral("build-door-opt64"),
+        QStringLiteral("build-opt"),
+    };
+    for (const QString &build : buildDirs)
+        candidates << QDir(root).filePath(build + QLatin1Char('/') + exeName);
+
+    // Any other build-* sibling that already contains the converter.
+    const QFileInfoList extras = QDir(root).entryInfoList(
+        QStringList() << QStringLiteral("build*"), QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo &dir : extras) {
+        const QString cand = QDir(dir.absoluteFilePath()).filePath(exeName);
+        if (!candidates.contains(cand))
+            candidates << cand;
+    }
+    return firstExistingFile(candidates);
+}
+
+QString findRoomToGds(const QMap<QString, QVariant> &prefs)
+{
+    QStringList candidates;
+    candidates << QStandardPaths::findExecutable(QStringLiteral("room_to_gds"));
+#ifdef Q_OS_WIN
+    candidates << QStandardPaths::findExecutable(QStringLiteral("room_to_gds.exe"));
+#endif
+    const QString fromPath = firstExistingFile(candidates);
+    if (!fromPath.isEmpty())
+        return fromPath;
+
+    const QString underRoom = findRoomToGdsUnderRoot(
+        prefs.value(QStringLiteral("ROOM_PATH")).toString());
+    if (!underRoom.isEmpty())
+        return underRoom;
+
+    return {};
 }
 
 QString findOpenemsInstallRoot()
@@ -300,7 +347,7 @@ int fillEmptyPreferences(QMap<QString, QVariant> &prefs)
 #endif
 
     setIfEmpty(prefs, QStringLiteral("KLAYOUT_EXE"), findKlayoutExe(), &n);
-    setIfEmpty(prefs, QStringLiteral("ROOM_TO_GDS"), findRoomToGds(), &n);
+    setIfEmpty(prefs, QStringLiteral("ROOM_TO_GDS"), findRoomToGds(prefs), &n);
     setIfEmpty(prefs, QStringLiteral("ELMER_SOLVER_PATH"), findElmerSolver(), &n);
     // Do not invent PALACE_INSTALL_PATH when the user already runs via Script mode —
     // filling an empty install key confused enablement / Preference UI earlier.

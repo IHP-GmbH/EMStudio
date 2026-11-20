@@ -247,11 +247,11 @@ void MainWindow::loadPythonScriptToEditor(const QString &filePath)
         if (!thermalCode.isEmpty())
             replaceOrInsertThermalSection(script, thermalCode);
     } else {
-        ensurePortsTableInitializedFromScript(script);
-        updateSubLayerNamesAutoCheck();
-        const QString portCode = buildPortCodeFromGuiTable();
-        if (!portCode.isEmpty())
-            replaceOrInsertPortSection(script, portCode);
+    ensurePortsTableInitializedFromScript(script);
+    updateSubLayerNamesAutoCheck();
+    const QString portCode = buildPortCodeFromGuiTable();
+    if (!portCode.isEmpty())
+        replaceOrInsertPortSection(script, portCode);
     }
 
     setEditorScriptPreservingState(script);
@@ -1574,19 +1574,19 @@ void MainWindow::replaceOrInsertPortSection(QString &script, const QString &port
                 line.prepend(indent);
         script.replace(s0, e0 - s0, newLines.join(QLatin1Char('\n')) + QLatin1Char('\n'));
     } else {
-        // No section found -> insert before "simulation ===" marker if present, else append
-        QRegularExpression simMarker(
-            R"(#[^\n]*simulation\s*={3,})",
-            QRegularExpression::MultilineOption);
-        QRegularExpressionMatch simMatch = simMarker.match(script);
+    // No section found -> insert before "simulation ===" marker if present, else append
+    QRegularExpression simMarker(
+        R"(#[^\n]*simulation\s*={3,})",
+        QRegularExpression::MultilineOption);
+    QRegularExpressionMatch simMatch = simMarker.match(script);
 
-        const QString injected = QStringLiteral("\n\n") + portCode + QStringLiteral("\n");
+    const QString injected = QStringLiteral("\n\n") + portCode + QStringLiteral("\n");
 
-        if (simMatch.hasMatch()) {
-            const int insertPos = simMatch.capturedStart();
-            script.insert(insertPos, injected);
-        } else {
-            script.append(injected);
+    if (simMatch.hasMatch()) {
+        const int insertPos = simMatch.capturedStart();
+        script.insert(insertPos, injected);
+    } else {
+        script.append(injected);
         }
     }
 

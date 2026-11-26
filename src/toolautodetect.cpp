@@ -224,7 +224,7 @@ QString findPalaceInstallRoot()
 QString findRoomToGds()
 {
     QStringList candidates;
-    candidates << qEnvironmentVariable(QStringLiteral("ROOM_TO_GDS"));
+    candidates << qEnvironmentVariable("ROOM_TO_GDS");
     candidates << QStandardPaths::findExecutable(QStringLiteral("room_to_gds"));
 #ifdef Q_OS_WIN
     candidates << QStandardPaths::findExecutable(QStringLiteral("room_to_gds.exe"));

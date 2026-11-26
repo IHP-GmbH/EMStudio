@@ -73,10 +73,11 @@ jobs:
             || dnf config-manager --set-enabled crb 2>/dev/null \
             || true
           dnf install -y epel-release 2>/dev/null || true
+          # RHEL/Rocky package is xcb-util-cursor (not Debian's libxcb-cursor).
           dnf install -y \
             gcc gcc-c++ make git which curl patchelf \
             mesa-libGL-devel libX11-devel libxcb-devel \
-            libxkbcommon libxkbcommon-x11 libxcb-cursor \
+            libxkbcommon libxkbcommon-x11 xcb-util-cursor \
             fontconfig freetype dbus-libs \
             xorg-x11-server-Xvfb \
             binutils

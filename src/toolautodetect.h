@@ -33,7 +33,8 @@ QString findKlayoutExe();
 QString findElmerSolver();
 QString findPalaceInstallRoot();
 QString findOpenemsInstallRoot();
-QString findRoomToGds();
+/*! Locate room_to_gds under PATH and optional Room checkout (\c ROOM_PATH preference). */
+QString findRoomToGds(const QMap<QString, QVariant> &prefs = {});
 
 } // namespace ToolAutoDetect
 

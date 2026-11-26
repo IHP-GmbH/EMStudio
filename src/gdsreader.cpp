@@ -20,6 +20,7 @@
 
 
 #include <QSet>
+#include <QMap>
 #include <QPair>
 #include <QFile>
 #include <QDebug>
@@ -41,6 +42,12 @@ QString gdsContentKey(const QString &absolutePath, const QByteArray &data)
     hash.addData(data);
     return absolutePath + QLatin1Char('|') + QString::number(data.size()) + QLatin1Char('|')
             + QString::fromLatin1(hash.result().toHex());
+}
+
+/*! Cadence stream-out placeholder cell: never a real design top for simulation. */
+bool isCadenceContextCell(const QString &name)
+{
+    return name == QLatin1String("$$$CONTEXT_INFO$$$");
 }
 
 } // namespace
@@ -68,8 +75,9 @@ QString MainWindow::gdsFileKey(const QString &filePath)
  *
  * The file is read into memory at once (record-wise reads are slow on Windows) and its records are walked:
  * STRNAME (0x06) names a cell, SNAME (0x12, SREF/AREF target) marks a referenced cell; cells that are never
- * referenced are top-level cells (in file order, like gdstk's top_level()). LAYER (0x0D) followed by
- * DATATYPE (0x0E) gives a (layer, datatype) pair.
+ * referenced are top-level cells (in file order, like gdstk's top_level()). Cadence's
+ * \c $$$CONTEXT_INFO$$$ is skipped as a top cell (and, when it is the only top, its direct
+ * children become the tops). LAYER (0x0D) followed by DATATYPE (0x0E) gives a (layer, datatype) pair.
  *
  * \param filePath Path to the GDSII file.
  * \param info     Receives cells, top cells and layers (\c key is left unchanged).
@@ -90,6 +98,8 @@ bool MainWindow::readGdsFileInfo(const QString &filePath, GdsFileInfo *info)
     const auto *bytes = reinterpret_cast<const uchar *>(data.constData());
     const qint64 n = data.size();
     QSet<QString> referenced;
+    QMap<QString, QStringList> childrenOf; // STRNAME → SREF/AREF targets in file order
+    QString currentCell;
     int currentLayer = -1;
 
     for (qint64 pos = 0; pos + 4 <= n; ) {
@@ -107,10 +117,14 @@ bool MainWindow::readGdsFileInfo(const QString &filePath, GdsFileInfo *info)
             const QString name = QString::fromLatin1(reinterpret_cast<const char *>(payload), dataSize)
                                          .remove(QChar(0)).trimmed();
             if (!name.isEmpty()) {
-                if (recordType == 0x06)
+                if (recordType == 0x06) {
                     info->cells << name;
-                else
+                    currentCell = name;
+                } else {
                     referenced.insert(name);
+                    if (!currentCell.isEmpty())
+                        childrenOf[currentCell] << name;
+                }
             }
         } else if (recordType == 0x0D && dataType == 0x02 && dataSize >= 2) { // LAYER
             currentLayer = (payload[0] << 8) | payload[1];
@@ -121,8 +135,36 @@ bool MainWindow::readGdsFileInfo(const QString &filePath, GdsFileInfo *info)
         pos += size;
     }
 
+    QStringList rawTops;
     for (const QString &name : qAsConst(info->cells))
         if (!referenced.contains(name))
+            rawTops << name;
+
+    for (const QString &name : qAsConst(rawTops))
+        if (!isCadenceContextCell(name))
             info->topCells << name;
+
+    // Only Cadence context left as top: use the cells it instances (the real design).
+    if (info->topCells.isEmpty()) {
+        QSet<QString> seen;
+        for (const QString &top : qAsConst(rawTops)) {
+            if (!isCadenceContextCell(top))
+                continue;
+            for (const QString &child : childrenOf.value(top)) {
+                if (seen.contains(child) || isCadenceContextCell(child))
+                    continue;
+                seen.insert(child);
+                info->topCells << child;
+            }
+        }
+    }
+    if (info->topCells.isEmpty()) {
+        for (const QString &name : qAsConst(info->cells)) {
+            if (!isCadenceContextCell(name)) {
+                info->topCells << name;
+                break;
+            }
+        }
+    }
     return true;
 }

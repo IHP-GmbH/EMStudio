@@ -1,35 +1,21 @@
-# Palace E2E golden (CI)
+# Palace E2E
 
-End-to-end check: EMStudio → gds2palace → Palace → Touchstone, compared to `line_viaport.s2p`.
+EMStudio script mode → **prebaked mesh** → Docker Palace → Touchstone.
 
-## Prebuilt Palace (never built on every CI run)
+Live `gds2palace`/gmsh OCC **Fragments hangs on GitHub-hosted runners** (even for a
+tiny rectangle GDS). CI therefore stages `prebaked/` via
+`tests/tools/palace_e2e_mesh_stub.sh`. Set `EMSTUDIO_PALACE_LIVE_MESH=1` locally
+to run real meshing.
 
-| Item | Value |
-|------|--------|
-| GitHub Release tag | `palace-bin-v0.16.0` |
-| Asset | `palace-linux-x64.tar.gz` |
-| Layout after extract | `palace/bin/palace` (+ shared libs under `palace/`) |
-| Workflow env pin | `PALACE_CI_VERSION=0.16.0` |
+## Fixtures
 
-Publish / refresh the Release (rare) with:
+- `line_viaport_smoke.gds` / `SG13G2_smoke.xml` — GUI script generation
+- `prebaked/config.json` + `prebaked/smoke.msh` — solver input (from a small
+  resistors example, single 1 GHz point)
 
-```bash
-# on a machine with Docker, or via Actions → "Publish Palace CI binary"
-./tools/publish_palace_ci_bin.sh 0.16.0
-```
+## CI
 
-Source image for packaging: `ghcr.io/benvial/palace:v0.16.0` (CPU). Bump the tag and `PALACE_CI_VERSION` together when upgrading.
+- PR / `workflow_dispatch` (`palace_e2e=true`): `build.yml` job `sim-palace`
+- Nightly: `.github/workflows/palace-e2e-nightly.yml`
 
-## Regenerating the golden Touchstone
-
-Requires the same Palace version as CI and `gds2palace==0.5.2`:
-
-```bash
-export PALACE_INSTALL_PATH=/path/to/palace   # contains bin/palace
-export EMSTUDIO_PALACE_E2E=1
-# after building emstudio_golden_tests:
-./emstudio_golden_tests PalaceSimE2E -platform offscreen
-# copy the produced .s2p over line_viaport.s2p (see test log for path)
-```
-
-Versions used for the checked-in golden are noted in the `!` header of `line_viaport.s2p`.
+Palace image: `ghcr.io/benvial/palace:v0.16.0`.

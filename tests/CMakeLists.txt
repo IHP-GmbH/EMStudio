@@ -27,6 +27,7 @@ set(TEST_SOURCES
     tst_mainwindow_ports.cpp
     tst_openems_golden.cpp
     tst_palace_golden.cpp
+    tst_palace_sim_e2e.cpp
     tst_elmer.cpp
     tst_touchstone.cpp
     tst_smithchart.cpp

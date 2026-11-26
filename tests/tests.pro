@@ -19,6 +19,7 @@ SOURCES += \
     tst_mainwindow_ports.cpp \
     tst_openems_golden.cpp \
     tst_palace_golden.cpp \
+    tst_palace_sim_e2e.cpp \
     tst_elmer.cpp \
     tst_touchstone.cpp \
     tst_smithchart.cpp \
@@ -49,6 +50,7 @@ HEADERS += \
     tst_mainwindow_ports.h \
     tst_openems_golden.h \
     tst_palace_golden.h \
+    tst_palace_sim_e2e.h \
     tst_elmer.h \
     tst_touchstone.h \
     tst_smithchart.h \

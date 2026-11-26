@@ -15,6 +15,7 @@
 #include "tst_find_dialog.h"
 #include "tst_about_dialog.h"
 #include "tst_palace_golden.h"
+#include "tst_palace_sim_e2e.h"
 #include "tst_python_editor.h"
 #include "tst_openems_golden.h"
 #include "tst_mainwindow_ports.h"
@@ -159,6 +160,7 @@ int main(int argc, char **argv)
         ADD_TEST(MainWindowPortsTest),
         ADD_TEST(PythonEditorTest),
         ADD_TEST(PalaceGolden),
+        ADD_TEST(PalaceSimE2E),
         ADD_TEST(OpenemsGolden),
         ADD_TEST(ElmerTest),
         ADD_TEST(TouchstoneTest),

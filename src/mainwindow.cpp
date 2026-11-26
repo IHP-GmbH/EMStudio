@@ -4064,9 +4064,17 @@ QString MainWindow::resolveLayoutGdsPath(const QString &layoutPath, QString *err
     if (!isRoomLayoutPath(path))
         return QFileInfo(path).absoluteFilePath();
 
-    const QString exe = m_preferences.value(QStringLiteral("ROOM_TO_GDS")).toString().trimmed();
+    const QString exe = resolvedRoomToGdsExe();
     const QString companion = companionLayoutGdsBesideModel();
     return materializeRoomLayoutGds(path, exe, errorMsg, companion);
+}
+
+QString MainWindow::resolvedRoomToGdsExe() const
+{
+    const QString configured = m_preferences.value(QStringLiteral("ROOM_TO_GDS")).toString().trimmed();
+    if (!configured.isEmpty() && QFileInfo::exists(configured))
+        return QDir::fromNativeSeparators(configured);
+    return ToolAutoDetect::findRoomToGds(m_preferences);
 }
 
 /*!*******************************************************************************************************************
@@ -4131,7 +4139,7 @@ bool MainWindow::prepareLayoutForRun(QString *errorMsg)
         return false;
     }
 
-    const QString exe = m_preferences.value(QStringLiteral("ROOM_TO_GDS")).toString().trimmed();
+    const QString exe = resolvedRoomToGdsExe();
     QString err;
     const QString gdsPath = materializeRoomLayoutGds(layoutPath, exe, &err, companion);
     if (gdsPath.isEmpty()) {
@@ -4218,7 +4226,8 @@ void MainWindow::updateGdsUserInfo()
     }
     m_cells  = m_gdsInfoCache.cells;
     m_layers = m_gdsInfoCache.layers;
-    // What gds2palace / gds2openEMS load without a (valid) cell name: top_level()[0].
+    // What gds2palace / gds2openEMS load without a (valid) cell name: top_level()[0]
+    // (Cadence $$$CONTEXT_INFO$$$ already filtered out in readGdsFileInfo).
     m_gdsTopCell = m_gdsInfoCache.topCells.value(0, m_cells.value(0));
 
     QString desired = m_simSettings.value("TopCell").toString().trimmed();
@@ -4226,6 +4235,11 @@ void MainWindow::updateGdsUserInfo()
         desired = m_simSettings.value("gds_cellname").toString().trimmed();
     if (desired.isEmpty())
         desired = m_ui->cbxTopCell->currentText().trimmed();
+    // Cadence stream-out placeholder is never a useful simulation top.
+    if (desired == QLatin1String("$$$CONTEXT_INFO$$$")
+            && !m_gdsTopCell.isEmpty() && m_gdsTopCell != desired) {
+        desired.clear();
+    }
 
     QSignalBlocker blocker(m_ui->cbxTopCell);
 
@@ -5861,6 +5875,16 @@ bool MainWindow::prepareMarkupLayoutForRun(QString *errorMsg)
 {
     if (m_markup.ports.isEmpty() || isElmerThermalKey(currentSimToolKey()))
         return true;
+#ifdef EMSTUDIO_TESTING
+    // Classic GDS port layers (e.g. line_simple_viaport 201/202) are auto-adopted into the
+    // in-memory markup. Production Run still rewrites them via <model>_em.gds when the user has
+    // a real markup sidecar; unit/E2E tests stay on the source GDS unless that sidecar exists.
+    {
+        const QString side = EmMarkup::sidecarPath(currentPythonScriptPath());
+        if (side.isEmpty() || !QFileInfo::exists(side))
+            return true;
+    }
+#endif
     const QStringList problems = m_markup.problems(m_markupMetals);
     if (!problems.isEmpty()) {
         if (errorMsg)
@@ -6703,12 +6727,13 @@ QVector<SanityFinding> MainWindow::collectSanityFindings() const
         f.message = tr("Layout file does not exist:\n%1").arg(gdsPath);
         out.append(f);
     } else if (isRoomLayoutPath(gdsPath)) {
-        const QString exe = m_preferences.value(QStringLiteral("ROOM_TO_GDS")).toString().trimmed();
+        const QString exe = resolvedRoomToGdsExe();
         if (exe.isEmpty() || !QFileInfo::exists(exe)) {
             SanityFinding f;
             f.severity = SanityFinding::Error;
             f.code = QStringLiteral("missing_room_to_gds");
-            f.message = tr("Layout File is ROOM but ROOM_TO_GDS (room_to_gds) is not configured.");
+            f.message = tr("Layout File is ROOM but room_to_gds was not found.\n"
+                           "Set ROOM_PATH (Room checkout) or ROOM_TO_GDS in Preferences.");
             out.append(f);
         }
     }

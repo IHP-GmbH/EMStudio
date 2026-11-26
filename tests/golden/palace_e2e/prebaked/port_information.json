@@ -1,0 +1,32 @@
+{
+    "ports": [
+        {
+            "portnumber": 1,
+            "Z0": 50,
+            "direction": "Z",
+            "length": 0.539999999999992,
+            "width": 1.6,
+            "xmin": -2.6,
+            "xmax": -1.0,
+            "ymin": 17.2,
+            "ymax": 17.2,
+            "zmin": 185.20999999999998,
+            "zmax": 185.74999999999997
+        },
+        {
+            "portnumber": 2,
+            "Z0": 50,
+            "direction": "Z",
+            "length": 0.539999999999992,
+            "width": 1.6,
+            "xmin": -2.6,
+            "xmax": -1.0,
+            "ymin": 1.8,
+            "ymax": 1.8,
+            "zmin": 185.20999999999998,
+            "zmax": 185.74999999999997
+        }
+    ],
+    "unit": 1e-06,
+    "name": "palace_resistors_rsil"
+}

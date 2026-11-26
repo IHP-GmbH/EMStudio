@@ -49,9 +49,188 @@ jobs:
             build/**/EMStudio
           if-no-files-found: warn
 
+  # Portable Rocky Linux 8 bundle (glibc 2.28) for RHEL8 / Rocky8 / Alma8 hosts.
+  # ubuntu22 artifacts need glibc 2.35 and will NOT run on Rocky 8.
+  build-rocky8-portable:
+    name: Portable Rocky Linux 8 (glibc 2.28)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: rockylinux:8
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install build dependencies
+        run: |
+          set -euxo pipefail
+          dnf install -y dnf-plugins-core
+          dnf config-manager --set-enabled powertools 2>/dev/null \
+            || dnf config-manager --set-enabled crb 2>/dev/null \
+            || true
+          dnf install -y epel-release 2>/dev/null || true
+          dnf install -y \
+            gcc gcc-c++ make git which curl patchelf \
+            mesa-libGL-devel libX11-devel libxcb-devel \
+            libxkbcommon libxkbcommon-x11 libxcb-cursor \
+            fontconfig freetype dbus-libs \
+            xorg-x11-server-Xvfb \
+            binutils
+          chmod +x scripts/ci_install_qt_rocky8.sh
+
+      - name: Install Qt 5.15 (+ Charts)
+        run: bash scripts/ci_install_qt_rocky8.sh
+
+      - name: Configure (qmake)
+        run: |
+          mkdir -p build
+          cd build
+          qmake CONFIG+=release ../EMStudio.pro
+
+      - name: Build
+        run: |
+          cd build
+          make -j"$(nproc)"
+
+      - name: Stage Rocky 8 portable bundle
+        env:
+          BUNDLE_LABEL: Rocky Linux 8
+        run: |
+          set -euxo pipefail
+          test -x build/EMStudio
+
+          QT_PREFIX="$(qmake -query QT_INSTALL_PREFIX)"
+          QT_LIBS="$(qmake -query QT_INSTALL_LIBS)"
+          QT_PLUGINS="$(qmake -query QT_INSTALL_PLUGINS)"
+
+          rm -rf dist
+          mkdir -p dist/lib dist/plugins
+          cp -a build/EMStudio dist/EMStudio.bin
+          cp -a scripts dist/scripts
+          cp -a keywords dist/keywords
+          mkdir -p dist/icons
+          cp -a icons/logo.png dist/icons/ || true
+          cp -a icons/logo.png dist/logo.png || true
+
+          mkdir -p dist/plugins/platforms
+          cp -a "${QT_PLUGINS}/platforms/libqxcb.so" dist/plugins/platforms/
+          cp -a "${QT_PLUGINS}/platforms/libqoffscreen.so" dist/plugins/platforms/ || true
+          for f in "${QT_PLUGINS}/platforms"/libqwayland-*.so; do
+            [[ -f "${f}" ]] && cp -a "${f}" dist/plugins/platforms/
+          done
+          for plugindir in imageformats xcbglintegrations platforminputcontexts iconengines styles; do
+            if [[ -d "${QT_PLUGINS}/${plugindir}" ]]; then
+              mkdir -p "dist/plugins/${plugindir}"
+              cp -a "${QT_PLUGINS}/${plugindir}"/*.so "dist/plugins/${plugindir}/" || true
+            fi
+          done
+
+          copy_qt_soname() {
+            local src="$1"
+            [[ -n "${src}" && -e "${src}" ]] || return 0
+            case "${src}" in
+              "${QT_PREFIX}"/*|"${QT_LIBS}"/*) ;;
+              *) return 0 ;;
+            esac
+            local base soname dest
+            base="$(basename "${src}")"
+            if [[ "${base}" =~ ^(lib.+\.so\.[0-9]+) ]]; then
+              soname="${BASH_REMATCH[1]}"
+            else
+              soname="${base}"
+            fi
+            dest="dist/lib/${soname}"
+            [[ -e "${dest}" ]] && return 0
+            cp -L "${src}" "${dest}"
+          }
+
+          collect_ldd_qt() {
+            local target="$1"
+            [[ -f "${target}" ]] || return 0
+            local lib
+            while IFS= read -r lib; do
+              copy_qt_soname "${lib}"
+            done < <(ldd "${target}" | awk '/=>/{print $3}')
+          }
+
+          collect_ldd_qt dist/EMStudio.bin
+          while IFS= read -r -d '' plug; do
+            collect_ldd_qt "${plug}"
+          done < <(find dist/plugins -type f -name '*.so' -print0)
+
+          changed=1
+          while [[ "${changed}" -eq 1 ]]; do
+            changed=0
+            before="$(find dist/lib -type f | wc -l)"
+            while IFS= read -r -d '' so; do
+              collect_ldd_qt "${so}"
+            done < <(find dist/lib -type f -print0)
+            after="$(find dist/lib -type f | wc -l)"
+            [[ "${after}" -gt "${before}" ]] && changed=1
+          done
+
+          cat > dist/qt.conf <<'EOF'
+          [Paths]
+          Prefix = .
+          Libraries = lib
+          Plugins = plugins
+          EOF
+          sed -i 's/^[[:space:]]*//' dist/qt.conf
+
+          chmod +x scripts/install_linux_launcher.sh
+          ./scripts/install_linux_launcher.sh dist
+
+          printf '%s\n' \
+            "EMStudio Linux (${BUNDLE_LABEL}) CI build" \
+            '' \
+            'Qt 5.15 runtime is bundled under ./lib and ./plugins.' \
+            'Built on Rocky Linux 8 (glibc 2.28) — use this artifact on' \
+            'RHEL 8 / Rocky 8 / AlmaLinux 8 (and compatible).' \
+            '' \
+            'On a normal desktop (X11/Wayland + OpenGL), run:' \
+            '  ./EMStudio' \
+            '' \
+            '(EMStudio is a small launcher; the real binary is EMStudio.bin.)' \
+            > dist/README.txt
+
+          echo "=== glibc requirement (from EMStudio.bin) ==="
+          objdump -T dist/EMStudio.bin | awk '/GLIBC_/ {print $NF}' | sort -u | tail -8 || true
+          LD_LIBRARY_PATH="dist/lib" ldd dist/EMStudio.bin | tee /tmp/emstudio-ldd.txt
+          if grep -E 'not found' /tmp/emstudio-ldd.txt | grep -E 'Qt5|icu'; then
+            echo "Missing Qt/ICU libraries in the bundle" >&2
+            exit 1
+          fi
+
+      - name: Smoke-test bundled binary (headless)
+        run: |
+          set -euxo pipefail
+          if ! timeout 8s xvfb-run -a ./dist/EMStudio -platform offscreen; then
+            status=$?
+            if [[ "${status}" -ne 124 ]]; then
+              # Fall back to xcb under xvfb if offscreen is unavailable.
+              if ! timeout 8s xvfb-run -a ./dist/EMStudio -platform xcb; then
+                status=$?
+                [[ "${status}" -eq 124 ]] || exit "${status}"
+              fi
+            fi
+          fi
+
+      - name: Upload Rocky 8 portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: emstudio-linux-rocky8
+          path: dist
+          if-no-files-found: error
+          retention-days: 14
+
   # Portable Linux bundles (Qt runtime shipped). Build on the oldest OS you need
   # to support: glibc is not bundled, so ubuntu24 binaries need glibc ≥ 2.38
   # (Ubuntu 24.04+). Use ubuntu22 for Ubuntu 22.04 / glibc 2.35 hosts.
+  # Rocky 8 / glibc 2.28 must use emstudio-linux-rocky8 (see job above).
   build-ubuntu-portable:
     strategy:
       fail-fast: false
@@ -224,8 +403,9 @@ jobs:
             '' \
             'Qt 5.15 runtime is bundled under ./lib and ./plugins' \
             '(needed libs/plugins only; see GitHub issue #30).' \
-            'glibc is NOT bundled: use the ubuntu22 artifact on Ubuntu 22.04' \
-            '(glibc 2.35), and ubuntu24 on Ubuntu 24.04+ (glibc ≥ 2.38).' \
+            'glibc is NOT bundled: use ubuntu22 on Ubuntu 22.04 (glibc 2.35),' \
+            'ubuntu24 on Ubuntu 24.04+ (glibc ≥ 2.38), and rocky8 on' \
+            'RHEL/Rocky/Alma 8 (glibc 2.28 — see emstudio-linux-rocky8).' \
             '' \
             'On a normal desktop (X11/Wayland + OpenGL), run:' \
             '  ./EMStudio' \

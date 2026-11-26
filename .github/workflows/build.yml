@@ -57,6 +57,10 @@ jobs:
     timeout-minutes: 90
     container:
       image: rockylinux:8
+    # Container jobs default to /bin/sh — process substitution (< <(...)) needs bash.
+    defaults:
+      run:
+        shell: bash -e {0}
 
     steps:
       - name: Checkout sources

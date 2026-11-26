@@ -402,7 +402,8 @@ void Preferences::setupPreferencesPanel()
         m_variantManager->addProperty(VariantManager::filePathTypeId(), QLatin1String("ROOM_TO_GDS"));
     roomToGdsProp->setWhatsThis("file");
     roomToGdsProp->setToolTip(tr(
-        "CommonDB room_to_gds converter (ROOM layout → GDS for preview and solvers).\n"
+        "Room room_to_gds converter (ROOM layout → GDS for preview and solvers).\n"
+        "Usually shipped with Door under lib/room-stack/door/.../bin/room_to_gds.\n"
         "Required when Layout File is a *.layout.room. Leave empty to auto-detect."));
     roomToGdsProp->setValue(m_preferences.value(QStringLiteral("ROOM_TO_GDS"), QString()));
     klayoutGroup->addSubProperty(roomToGdsProp);

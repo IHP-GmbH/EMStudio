@@ -84,8 +84,9 @@ QString materializeRoomLayoutGds(const QString &roomPath,
     if (roomToGdsExe.trimmed().isEmpty() || !QFileInfo::exists(roomToGdsExe)) {
         if (errorMsg) {
             *errorMsg = QObject::tr(
-                "ROOM layout requires room_to_gds (CommonDB converter).\n"
-                "Set preference ROOM_TO_GDS or install room_to_gds on PATH.\n"
+                "ROOM layout requires room_to_gds (Room / Door converter).\n"
+                "Set preference ROOM_TO_GDS, put room_to_gds on PATH, or install Door "
+                "(converters live under lib/room-stack/door/.../bin/).\n"
                 "Layout file:\n%1").arg(roomPath);
         }
         return {};

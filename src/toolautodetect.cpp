@@ -141,6 +141,8 @@ QString findKlayoutExe()
 #else
     candidates << qEnvironmentVariable("KLAYOUT_EXE");
     candidates << QStandardPaths::findExecutable(QStringLiteral("klayout"));
+    candidates << QDir::homePath() + QStringLiteral("/door/bin/klayout");
+    candidates << QDir::homePath() + QStringLiteral("/.local/bin/klayout");
     candidates << QStringLiteral("/usr/bin/klayout");
     candidates << QStringLiteral("/usr/local/bin/klayout");
 #endif
@@ -221,21 +223,43 @@ QString findPalaceInstallRoot()
 
 QString findRoomToGds()
 {
+    QStringList candidates;
+    candidates << qEnvironmentVariable(QStringLiteral("ROOM_TO_GDS"));
+    candidates << QStandardPaths::findExecutable(QStringLiteral("room_to_gds"));
 #ifdef Q_OS_WIN
-    return firstExistingFile({
-        QStandardPaths::findExecutable(QStringLiteral("room_to_gds")),
-        QStandardPaths::findExecutable(QStringLiteral("room_to_gds.exe")),
-        QDir::homePath() + QStringLiteral("/Documents/CommonDB/build/room_to_gds.exe"),
-        QDir::homePath() + QStringLiteral("/Documents/Room/build/room_to_gds.exe"),
-    });
-#else
-    return firstExistingFile({
-        QStandardPaths::findExecutable(QStringLiteral("room_to_gds")),
-        QDir::homePath() + QStringLiteral("/CommonDB/build/room_to_gds"),
-        QDir::homePath() + QStringLiteral("/Room/build/room_to_gds"),
-        QStringLiteral("/usr/local/bin/room_to_gds"),
-    });
+    candidates << QStandardPaths::findExecutable(QStringLiteral("room_to_gds.exe"));
 #endif
+
+    // Door / room-stack portable installs (converters next to door).
+    const QStringList stackRoots = {
+        QDir::homePath() + QStringLiteral("/door"),
+        QDir::homePath() + QStringLiteral("/.local"),
+        QStringLiteral("/usr/local"),
+    };
+    for (const QString &root : stackRoots) {
+        candidates << root + QStringLiteral("/bin/room_to_gds");
+#ifdef Q_OS_WIN
+        candidates << root + QStringLiteral("/bin/room_to_gds.exe");
+#endif
+        candidates << root + QStringLiteral("/lib/room-stack/door/dist-bundle/bin/room_to_gds");
+#ifdef Q_OS_WIN
+        candidates << root + QStringLiteral("/lib/room-stack/door/dist-bundle/bin/room_to_gds.exe");
+#endif
+    }
+
+    // Source / local Room builds (repo renamed from CommonDB → Room).
+    candidates << QDir::homePath() + QStringLiteral("/Room/build/room_to_gds");
+    candidates << QDir::homePath() + QStringLiteral("/Documents/Room/build/room_to_gds");
+#ifdef Q_OS_WIN
+    candidates << QDir::homePath() + QStringLiteral("/Documents/Room/build/room_to_gds.exe");
+    candidates << QDir::homePath() + QStringLiteral("/Documents/CommonDB/build/room_to_gds.exe");
+#else
+    candidates << QDir::homePath() + QStringLiteral("/CommonDB/build/room_to_gds");
+    candidates << QStringLiteral("/usr/local/bin/room_to_gds");
+    candidates << QStringLiteral("/usr/bin/room_to_gds");
+#endif
+
+    return firstExistingFile(candidates);
 }
 
 QString findOpenemsInstallRoot()

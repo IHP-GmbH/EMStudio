@@ -700,18 +700,22 @@ jobs:
           }
 
       - name: Package Windows portable zip
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          test -x build/dist/EMStudio.exe
-          {
-            echo "flavor=windows"
-            echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "source=emstudio-windows"
-          } > build/dist/BUNDLE_SOURCE.txt
-          mkdir -p build/portable
-          (cd build/dist && zip -r -q ../portable/emstudio-windows.zip .)
-          ls -la build/portable/emstudio-windows.zip
+          if (!(Test-Path "build\dist\EMStudio.exe")) {
+            Write-Error "Missing build\dist\EMStudio.exe"
+          }
+          $stamp = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+          @(
+            "flavor=windows"
+            "created_at=$stamp"
+            "source=emstudio-windows"
+          ) | Set-Content -Encoding ascii "build\dist\BUNDLE_SOURCE.txt"
+          New-Item -ItemType Directory -Force -Path "build\portable" | Out-Null
+          $zip = "build\portable\emstudio-windows.zip"
+          if (Test-Path $zip) { Remove-Item $zip -Force }
+          Compress-Archive -Path "build\dist\*" -DestinationPath $zip -Force
+          Get-Item $zip | Format-List Name, Length, FullName
 
       - name: Upload Windows portable bundle
         uses: actions/upload-artifact@v4

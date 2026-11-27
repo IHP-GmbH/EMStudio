@@ -699,6 +699,27 @@ jobs:
             Write-Host ("EMStudio-Setup.exe: {0:N1} MB" -f $mb)
           }
 
+      - name: Package Windows portable zip
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x build/dist/EMStudio.exe
+          {
+            echo "flavor=windows"
+            echo "created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "source=emstudio-windows"
+          } > build/dist/BUNDLE_SOURCE.txt
+          mkdir -p build/portable
+          (cd build/dist && zip -r -q ../portable/emstudio-windows.zip .)
+          ls -la build/portable/emstudio-windows.zip
+
+      - name: Upload Windows portable bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: emstudio-windows
+          path: build/portable/emstudio-windows.zip
+          if-no-files-found: error
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
